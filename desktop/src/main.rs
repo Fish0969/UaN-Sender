@@ -323,6 +323,15 @@ fn set_autostart(app: AppHandle, enabled: bool) -> CmdResult<bool> {
 }
 
 fn main() {
+    // On some Linux graphics setups (NVIDIA, virtual machines, some laptops) WebKitGTK's GPU paths
+    // leave the window blank/grey. The fallback renderer works everywhere, so use it unless the user
+    // set these themselves. Must happen before any threads start.
+    #[cfg(target_os = "linux")]
+    for var in ["WEBKIT_DISABLE_DMABUF_RENDERER", "WEBKIT_DISABLE_COMPOSITING_MODE"] {
+        if std::env::var_os(var).is_none() {
+            std::env::set_var(var, "1");
+        }
+    }
     let start_hidden = std::env::args().any(|a| a == "--hidden");
     // Side-by-side test identities only exist in local builds made with --features test-profiles.
     let profile_name = (if cfg!(feature = "test-profiles") { arg_value("--profile") } else { None }).map(|p| p.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect::<String>()).filter(|p| !p.is_empty());
