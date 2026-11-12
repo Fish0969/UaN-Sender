@@ -56,3 +56,6 @@ sudo apt install ./UaN_*_amd64.deb
 - Some video formats (e.g. some AVI files) can't be played inside UaN; download those instead.
 
 For developers: see [BUILDING.md](BUILDING.md).
+
+My friend code: UAN-NQJXKXMKX2UBRRHH7EC6X2NEZJR3EHUSLVUCHPM4FOEOOHSOXQCA
+
