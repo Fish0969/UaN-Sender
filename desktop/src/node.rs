@@ -48,6 +48,8 @@ const STREAM_WORKERS: usize = 4;
 const READY_AHEAD: u64 = 48 * 1024 * 1024; // buffered ahead before someone counts as ready
 const BLOCK: u64 = 8 * 1024 * 1024; // download piece size
 /// Offline mailbox (Cloudflare Worker). Empty = only direct delivery. Settings or UAN_MAILBOX override it.
+/// Files up to this size also travel through the mailbox when the friend is offline.
+const BLOB_MAX: u64 = 24 * 1024 * 1024;
 pub const DEFAULT_MAILBOX: &str = "https://uan-mailbox.uan-mailbox.workers.dev";
 const WORKERS: usize = 6; // pieces fetched at the same time
 const PROBE_BYTES: u64 = 8 * 1024 * 1024; // speed test size
@@ -68,6 +70,7 @@ CREATE TABLE IF NOT EXISTS shared_files (
   id TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS file_access (file_id TEXT NOT NULL, who TEXT NOT NULL, PRIMARY KEY (file_id, who));
 CREATE TABLE IF NOT EXISTS downloads (file_id TEXT PRIMARY KEY, path TEXT NOT NULL, chat TEXT);
+CREATE TABLE IF NOT EXISTS thumbs (file_id TEXT PRIMARY KEY, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT '', avatar TEXT, pv INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY, peer TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
@@ -126,6 +129,8 @@ pub enum Req {
     Msg { msg: WireMsg },
     Group { group: WireGroup },
     GroupLeave { group_id: String },
+    /// A small preview picture for a photo or video someone sent.
+    Thumb { file_id: String, data: String },
     FileGet { file_id: String, offset: u64, len: Option<u64> },
     Probe { bytes: u64 },
     ProbeMe,
@@ -649,6 +654,139 @@ impl Node {
         });
     }
 
+    // ----- Previews -----
+
+    /// The sender's window makes a small preview (picture + video length) right after sending.
+    pub fn set_thumb(self: &Arc<Self>, file_id: &str, data: &str) -> Result<(), String> {
+        if data.len() > 300_000 || !data.starts_with('{') {
+            return Err("Preview too big.".into());
+        }
+        let chats: Vec<String> = {
+            let db = self.db.lock().unwrap();
+            let mine = db.query_row("SELECT 1 FROM shared_files WHERE id = ?1", [file_id], |_| Ok(())).optional().ok().flatten().is_some();
+            if !mine {
+                return Err("Not your file.".into());
+            }
+            let _ = db.execute("INSERT OR REPLACE INTO thumbs (file_id, data) VALUES (?1, ?2)", [file_id, data]);
+            let mut stmt = db.prepare("SELECT who FROM file_access WHERE file_id = ?1").map_err(e2s)?;
+            let rows = stmt.query_map([file_id], |r| r.get::<_, String>(0)).map_err(e2s)?;
+            rows.filter_map(Result::ok).collect()
+        };
+        self.emit("thumb", json!({ "fileId": file_id, "thumb": serde_json::from_str::<Value>(data).unwrap_or(Value::Null) }));
+        let mut targets = HashSet::new();
+        for chat in chats {
+            if let Ok((_, t)) = self.chat_targets(&chat) {
+                targets.extend(t);
+            }
+        }
+        let req = Req::Thumb { file_id: file_id.to_string(), data: data.to_string() };
+        for t in targets {
+            self.deliver(&t, &req);
+        }
+        Ok(())
+    }
+
+    // ----- Automatic downloads -----
+
+    /// (on, max size in GB). Files friends send are fetched in the background so they open even when the sender is offline later.
+    pub fn autodl(&self) -> (bool, u64) {
+        (self.kv("autodl").map(|v| v != "0").unwrap_or(true), self.kv("autodl_gb").and_then(|v| v.parse().ok()).unwrap_or(10))
+    }
+
+    pub fn set_autodl(&self, on: bool, gb: u64) {
+        self.set_kv("autodl", if on { "1" } else { "0" });
+        self.set_kv("autodl_gb", &gb.clamp(1, 4096).to_string());
+    }
+
+    // ----- Small files through the mailbox (sender may be off by the time the friend comes online) -----
+
+    fn seal_bytes(&self, peer: &str, data: &[u8]) -> Result<Vec<u8>, String> {
+        let b = self.box_for(peer)?;
+        let nonce = SalsaBox::generate_nonce(&mut OsRng);
+        let ct = b.encrypt(&nonce, data).map_err(|_| "Encryption failed.".to_string())?;
+        let mut out = nonce.to_vec();
+        out.extend_from_slice(&ct);
+        Ok(out)
+    }
+
+    fn open_bytes(&self, peer: &str, raw: &[u8]) -> Result<Vec<u8>, String> {
+        if raw.len() < 24 {
+            return Err("Too short.".into());
+        }
+        let b = self.box_for(peer)?;
+        b.decrypt(crypto_box::Nonce::from_slice(&raw[..24]), &raw[24..]).map_err(|_| "Can't decrypt.".to_string())
+    }
+
+    async fn blob_send(&self, peer: &str, req: &Req) {
+        let Req::Msg { msg } = req else { return };
+        let Some(file) = msg.file.as_ref().filter(|f| f.owner == self.me_s && f.size <= BLOB_MAX) else { return };
+        let url = self.mailbox_url();
+        let path: Option<String> = self.db.lock().unwrap().query_row("SELECT path FROM shared_files WHERE id = ?1", [&file.id], |r| r.get(0)).optional().ok().flatten();
+        let (Some(path), false) = (path, url.is_empty()) else { return };
+        let Ok(data) = tokio::fs::read(&path).await else { return };
+        let Ok(sealed) = self.seal_bytes(peer, &data) else { return };
+        let ts = now();
+        let sig = self.sign_hex(&format!("blobput:{peer}:{}:{ts}:{}", file.id, sealed.len()));
+        let res = self
+            .http
+            .post(format!("{url}/blob/put?from={}&to={peer}&id={}&ts={ts}&sig={sig}", self.me_s, file.id))
+            .timeout(Duration::from_secs(600))
+            .body(sealed)
+            .send()
+            .await;
+        match res {
+            Ok(r) if r.status().is_success() => self.log(&format!("mailbox: left {} for {}", file.name, &peer[..8])),
+            Ok(r) => self.log(&format!("mailbox: couldn't leave a file: {}", r.status())),
+            Err(e) => self.log(&format!("mailbox: couldn't leave a file: {e}")),
+        }
+    }
+
+    async fn blob_fetch(&self, from: &str, file: &FileMeta, chat: &str) -> bool {
+        if self.local_copy(file).is_some() {
+            return true;
+        }
+        let url = self.mailbox_url();
+        let ts = now();
+        let sig = self.sign_hex(&format!("blobget:{}:{}:{ts}", self.me_s, file.id));
+        let Ok(r) = self.http.post(format!("{url}/blob/get")).timeout(Duration::from_secs(600)).json(&json!({ "who": self.me_s, "id": file.id, "ts": ts, "sig": sig })).send().await else { return false };
+        if !r.status().is_success() {
+            return false;
+        }
+        let Ok(raw) = r.bytes().await else { return false };
+        let Ok(plain) = self.open_bytes(from, &raw) else {
+            self.log("mailbox: a file couldn't be decrypted");
+            return false;
+        };
+        if plain.len() as u64 != file.size {
+            return false;
+        }
+        let Ok(dir) = Self::auto_dir() else { return false };
+        let path = unique_path(&dir, &safe_file_name(&file.name));
+        if tokio::fs::write(&path, &plain).await.is_err() {
+            return false;
+        }
+        let p = path.to_string_lossy().into_owned();
+        let _ = self.db.lock().unwrap().execute("INSERT OR REPLACE INTO downloads (file_id, path, chat) VALUES (?1, ?2, ?3)", [&file.id, &p, chat]);
+        self.transfers.lock().unwrap().push(Transfer {
+            id: new_id(),
+            name: path.file_name().and_then(|n| n.to_str()).unwrap_or(&file.name).to_string(),
+            size: file.size,
+            done: file.size,
+            status: "done".into(),
+            error: None,
+            speed: 0.0,
+            path: p,
+            file: file.clone(),
+            chat: chat.to_string(),
+        });
+        self.emit_transfers();
+        let ts = now();
+        let sig = self.sign_hex(&format!("blobdel:{}:{}:{ts}", self.me_s, file.id));
+        let _ = self.http.post(format!("{url}/blob/del")).json(&json!({ "who": self.me_s, "id": file.id, "ts": ts, "sig": sig })).send().await;
+        self.log(&format!("mailbox: picked up file {}", file.name));
+        true
+    }
+
     // ----- Offline mailbox: encrypted, so only the recipient can read it -----
 
     pub fn mailbox_url(&self) -> String {
@@ -704,7 +842,7 @@ impl Node {
     }
 
     fn mailbox_ok(req: &Req) -> bool {
-        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. })
+        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. })
     }
 
     async fn mailbox_post(&self, path: &str, body: Value) -> Result<Value, String> {
@@ -746,6 +884,12 @@ impl Node {
                 ids.push(id);
                 match self.open_box(from, sealed) {
                     Ok(req) if Self::mailbox_ok(&req) => {
+                        if let Req::Msg { msg } = &req {
+                            if let Some(file) = msg.file.as_ref().filter(|f| f.owner == from && f.size <= BLOB_MAX) {
+                                let chat = msg.group.as_ref().map(|g| format!("g:{g}")).unwrap_or_else(|| from.to_string());
+                                self.blob_fetch(from, file, &chat).await;
+                            }
+                        }
                         if let Err(e) = self.on_request(from, req) {
                             self.log(&format!("mailbox: message from {} refused: {e}", &from[..from.len().min(8)]));
                         }
@@ -950,7 +1094,12 @@ impl Node {
             let Some((seq, payload)) = row else { break };
             let delivered = match serde_json::from_str::<Req>(&payload) {
                 Ok(req) => match self.request(&peer, &req).await {
-                    Err(ReqError::Offline(_)) => Self::mailbox_ok(&req) && self.mailbox_send(&peer, &req).await.is_ok(),
+                    Err(ReqError::Offline(_)) => {
+                        Self::mailbox_ok(&req) && {
+                            self.blob_send(&peer, &req).await;
+                            self.mailbox_send(&peer, &req).await.is_ok()
+                        }
+                    }
                     _ => true,
                 },
                 Err(_) => true,
@@ -1123,6 +1272,12 @@ impl Node {
                 let inserted = self.store_message(&msg.id, &chat, peer, &name, text.as_deref(), msg.file.as_ref(), msg.ts);
                 if inserted {
                     self.update_name(peer, &name);
+                    if let Some(f) = &msg.file {
+                        let (on, gb) = self.autodl();
+                        if on && f.size <= gb.saturating_mul(1024 * 1024 * 1024) && self.local_copy(f).is_none() {
+                            let _ = self.download_into(f.clone(), chat.clone(), true);
+                        }
+                    }
                     let body = match (&msg.file, &text) {
                         (Some(f), _) => format!("Sent a file: {}", f.name),
                         (None, Some(t)) => t.chars().take(120).collect(),
@@ -1230,6 +1385,29 @@ impl Node {
                     return Err("Not allowed.".into());
                 }
                 self.apply_control(&party_id, &state, position);
+                Ok(ok)
+            }
+            Req::Thumb { file_id, data } => {
+                if data.len() > 300_000 || !data.starts_with('{') {
+                    return Err("Bad preview.".into());
+                }
+                let theirs = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT 1 FROM messages WHERE json_extract(file, '$.id') = ?1 AND json_extract(file, '$.owner') = ?2 LIMIT 1",
+                        [&file_id, peer],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if theirs {
+                    let _ = self.db.lock().unwrap().execute("INSERT OR REPLACE INTO thumbs (file_id, data) VALUES (?1, ?2)", [&file_id, &data]);
+                    self.emit("thumb", json!({ "fileId": file_id, "thumb": serde_json::from_str::<Value>(&data).unwrap_or(Value::Null) }));
+                }
                 Ok(ok)
             }
             Req::FileGet { .. } | Req::Probe { .. } | Req::ProbeMe => Err("Unexpected.".into()),
@@ -1511,7 +1689,7 @@ impl Node {
     pub fn messages(&self, chat: &str, limit: usize) -> Vec<Value> {
         let db = self.db.lock().unwrap();
         let mut stmt = db
-            .prepare("SELECT id, chat, sender, sender_name, text, file, ts FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT ?2")
+            .prepare("SELECT id, chat, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id')) FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT ?2")
             .unwrap();
         let mut rows: Vec<Value> = stmt
             .query_map(params![chat, limit.clamp(1, 20000) as i64], |r| {
@@ -1525,6 +1703,7 @@ impl Node {
                     "text": r.get::<_, Option<String>>(4)?,
                     "file": file.and_then(|f| serde_json::from_str::<Value>(&f).ok()),
                     "ts": r.get::<_, i64>(6)?,
+                    "thumb": r.get::<_, Option<String>>(7)?.and_then(|t| serde_json::from_str::<Value>(&t).ok()),
                     "mine": sender == self.me_s,
                 }))
             })
@@ -1894,6 +2073,17 @@ impl Node {
     }
 
     pub fn download(self: &Arc<Self>, file: FileMeta, chat: String) -> Result<String, String> {
+        self.download_into(file, chat, false)
+    }
+
+    /// Files saved automatically go to Downloads/UaN.
+    fn auto_dir() -> Result<PathBuf, String> {
+        let dir = dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")?.join("UaN");
+        std::fs::create_dir_all(&dir).map_err(e2s)?;
+        Ok(dir)
+    }
+
+    pub fn download_into(self: &Arc<Self>, file: FileMeta, chat: String, auto: bool) -> Result<String, String> {
         if let Some(t) = self.transfers.lock().unwrap().iter().find(|t| t.file.id == file.id && t.status != "error") {
             let id = t.id.clone();
             let paused = t.status == "paused";
@@ -1904,7 +2094,7 @@ impl Node {
             }
             return Ok(id);
         }
-        let dir = dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")?;
+        let dir = if auto { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
         let path = unique_path(&dir, &safe_file_name(&file.name));
         let id = new_id();
         self.transfers.lock().unwrap().push(Transfer {
@@ -2548,7 +2738,7 @@ impl Node {
     pub fn search(&self, q: &str, kind: &str, from: &str, chat: &str, since: i64) -> Vec<Value> {
         use rusqlite::types::Value as Sql;
         let mut sql = String::from(
-            "SELECT id, chat, sender, sender_name, text, file, ts FROM messages WHERE 1 = 1",
+            "SELECT id, chat, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id')) FROM messages WHERE 1 = 1",
         );
         let mut args: Vec<Sql> = Vec::new();
         let q = q.trim();
@@ -2600,6 +2790,7 @@ impl Node {
                 "text": r.get::<_, Option<String>>(4)?,
                 "file": file.and_then(|f| serde_json::from_str::<Value>(&f).ok()),
                 "ts": r.get::<_, i64>(6)?,
+                "thumb": r.get::<_, Option<String>>(7)?.and_then(|t| serde_json::from_str::<Value>(&t).ok()),
                 "mine": sender == self.me_s,
             }))
         });

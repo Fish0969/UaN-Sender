@@ -41,16 +41,22 @@ sudo apt install ./UaN_*_amd64.deb
 - **Watch together.** In a group, every video has a *Watch together* button. The PC with the fastest
   connection shares the film, it streams for everyone, starts when everyone has enough loaded, and
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
-- **Offline friends.** Messages wait (encrypted) in a free mailbox, so they arrive even if you have
-  turned your PC off by the time your friend comes online.
+- **Previews.** Photos and videos show a preview picture (and the video's length) in the chat, even
+  when the sender's PC is off.
+- **Offline friends.** Messages, previews and small files (photos, short clips up to 24 MB) wait
+  encrypted in a free mailbox, so they arrive even if you have turned your PC off by the time your
+  friend comes online.
+- **Automatic downloads.** Files friends send are downloaded in the background (up to 10 GB each by
+  default, change it in Settings) to `Downloads/UaN`, so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
   **profile picture, status, themes**.
 
 ## Good to know
 
-- **The sender's PC must be on, with UaN running**, for friends to watch or download what they sent.
-  That's why UaN starts with your PC and stays in the tray when you close the window.
+- **Big files need both PCs on at the same time once**: the sender's PC must be on, with UaN running,
+  until the friend has watched or downloaded it (automatic downloads take care of this in the
+  background). That's why UaN starts with your PC and stays in the tray when you close the window.
   Quit it from the tray icon menu.
 - If two PCs can't connect directly, traffic goes through a public relay, which is slower.
 - Some video formats (e.g. some AVI files) can't be played inside UaN; download those instead.

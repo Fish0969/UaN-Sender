@@ -49,11 +49,47 @@ async function verify(keyHex, message, sigHex) {
   }
 }
 
+// ---- Small encrypted files for offline friends (Workers KV) ----
+const MAX_BLOB = 25 * 1024 * 1024; // KV's value limit
+const BLOB_TTL = 14 * 86_400; // seconds
+const isId = (s) => typeof s === 'string' && /^[0-9a-f]{32}$/.test(s);
+
+async function blobPut(request, env, url) {
+  const q = url.searchParams;
+  const from = q.get('from'), to = q.get('to'), id = q.get('id'), ts = Number(q.get('ts')), sig = q.get('sig');
+  if (!isKey(from) || !isKey(to) || !isId(id) || !Number.isFinite(ts)) return fail('Bad request.');
+  if (Math.abs(Date.now() - ts) > CLOCK_SKEW_MS) return fail('Your PC clock is off.', 401);
+  const size = Number(request.headers.get('content-length') || 0);
+  if (!size || size > MAX_BLOB) return fail('Too big for the mailbox.', 413);
+  // The signature covers who, what and how big; the content itself is authenticated by its encryption.
+  if (!(await verify(from, `blobput:${to}:${id}:${ts}:${size}`, sig))) return fail('Bad signature.', 401);
+  const body = await request.arrayBuffer();
+  if (body.byteLength !== size) return fail('Upload incomplete.');
+  await env.FILES.put(`${to}/${id}`, body, { expirationTtl: BLOB_TTL, metadata: { from } });
+  return json({ ok: true });
+}
+
+async function blobGet(env, body) {
+  const { who, id, ts, sig } = body;
+  if (!isId(id) || !(await verify(who, `blobget:${who}:${id}:${ts}`, sig))) return fail('Bad signature.', 401);
+  const { value, metadata } = await env.FILES.getWithMetadata(`${who}/${id}`, 'arrayBuffer');
+  if (!value) return fail('Not found.', 404);
+  return new Response(value, { headers: { 'content-type': 'application/octet-stream', 'x-from': metadata?.from || '' } });
+}
+
+async function blobDel(env, body) {
+  const { who, id, ts, sig } = body;
+  if (!isId(id) || !(await verify(who, `blobdel:${who}:${id}:${ts}`, sig))) return fail('Bad signature.', 401);
+  await env.FILES.delete(`${who}/${id}`);
+  return json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/') return json({ ok: true, service: 'uan-mailbox' });
     if (request.method !== 'POST') return fail('Not found.', 404);
+    if (url.pathname === '/blob/put') return blobPut(request, env, url);
 
     let body;
     try {
@@ -91,6 +127,10 @@ export default {
         if (ids.length) await env.DB.batch(ids.map((id) => env.DB.prepare('DELETE FROM mail WHERE id = ? AND rcpt = ?').bind(id, who)));
         return json({ ok: true });
       }
+      case '/blob/get':
+        return blobGet(env, body);
+      case '/blob/del':
+        return blobDel(env, body);
       default:
         return fail('Not found.', 404);
     }

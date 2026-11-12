@@ -206,7 +206,14 @@ async function runSelfTest(file) {
   v.currentTime = 12;
   await new Promise((r) => { v.addEventListener('seeked', r, { once: true }); setTimeout(r, 15000); });
   await new Promise((r) => setTimeout(r, 2000));
-  report(v.currentTime > 12.5, `played and seeked: t=${v.currentTime.toFixed(2)} duration=${v.duration} via ${S.me.mediaBase ? 'http' : 'media scheme'}`);
+  let thumbInfo = 'no preview';
+  try {
+    const t = await makeThumb(file);
+    thumbInfo = t?.img?.startsWith('data:image/jpeg') ? `preview ${t.w}x${t.h} ${Math.round(t.img.length / 1024)}KB dur=${Math.round(t.dur)}` : 'preview missing';
+  } catch (e) {
+    thumbInfo = `preview failed: ${e}`;
+  }
+  report(v.currentTime > 12.5 && thumbInfo.startsWith('preview '), `played and seeked: t=${v.currentTime.toFixed(2)} duration=${v.duration} via ${S.me.mediaBase ? 'http' : 'media scheme'}; ${thumbInfo}`);
 }
 
 function renderMe() {
@@ -396,14 +403,21 @@ function renderMessages() {
 function messageNode(m, showSender = true) {
   return el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs'), 'data-id': m.id },
     isGroup(m.chat) && !m.mine && showSender ? el('div', { class: 'sender', text: m.senderName }) : null,
-    m.file ? fileCard(m.file, m.chat) : null,
+    m.file ? fileCard(m.file, m.chat, m.thumb) : null,
     m.text ? el('div', { class: 'bubble', text: m.text }) : null,
     el('span', { class: 'time', text: timeFmt.format(m.ts) }));
 }
 
-function fileCard(file, chat) {
+function fileCard(file, chat, thumb) {
   let preview = null;
-  if (IMAGE.test(file.mime) && file.size <= INLINE_IMAGE_LIMIT) {
+  if (thumb?.img && (IMAGE.test(file.mime) || /^video\//i.test(file.mime))) {
+    // The sender's preview: shows instantly, even when the sender's PC is off.
+    const video = /^video\//i.test(file.mime);
+    preview = el('button', { class: 'thumb', type: 'button', title: video ? 'Play here without downloading' : 'Open', onclick: () => openViewer(file) },
+      el('img', { src: thumb.img, alt: '', onload: keepBottom }),
+      video ? el('span', { class: 'play-badge' }, svg(ICON.bigplay)) : null,
+      video && thumb.dur ? el('span', { class: 'dur', text: fmtTime(thumb.dur) }) : null);
+  } else if (IMAGE.test(file.mime) && file.size <= INLINE_IMAGE_LIMIT) {
     preview = el('img', { src: mediaUrl(file), alt: '', loading: 'lazy', onclick: () => openViewer(file), onload: keepBottom, onerror: (e) => e.target.remove() });
   } else if (PLAYABLE.test(file.mime)) {
     preview = el('button', { class: 'play', type: 'button', title: 'Play here without downloading', onclick: () => openViewer(file) },
@@ -463,7 +477,81 @@ function keepBottom() {
   if (wasNearBottom) $('msgs').scrollTop = $('msgs').scrollHeight;
 }
 
+const thumbPending = new Set();
+
+// Draws a small JPEG preview of a photo or a frame of a video (plus its length).
+async function makeThumb(file) {
+  const MAX = 360;
+  const draw = (src, w, h) => {
+    const scale = Math.min(1, MAX / Math.max(w, h));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(w * scale));
+    cv.height = Math.max(1, Math.round(h * scale));
+    cv.getContext('2d').drawImage(src, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/jpeg', 0.72);
+  };
+  const timeout = (ms, what) => new Promise((_, rej) => setTimeout(() => rej(new Error(what)), ms));
+  if (IMAGE.test(file.mime)) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = mediaUrl(file);
+    await Promise.race([img.decode(), timeout(20000, 'image timeout')]);
+    return { img: draw(img, img.naturalWidth, img.naturalHeight), w: img.naturalWidth, h: img.naturalHeight };
+  }
+  if (/^video\//i.test(file.mime)) {
+    const v = document.createElement('video');
+    v.crossOrigin = 'anonymous';
+    v.muted = true;
+    v.preload = 'auto';
+    v.src = mediaUrl(file);
+    try {
+      await Promise.race([new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('video error')); }), timeout(25000, 'metadata timeout')]);
+      const dur = v.duration;
+      v.currentTime = Math.min(isFinite(dur) ? dur * 0.1 : 5, 60);
+      await Promise.race([new Promise((res) => { v.onseeked = res; }), timeout(25000, 'seek timeout')]);
+      await new Promise((r) => setTimeout(r, 150));
+      return { img: draw(v, v.videoWidth, v.videoHeight), dur: isFinite(dur) ? dur : null, w: v.videoWidth, h: v.videoHeight };
+    } finally {
+      v.removeAttribute('src');
+      v.load();
+    }
+  }
+  return null;
+}
+
+async function ensureThumb(m) {
+  if (!m.mine || !m.file || m.thumb || thumbPending.has(m.file.id)) return;
+  if (!IMAGE.test(m.file.mime) && !/^video\//i.test(m.file.mime)) return;
+  thumbPending.add(m.file.id);
+  try {
+    const t = await makeThumb(m.file);
+    if (t?.img && t.img.length < 280000) await invoke('set_thumb', { fileId: m.file.id, data: JSON.stringify(t) });
+  } catch {
+    // No preview for this one (e.g. a format the built-in player can't decode); the card still works.
+  }
+}
+
+listen('thumb', ({ payload }) => {
+  let visible = false;
+  for (const list of S.msgs.values()) {
+    for (const m of list) {
+      if (m.file?.id === payload.fileId) {
+        m.thumb = payload.thumb;
+        if (m.chat === S.active) visible = true;
+      }
+    }
+  }
+  if (visible) {
+    const box = $('msgs');
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    const top = box.scrollTop;
+    renderMessages();
+    if (!near) box.scrollTop = top;
+  }
+});
+
 function onMessage(m) {
+  ensureThumb(m);
   const list = S.msgs.get(m.chat);
   const isNew = list && !list.some((x) => x.id === m.id);
   if (isNew) list.push(m);
@@ -972,6 +1060,8 @@ $('settingsBtn').addEventListener('click', async () => {
   renderSwatches();
   $('sMailbox').value = S.me.mailbox || '';
   $('sAuto').checked = S.me.autostart;
+  $('sAutoDl').checked = S.me.autodl;
+  $('sAutoDlGb').value = S.me.autodlGb;
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
   $('sCode').textContent = S.me.code;
   $('sCode').classList.add('hidden');
@@ -996,6 +1086,7 @@ $('settingsForm').addEventListener('submit', async (e) => {
       invoke('check_mailbox').catch(() => {});
     }
     if (!S.me.profileName && $('sAuto').checked !== S.me.autostart) await invoke('set_autostart', { enabled: $('sAuto').checked });
+    await invoke('set_autodl', { on: $('sAutoDl').checked, gb: Math.max(1, Number($('sAutoDlGb').value) || 10) });
     S.me = await invoke('state');
     renderMe();
     $('settingsDlg').close();
@@ -1516,7 +1607,10 @@ async function renderGallery() {
       const isVideo = /^video\//i.test(m.file.mime);
       let thumb;
       let badge = null;
-      if (isImg) {
+      if (m.thumb?.img) {
+        thumb = el('img', { src: m.thumb.img, alt: '' });
+        if (isVideo && m.thumb.dur) badge = el('span', { class: 'tile-badge', text: fmtTime(m.thumb.dur) });
+      } else if (isImg) {
         thumb = el('img', { src: mediaUrl(m.file), alt: '', loading: 'lazy' });
       } else if (isVideo && videoThumbs++ < 24) {
         // A frame from a few seconds in, as a preview picture.

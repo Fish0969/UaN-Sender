@@ -6,3 +6,8 @@ compatibility_date = "2025-06-01"
 binding = "DB"
 database_name = "uan-mailbox"
 database_id = "f9391250-4d65-4cea-a52a-4c51d78de9f8"
+
+# Small files (photos, short clips) waiting for an offline friend. Encrypted; deleted after pickup or 14 days.
+[[kv_namespaces]]
+binding = "FILES"
+id = "f6ce38f6654e4b7ab94aed2b088c9e0b"

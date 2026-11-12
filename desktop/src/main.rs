@@ -83,6 +83,8 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "platform": std::env::consts::OS,
         "version": app.package_info().version.to_string(),
         "selftest": selftest.0,
+        "autodl": node.autodl().0,
+        "autodlGb": node.autodl().1,
     })
 }
 
@@ -200,6 +202,16 @@ fn selftest_result(app: AppHandle, ok: bool, detail: String) {
         let _ = std::fs::write(out, format!("{} {}\n", if ok { "ok" } else { "fail" }, detail));
         app.exit(if ok { 0 } else { 1 });
     }
+}
+
+#[tauri::command]
+fn set_thumb(node: State<'_, Arc<Node>>, file_id: String, data: String) -> CmdResult<()> {
+    node.set_thumb(&file_id, &data)
+}
+
+#[tauri::command]
+fn set_autodl(node: State<'_, Arc<Node>>, on: bool, gb: u64) {
+    node.set_autodl(on, gb)
 }
 
 #[tauri::command]
@@ -456,6 +468,8 @@ fn main() {
             transfers,
             transfer_action,
             set_autostart,
+            set_thumb,
+            set_autodl,
             check_update,
             install_update,
             selftest_result,
