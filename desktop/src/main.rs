@@ -322,6 +322,12 @@ fn set_autostart(app: AppHandle, enabled: bool) -> CmdResult<bool> {
     Ok(al.is_enabled().unwrap_or(false))
 }
 
+/// Size and modification time of our own program file, to notice when an update replaced it.
+fn exe_stamp() -> Option<(u64, std::time::SystemTime)> {
+    let m = std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok())?;
+    Some((m.len(), m.modified().ok()?))
+}
+
 fn main() {
     // On some Linux graphics setups (NVIDIA, virtual machines, some laptops) WebKitGTK's GPU paths
     // leave the window blank/grey. The fallback renderer works everywhere, so use it unless the user
@@ -346,7 +352,15 @@ fn main() {
     let mut builder = tauri::Builder::default();
     if profile_name.is_none() {
         // Only one main UaN at a time; test profiles can run side by side.
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
+        // If UaN was updated while this copy kept running in the tray, opening it again restarts into
+        // the new version instead of showing the old window.
+        let started_exe = exe_stamp();
+        builder = builder.plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
+            if exe_stamp() != started_exe {
+                app.restart();
+            }
+            show_main(app);
+        }));
     }
     builder
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
