@@ -1,0 +1,8 @@
+name = "uan-mailbox"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "uan-mailbox"
+database_id = "f9391250-4d65-4cea-a52a-4c51d78de9f8"

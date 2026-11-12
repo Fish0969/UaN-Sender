@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>UaN</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- First run -->
+  <div id="setup" class="login hidden">
+    <form id="setupForm" class="login-box">
+      <div class="logo"><img src="icon.png" alt=""><span>UaN</span></div>
+      <p class="sub">No account, no server. Everything runs on your own PC and goes straight to your friends.</p>
+      <label>What should your friends call you?<input id="setupName" maxlength="32" required spellcheck="false"></label>
+      <div id="setupError" class="error"></div>
+      <button class="accent wide">Continue</button>
+    </form>
+  </div>
+
+  <!-- Main -->
+  <div id="main" class="main hidden">
+    <aside class="side">
+      <div class="me">
+        <div class="avatar" id="meAvatar"></div>
+        <div class="grow">
+          <div id="meName" class="ellipsis strong"></div>
+          <div id="meStatus" class="sub ellipsis"></div>
+          <div id="meProfile" class="sub hidden"></div>
+        </div>
+        <button class="icon" id="searchBtn" title="Search messages and files (Ctrl+F)">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        </button>
+        <button class="icon" id="settingsBtn" title="Settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+        </button>
+      </div>
+      <div class="code-row">
+        <button id="copyCode" class="small" type="button" title="Copies your code without showing it, so nobody watching your screen can grab it">Copy friend code</button>
+        <button id="showCode" class="small" type="button">Show friend code</button>
+      </div>
+      <div id="codeText" class="code code-reveal hidden"></div>
+      <form id="addForm" class="add">
+        <input id="addInput" placeholder="Paste a friend code" required spellcheck="false" autocomplete="off">
+        <button class="icon" title="Add friend"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      </form>
+      <div id="addMsg" class="note pad hidden"></div>
+      <div class="scroll">
+        <div id="reqSec" class="hidden">
+          <div class="cap">Friend requests</div>
+          <ul id="reqList" class="list"></ul>
+        </div>
+        <div class="cap cap-row">Groups <button class="icon tiny" id="newGroupBtn" title="Create a group"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        <ul id="groupList" class="list"></ul>
+        <div id="noGroups" class="note pad">No groups yet.</div>
+        <div class="cap">Friends</div>
+        <ul id="friendList" class="list"></ul>
+        <div id="noFriends" class="note pad">No friends yet. Send your friend code to someone, or paste theirs above.</div>
+        <div id="outSec" class="hidden">
+          <div class="cap">Waiting for them to accept</div>
+          <ul id="outList" class="list"></ul>
+        </div>
+      </div>
+      <button id="multiBtn" class="side-btn">
+        <svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z"/></svg>
+        Send to several
+      </button>
+    </aside>
+
+    <section class="content">
+      <div id="empty" class="empty">
+        <img src="icon.png" alt="">
+        <p>Pick a friend or group to start chatting.<br>Drop any file into a chat to send it, any size (up to 4 TB).</p>
+      </div>
+      <div id="chat" class="chat hidden">
+        <header class="chat-head">
+          <div class="avatar" id="chatAvatar"></div>
+          <div class="grow">
+            <div id="chatName" class="strong ellipsis"></div>
+            <div id="chatStatus" class="sub ellipsis"></div>
+          </div>
+          <button class="icon" id="galleryBtn" title="Photos, videos and files in this chat">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </button>
+          <button class="icon" id="chatInfoBtn" title="Details">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+          </button>
+        </header>
+        <div id="inviteBar" class="invite-bar hidden"></div>
+        <div id="msgs" class="msgs"></div>
+        <form id="composer" class="composer">
+          <button type="button" class="icon" id="attachBtn" title="Send files">
+            <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
+          </button>
+          <input id="msgInput" placeholder="Message" autocomplete="off" maxlength="5000">
+          <button class="accent" id="sendBtn">Send</button>
+        </form>
+        <div id="drop" class="drop hidden">Drop to send</div>
+      </div>
+      <div id="transfers" class="transfers hidden">
+        <button id="trHead" class="tr-head" type="button"><span id="trTitle">Downloads</span><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div id="trList" class="tr-list"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Viewer -->
+  <div id="viewer" class="viewer hidden">
+    <div class="viewer-bar">
+      <span id="viewerName" class="grow ellipsis strong"></span>
+      <button id="viewerDl" class="small" type="button">Download</button>
+      <button id="viewerClose" class="icon light" type="button" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div id="viewerBody" class="viewer-body"></div>
+    <div id="viewerNote" class="viewer-note hidden"></div>
+  </div>
+
+  <!-- Watch together -->
+  <div id="party" class="viewer party hidden">
+    <div class="viewer-bar">
+      <span class="party-dot"></span>
+      <span id="partyTitle" class="grow ellipsis strong"></span>
+      <button id="partyStart" class="small hidden" type="button">Start now</button>
+      <button id="partyEnd" class="small hidden" type="button">End for everyone</button>
+      <button id="partyLeave" class="small" type="button">Leave</button>
+    </div>
+    <div id="partyMembers" class="party-members"></div>
+    <div class="viewer-body" id="partyBody">
+      <div id="partyStage" class="stage"></div>
+      <div id="partyWait" class="party-wait"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <input type="file" id="subFile" accept=".srt,.vtt" hidden>
+  <input type="file" id="avatarFile" accept="image/*" hidden>
+
+  <!-- Gallery -->
+  <dialog id="galleryDlg" class="wide-dlg">
+    <form method="dialog" id="galleryForm">
+      <div class="search-row">
+        <strong class="grow" id="galleryTitle"></strong>
+        <button type="button" class="icon" id="galleryClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="tabs gtabs">
+        <button type="button" class="tab active" data-tab="media">Photos &amp; videos</button>
+        <button type="button" class="tab" data-tab="files">Files</button>
+      </div>
+      <div id="galleryBody" class="results gallery"></div>
+    </form>
+  </dialog>
+
+  <!-- Search -->
+  <dialog id="searchDlg" class="wide-dlg">
+    <form id="searchForm" method="dialog">
+      <div class="search-row">
+        <input id="sq" placeholder="Search text, file names, extensions (e.g. .mkv), people…" autocomplete="off" spellcheck="false">
+        <button type="button" class="icon" id="searchClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="filters">
+        <select id="sKind">
+          <option value="">Everything</option>
+          <option value="text">Messages only</option>
+          <option value="files">All files</option>
+          <option value="video">Videos</option>
+          <option value="image">Images</option>
+          <option value="audio">Audio</option>
+          <option value="document">Documents</option>
+          <option value="archive">Archives (zip, rar…)</option>
+        </select>
+        <select id="sFrom"></select>
+        <select id="sChat"></select>
+        <select id="sSince">
+          <option value="0">Any time</option>
+          <option value="1">Today</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="365">Last year</option>
+        </select>
+      </div>
+      <div id="sCount" class="note"></div>
+      <div id="sResults" class="results"></div>
+    </form>
+  </dialog>
+
+  <!-- Watch together setup -->
+  <dialog id="partyDlg">
+    <form id="partyForm" method="dialog">
+      <h2>Watch together</h2>
+      <p class="sub" id="pFile"></p>
+      <div class="pick-head"><span class="note">Who do you want to invite?</span><button type="button" class="link" id="pAll">All</button></div>
+      <div id="pList" class="pick-list"></div>
+      <div id="pBest" class="best"></div>
+      <div id="pError" class="error"></div>
+      <div class="actions">
+        <button type="button" id="pCancel">Cancel</button>
+        <span class="grow"></span>
+        <button class="accent" id="pStart">Invite</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog id="settingsDlg">
+    <form id="settingsForm" method="dialog">
+      <h2>Settings</h2>
+      <div class="profile-row">
+        <button type="button" id="sAvatarBtn" class="avatar-pick" title="Change profile picture"></button>
+        <div class="grow">
+          <label>Your name<input id="sName" maxlength="32" required spellcheck="false"></label>
+          <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming 🎮, Watching a film, Away"></label>
+        </div>
+      </div>
+      <div class="note"><button type="button" class="link" id="sAvatarPick">Choose picture…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
+      <div class="group">
+        <div class="group-title">Appearance</div>
+        <label class="inline">Theme
+          <select id="sTheme"><option value="system">Same as Windows</option><option value="light">Light</option><option value="dark">Dark</option></select>
+        </label>
+        <div class="swatches" id="sAccent"></div>
+      </div>
+      <div class="group">
+        <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when Windows starts (runs in the tray)</label>
+        <div class="note">UaN keeps running in the tray when you close the window, so friends can watch and download what you sent them. Quit it from the tray icon.</div>
+      </div>
+      <div class="group">
+        <div class="group-title">Offline mailbox</div>
+        <input id="sMailbox" placeholder="https://uan-mailbox.<name>.workers.dev" spellcheck="false">
+        <div class="note" id="sMailboxNote">When a friend is offline, your messages wait here (encrypted) so you can turn your PC off. Files still come from the sender's PC.</div>
+      </div>
+      <div class="group">
+        <div class="group-title">Your friend code</div>
+        <div class="code-box hidden" id="sCode"></div>
+        <button type="button" class="link" id="sShowCode">Show friend code</button>
+        <div class="note">Your identity lives on this PC only. There is no password and no account to lose to a server.</div>
+      </div>
+      <div id="sError" class="error"></div>
+      <div class="actions">
+        <span class="grow"></span>
+        <button type="button" id="sCancel">Cancel</button>
+        <button class="accent">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Pick friends (send to several / new group / add members) -->
+  <dialog id="pickDlg">
+    <form id="pickForm" method="dialog">
+      <h2 id="pickTitle"></h2>
+      <input id="pickName" placeholder="Group name" maxlength="40" class="hidden">
+      <div class="pick-head"><span class="note" id="pickNote"></span><button type="button" class="link" id="pickAll">All</button></div>
+      <div id="pickRecent" class="recent hidden"></div>
+      <div id="pickList" class="pick-list"></div>
+      <input id="pickText" placeholder="Message (optional)" maxlength="5000" class="hidden">
+      <div id="pickError" class="error"></div>
+      <div class="actions">
+        <button type="button" id="pickCancel">Cancel</button>
+        <span class="grow"></span>
+        <button type="button" id="pickAlt" class="hidden"></button>
+        <button class="accent" id="pickOk"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Group details -->
+  <dialog id="groupDlg">
+    <form id="groupForm" method="dialog">
+      <h2 id="gTitle"></h2>
+      <div class="rename hidden" id="gRenameRow">
+        <input id="gName" maxlength="40">
+        <button type="button" id="gRename">Rename</button>
+      </div>
+      <div class="group-title" id="gCount"></div>
+      <ul id="gMembers" class="list members"></ul>
+      <div id="gError" class="error"></div>
+      <div class="actions">
+        <button type="button" id="gLeave" class="danger-text"></button>
+        <span class="grow"></span>
+        <button type="button" id="gAdd" class="hidden">Add friends…</button>
+        <button type="button" id="gClose" class="accent">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Confirm -->
+  <dialog id="askDlg">
+    <form method="dialog">
+      <p id="askText"></p>
+      <div class="actions">
+        <span class="grow"></span>
+        <button value="no">Cancel</button>
+        <button value="yes" class="accent" id="askOk">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

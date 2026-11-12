@@ -1,0 +1,9 @@
+# Build output
+target/
+desktop/gen/
+# Node / Cloudflare tooling
+node_modules/
+.wrangler/
+# Local tools and logs
+.claude/
+*.log
