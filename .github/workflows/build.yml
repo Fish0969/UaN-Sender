@@ -81,6 +81,17 @@ jobs:
           t appimage dist/*.AppImage --appimage-extract-and-run
           grep -q '^ok' /tmp/r-deb.txt && grep -q '^ok' /tmp/r-appimage.txt
 
+      # "Open in VLC": VLC streams the film from UaN (no download) and is remote-controlled (play, pause, seek).
+      - name: VLC self-test (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y vlc > /dev/null
+          rm -rf /tmp/uan-vlc
+          UAN_DATA=/tmp/uan-vlc UAN_SELFTEST_VIDEO=/tmp/uan-test.mkv UAN_SELFTEST_VLC=1 UAN_VLC_EXTRA="--intf=dummy --vout=dummy --aout=dummy" UAN_SELFTEST_OUT=/tmp/r-vlc.txt LIBGL_ALWAYS_SOFTWARE=1 timeout 150 dbus-run-session -- xvfb-run -a uan || true
+          cat /tmp/r-vlc.txt || echo "no result"
+          grep -q '^ok' /tmp/r-vlc.txt
+
       - name: Playback self-test (Windows)
         if: runner.os == 'Windows'
         continue-on-error: true
@@ -97,6 +108,18 @@ jobs:
             cat "$RUNNER_TEMP/result-$mode.txt" || echo "no result"
           done
           grep -q '^ok' "$RUNNER_TEMP/result-scheme.txt" && grep -q '^ok' "$RUNNER_TEMP/result-http.txt"
+
+      - name: VLC self-test (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        working-directory: desktop
+        run: |
+          choco install vlc -y --no-progress > /dev/null
+          rm -rf "$RUNNER_TEMP/uan-vlc"
+          UAN_DATA="$RUNNER_TEMP/uan-vlc" UAN_SELFTEST_VIDEO="$RUNNER_TEMP/uan-test.mp4" UAN_SELFTEST_VLC=1 UAN_VLC_EXTRA="--intf=dummy --vout=dummy --aout=dummy" UAN_SELFTEST_OUT="$RUNNER_TEMP/result-vlc.txt" timeout 150 ./target/release/uan.exe || true
+          cat "$RUNNER_TEMP/result-vlc.txt" || echo "no result"
+          grep -q '^ok' "$RUNNER_TEMP/result-vlc.txt"
 
       - uses: actions/upload-artifact@v4
         with:

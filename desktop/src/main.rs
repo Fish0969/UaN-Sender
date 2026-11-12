@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod node;
+mod vlc;
 
 use node::{FileMeta, Node, Party, Transfer};
 use serde_json::{json, Value};
@@ -25,6 +26,9 @@ struct Profile {
 
 /// Base URL of the local player server (Linux), or None to use the media:// scheme (Windows).
 struct MediaBase(Option<String>);
+
+/// The local player server (always on): external players like VLC stream from here.
+struct HttpBase(String);
 
 /// Built-in playback self-test (local and CI builds only): a video to play on start-up.
 struct SelfTest(Option<FileMeta>);
@@ -70,7 +74,7 @@ pub fn sync_tray(app: &AppHandle) {
 // ---------- Commands ----------
 
 #[tauri::command]
-fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'_, MediaBase>, selftest: State<'_, SelfTest>, app: AppHandle) -> Value {
+fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'_, MediaBase>, http: State<'_, HttpBase>, selftest: State<'_, SelfTest>, app: AppHandle) -> Value {
     json!({
         "id": node.id(),
         "code": node.friend_code(),
@@ -80,6 +84,9 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "profileName": profile.name,
         "autostart": app.autolaunch().is_enabled().unwrap_or(false),
         "mediaBase": media.0,
+        "httpBase": http.0,
+        "vlc": vlc::find().is_some(),
+        "selftestVlc": std::env::var("UAN_SELFTEST_VLC").is_ok(),
         "platform": std::env::consts::OS,
         "version": app.package_info().version.to_string(),
         "selftest": selftest.0,
@@ -212,6 +219,41 @@ fn set_thumb(node: State<'_, Arc<Node>>, file_id: String, data: String) -> CmdRe
 #[tauri::command]
 fn set_autodl(node: State<'_, Arc<Node>>, on: bool, gb: u64) {
     node.set_autodl(on, gb)
+}
+
+// ---------- VLC ----------
+
+#[tauri::command]
+fn vlc_open(http: State<'_, HttpBase>, vlc: State<'_, vlc::Vlc>, url: String, title: String, paused: bool) -> CmdResult<String> {
+    // Only films served by UaN itself.
+    if http.0.is_empty() || !url.starts_with(&format!("{}/", http.0)) {
+        return Err("Unexpected address.".into());
+    }
+    let title: String = title.chars().filter(|c| !c.is_control()).take(120).collect();
+    vlc.open(&url, &title, paused)
+}
+
+#[tauri::command]
+async fn vlc_status(vlc: State<'_, vlc::Vlc>, id: String) -> CmdResult<Value> {
+    Ok(vlc.status(&id).await)
+}
+
+#[tauri::command]
+async fn vlc_command(vlc: State<'_, vlc::Vlc>, id: String, cmd: String, value: f64) -> CmdResult<()> {
+    vlc.command(&id, &cmd, value).await
+}
+
+/// Opens the VLC download page in the browser.
+#[tauri::command]
+fn open_vlc_site() {
+    let url = "https://www.videolan.org/vlc/";
+    let opener = if cfg!(windows) { "explorer" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(url).spawn();
+}
+
+#[tauri::command]
+fn vlc_close(vlc: State<'_, vlc::Vlc>, id: String) {
+    vlc.close(&id)
 }
 
 #[tauri::command]
@@ -388,9 +430,11 @@ fn main() {
             let node = tauri::async_runtime::block_on(Node::start(app.handle().clone(), dir.clone()))?;
             node.resume_downloads();
             // WebKitGTK (Linux) can't stream video from custom schemes, so the player uses a local HTTP server there.
+            let http_base = tauri::async_runtime::block_on(node::start_media_server(node.clone())).unwrap_or_default();
             let use_http = cfg!(target_os = "linux") || std::env::var("UAN_HTTP_MEDIA").is_ok();
-            let media_base = if use_http { tauri::async_runtime::block_on(node::start_media_server(node.clone())).ok() } else { None };
-            app.manage(MediaBase(media_base));
+            app.manage(MediaBase(if use_http && !http_base.is_empty() { Some(http_base.clone()) } else { None }));
+            app.manage(HttpBase(http_base));
+            app.manage(vlc::Vlc::default());
             // Playback self-test, used by the automatic build checks on the real downloadable packages.
             let selftest = std::env::var("UAN_SELFTEST_VIDEO").ok().and_then(|p| node.selftest_file(&p).ok());
             app.manage(SelfTest(selftest));
@@ -468,6 +512,11 @@ fn main() {
             transfers,
             transfer_action,
             set_autostart,
+            vlc_open,
+            vlc_status,
+            vlc_command,
+            vlc_close,
+            open_vlc_site,
             set_thumb,
             set_autodl,
             check_update,

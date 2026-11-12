@@ -398,3 +398,12 @@ input.gb { width: 64px; height: 24px; margin: 0 2px; padding: 0 4px; }
 .file .thumb .play-badge svg { width: 22px; height: 22px; fill: #fff; stroke: none; }
 .file .thumb .dur { position: absolute; right: 6px; bottom: 6px; font-size: 11px; color: #fff; background: rgba(0, 0, 0, .7); padding: 1px 5px; border-radius: 3px; }
 .file .thumb:hover { filter: brightness(1.1); background: #000; }
+
+/* ---------- VLC ---------- */
+.vlc-panel { position: absolute; inset: 0; display: grid; place-content: center; gap: 10px; text-align: center; color: #eee; background: #111; border-radius: 6px; padding: 24px; }
+.vlc-panel .vlc-cone { font-size: 46px; line-height: 1; }
+.vlc-panel .sub { color: #aaa; }
+.vlc-panel .row { display: flex; gap: 8px; justify-content: center; }
+.vlc-panel button { background: rgba(255, 255, 255, .12); color: #fff; border: 0; }
+.note-actions { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+.note-actions button { background: rgba(255, 255, 255, .15); color: #fff; border: 0; }

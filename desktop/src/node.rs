@@ -2947,6 +2947,58 @@ pub async fn start_media_server(node: Arc<Node>) -> Result<String, String> {
     Ok(base)
 }
 
+/// Streams a whole byte range in one response, reading 8 MB at a time (from disk, the watch-party
+/// cache, or the sender). External players like VLC seek by opening a new request with a Range.
+async fn stream_media<W: tokio::io::AsyncWrite + Unpin>(node: &Arc<Node>, path: &str, range: Option<&str>, w: &mut W) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let parts: Vec<String> = path.trim_start_matches('/').split('/').map(pct_decode).collect();
+    let size = parts.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    if parts.len() < 4 || size == 0 {
+        w.write_all(b"HTTP/1.1 404 Error\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n").await?;
+        return w.flush().await;
+    }
+    let file = FileMeta { owner: parts[0].clone(), id: parts[1].clone(), size, mime: parts[3].clone(), name: String::new() };
+    let wanted = range
+        .and_then(|r| r.trim().strip_prefix("bytes="))
+        .and_then(|r| r.split_once('-'))
+        .map(|(a, b)| (a.parse::<u64>().unwrap_or(0), b.parse::<u64>().ok()));
+    let (start, end) = match wanted {
+        Some((s, e)) => (s.min(size - 1), e.unwrap_or(size - 1).min(size - 1)),
+        None => (0, size - 1),
+    };
+    // Make sure the first piece is reachable before promising a response.
+    let first_len = (end - start + 1).min(MEDIA_CHUNK);
+    let first = match node.read_range(&file, start, first_len).await {
+        Ok(b) => b,
+        Err(e) => {
+            let msg: String = e.chars().filter(|c| c.is_ascii() && !c.is_control()).collect();
+            w.write_all(format!("HTTP/1.1 503 Error\r\nX-UaN-Error: {msg}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n").as_bytes()).await?;
+            return w.flush().await;
+        }
+    };
+    let mut head = if wanted.is_some() { "HTTP/1.1 206 Partial Content\r\n".to_string() } else { "HTTP/1.1 200 OK\r\n".to_string() };
+    head.push_str(&format!("Content-Type: {}\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\n", player_mime(&file.mime), end - start + 1));
+    if wanted.is_some() {
+        head.push_str(&format!("Content-Range: bytes {start}-{end}/{size}\r\n"));
+    }
+    head.push_str("Connection: close\r\n\r\n");
+    w.write_all(head.as_bytes()).await?;
+    w.write_all(&first).await?;
+    let mut pos = start + first.len() as u64;
+    while pos <= end {
+        let n = (end - pos + 1).min(MEDIA_CHUNK);
+        let bytes = node.read_range(&file, pos, n).await.map_err(std::io::Error::other)?;
+        if bytes.is_empty() {
+            break;
+        }
+        w.write_all(&bytes).await?;
+        pos += bytes.len() as u64;
+    }
+    w.flush().await?;
+    // "Connection: close": end this connection so the player starts a fresh request for the next seek.
+    Err(std::io::Error::other("stream done"))
+}
+
 async fn serve_media_http(node: Arc<Node>, mut sock: tokio::net::TcpStream, secret: &str) -> std::io::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let (r, mut w) = sock.split();
@@ -2976,6 +3028,13 @@ async fn serve_media_http(node: Arc<Node>, mut sock: tokio::net::TcpStream, secr
             }
         }
         let path = target.split('?').next().unwrap_or("");
+        // ?stream=1: one continuous response (for VLC and other external players), fetched piece by piece.
+        if method == "GET" && target.contains("stream=1") {
+            if let Some(rest) = path.strip_prefix(&format!("/{secret}/")) {
+                stream_media(&node, rest, range.as_deref(), &mut w).await?;
+                continue;
+            }
+        }
         let (status, headers, body) = match path.strip_prefix(&format!("/{secret}/")) {
             Some(rest) if method == "GET" || method == "HEAD" => media_core(&node, rest, range.as_deref()).await,
             Some(_) if method == "OPTIONS" => (204, vec![("Access-Control-Allow-Origin", "*".to_string()), ("Access-Control-Allow-Headers", "Range".to_string())], Vec::new()),

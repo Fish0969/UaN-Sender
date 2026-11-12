@@ -190,6 +190,26 @@ async function checkUpdate() {
 // ---------- Built-in playback self-test (used by the automatic Linux/Windows build checks) ----------
 async function runSelfTest(file) {
   const report = (ok, detail) => invoke('selftest_result', { ok, detail });
+  if (S.me.selftestVlc) {
+    if (!S.me.vlc) return report(false, 'VLC not found');
+    const v = new VlcVideo(file);
+    const wait = async (cond, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (cond()) return true; await new Promise((r) => setTimeout(r, 300)); } return false; };
+    try { await v.start(false); } catch (e) { return report(false, `VLC start failed: ${e}`); }
+    const ready = await wait(() => v.ready, 45000);
+    v.play();
+    const played = ready && await wait(() => v.currentTime > 2 && !v.paused, 45000);
+    if (!played) { v.close(); return report(false, `VLC did not play: ready=${ready} t=${v.currentTime} paused=${v.paused}`); }
+    v.currentTime = 15;
+    await new Promise((r) => setTimeout(r, 4000));
+    const afterSeek = v.currentTime;
+    v.pause();
+    await new Promise((r) => setTimeout(r, 2500));
+    const t1 = v.currentTime;
+    await new Promise((r) => setTimeout(r, 1500));
+    const stillPaused = v.paused && Math.abs(v.currentTime - t1) < 0.5;
+    v.close();
+    return report(afterSeek >= 14.5 && afterSeek < 25 && stillPaused, `VLC streamed: seek→${afterSeek.toFixed(1)}s, paused=${stillPaused}, duration=${v.duration}`);
+  }
   const v = el('video', { src: mediaUrl(file) });
   v.muted = true;
   document.body.append(v);
@@ -790,6 +810,170 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'c') activePlayer.root.querySelector('.pl-cc').click();
 });
 
+// ---------- VLC: for formats the built-in player can't play (streams, nothing is downloaded) ----------
+function httpUrl(file) {
+  return `${S.me.httpBase}/${file.owner}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}?stream=1`;
+}
+
+async function openInVlc(file) {
+  if (!S.me.vlc) {
+    if (await ask('VLC isn’t installed on this computer. Open the VLC website to get it? It’s free.', 'Get VLC')) invoke('open_vlc_site');
+    return false;
+  }
+  try {
+    await invoke('vlc_open', { url: httpUrl(file), title: file.name, paused: false });
+    toast('Opening in VLC… (it streams from UaN, nothing is downloaded)');
+    return true;
+  } catch (e) {
+    toast(e);
+    return false;
+  }
+}
+
+// Looks like a <video> element to the watch-together code, but drives VLC through its remote control.
+class VlcVideo extends EventTarget {
+  constructor(file) {
+    super();
+    this.file = file;
+    this.id = null;
+    this.paused = true;
+    this.seeking = false;
+    this.ended = false;
+    this.ready = false;
+    this.readyState = 0;
+    this.duration = NaN;
+    this._t = 0;
+    this._at = performance.now();
+    this._cmdAt = 0;
+    this.wantSeek = null;
+    this.wantState = null;
+  }
+  async start(paused) {
+    this.id = await invoke('vlc_open', { url: httpUrl(this.file), title: this.file.name, paused });
+    this.timer = setInterval(() => this.poll(), 500);
+  }
+  get currentTime() {
+    return this.paused ? this._t : this._t + (performance.now() - this._at) / 1000;
+  }
+  set currentTime(t) {
+    this._t = t;
+    this._at = performance.now();
+    this.cmd('seek', t);
+    setTimeout(() => this.dispatchEvent(new Event('seeked')), 200);
+  }
+  play() {
+    this._t = this.currentTime;
+    this._at = performance.now();
+    this.paused = false;
+    this.cmd('play', 0);
+    this.dispatchEvent(new Event('play'));
+    return Promise.resolve();
+  }
+  pause() {
+    this._t = this.currentTime;
+    this._at = performance.now();
+    this.paused = true;
+    this.cmd('pause', 0);
+    this.dispatchEvent(new Event('pause'));
+  }
+  cmd(cmd, value) {
+    this._cmdAt = performance.now();
+    if (!this.ready) {
+      if (cmd === 'seek') this.wantSeek = value;
+      else this.wantState = cmd;
+      return;
+    }
+    invoke('vlc_command', { id: this.id, cmd, value }).catch(() => {});
+  }
+  async poll() {
+    if (!this.id) return;
+    const st = await invoke('vlc_status', { id: this.id }).catch(() => null);
+    if (!st) return;
+    if (!st.running) {
+      this.stop();
+      this.dispatchEvent(new Event('vlcclosed'));
+      return;
+    }
+    if (!st.ready) return;
+    const now = performance.now();
+    if (st.length) this.duration = st.length;
+    if (!this.ready) {
+      // VLC's remote control is up: apply what was asked for while it was starting.
+      this.ready = true;
+      this.readyState = 4;
+      this._cmdAt = now;
+      if (this.wantSeek != null) await invoke('vlc_command', { id: this.id, cmd: 'seek', value: this.wantSeek }).catch(() => {});
+      if (this.wantState) await invoke('vlc_command', { id: this.id, cmd: this.wantState, value: 0 }).catch(() => {});
+      this.wantSeek = this.wantState = null;
+      this.dispatchEvent(new Event('canplaythrough'));
+      return;
+    }
+    const playing = st.state === 'playing';
+    // Changes made in VLC by the user become play/pause/seek events; our own commands get a moment to land.
+    if (now - this._cmdAt > 1500) {
+      if (playing && this.paused) {
+        this.paused = false;
+        this._t = st.time;
+        this._at = now;
+        this.dispatchEvent(new Event('play'));
+      } else if (!playing && !this.paused && st.state === 'paused') {
+        this.paused = true;
+        this._t = st.time;
+        this._at = now;
+        this.dispatchEvent(new Event('pause'));
+      } else if (Math.abs(st.time - this.currentTime) > 2.5) {
+        this._t = st.time;
+        this._at = now;
+        this.dispatchEvent(new Event('seeked'));
+      } else {
+        this._t = st.time;
+        this._at = now;
+      }
+    }
+    this.ended = st.state === 'stopped';
+    this.dispatchEvent(new Event('timeupdate'));
+    if (this.duration > 0) {
+      invoke('stream_focus', { fileId: this.file.id, position: Math.floor(this.file.size * Math.min(1, this.currentTime / this.duration)) }).catch(() => {});
+    }
+  }
+  stop() {
+    clearInterval(this.timer);
+  }
+  close() {
+    this.stop();
+    if (this.id) invoke('vlc_close', { id: this.id });
+  }
+}
+
+// The watch-together stage while the film plays in VLC.
+function makeVlcPlayer(container, { file, onBack }) {
+  const video = new VlcVideo(file);
+  const status = el('div', { class: 'sub', text: 'Starting VLC…' });
+  const toggle = el('button', { type: 'button', class: 'small', text: 'Play / Pause', onclick: () => (video.paused ? video.play() : video.pause()) });
+  const back = el('button', { type: 'button', class: 'small', text: 'Watch here instead', onclick: () => onBack?.() });
+  const root = el('div', { class: 'vlc-panel' },
+    el('div', { class: 'vlc-cone', text: '🎬' }),
+    el('div', { class: 'strong', text: `Playing in VLC: ${file.name}` }),
+    el('div', { class: 'sub', text: 'Play, pause and seek in VLC or here. Everyone stays in sync.' }),
+    status,
+    el('div', { class: 'row' }, toggle, back));
+  container.replaceChildren(root);
+  video.addEventListener('timeupdate', () => {
+    status.textContent = `${fmtTime(video.currentTime)} / ${fmtTime(video.duration)} · ${video.paused ? 'paused' : 'playing'}`;
+  });
+  video.start(true).catch((e) => { status.textContent = String(e); });
+  const player = {
+    video,
+    root,
+    fullscreen() {},
+    destroy() {
+      video.close();
+      container.replaceChildren();
+    },
+  };
+  return player;
+}
+
 // ---------- Viewer: watch films without downloading ----------
 let viewerPlayer = null;
 function openViewer(file) {
@@ -814,7 +998,10 @@ function openViewer(file) {
         ? `UaN can’t read this file from your disk any more (moved or deleted?). ${reach}`
         : `Can’t reach this film right now: the sender’s PC is off, or UaN isn’t running on it. Try again when they are online. (${reach})`;
     } else {
-      note.textContent = `This video’s format can’t be played inside UaN on this computer${code}. Download it and watch it in your own player (e.g. VLC).`;
+      note.textContent = `This video’s format can’t be played inside UaN on this computer${code}.`;
+      note.append(el('div', { class: 'note-actions' },
+        el('button', { type: 'button', class: 'small', text: S.me.vlc ? 'Open in VLC (no download)' : 'Get VLC', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } }),
+        el('button', { type: 'button', class: 'small', text: 'Download', onclick: () => startDownload(file, S.active) })));
     }
     note.classList.remove('hidden');
   };
@@ -829,6 +1016,8 @@ function openViewer(file) {
   }
   $('viewerName').textContent = `${file.name} · ${fmtBytes(file.size)}`;
   $('viewerDl').classList.toggle('hidden', file.owner === S.me.id);
+  $('viewerVlc').classList.toggle('hidden', !/^video\//i.test(file.mime));
+  $('viewerVlc').onclick = () => { viewerPlayer?.video.pause(); openInVlc(file); };
   $('viewerDl').onclick = () => { startDownload(file, S.active); toast('Download started. It saves to your Downloads folder.'); };
   $('viewer').classList.remove('hidden');
 }
@@ -1264,14 +1453,27 @@ let bufferTimer = null;
 const expect = { play: 0, pause: 0, seek: 0 };
 const expecting = (k) => performance.now() < expect[k];
 
-function openParty(id) {
+let partyMode = 'app'; // 'app' = built-in player, 'vlc' = VLC kept in sync
+
+function openParty(id, mode = partyMode) {
   const p = S.parties.get(id);
   if (!p) return;
   partyPlayer?.destroy();
   openPartyId = id;
   autoPaused = false;
-  partyPlayer = makePlayer($('partyStage'), { file: p.file, chat: `g:${p.group}`, autoplay: false, stream: true, resume: false });
+  partyMode = mode;
+  partyPlayer = mode === 'vlc'
+    ? makeVlcPlayer($('partyStage'), { file: p.file, onBack: () => openParty(id, 'app') })
+    : makePlayer($('partyStage'), { file: p.file, chat: `g:${p.group}`, autoplay: false, stream: true, resume: false });
+  $('partyVlc').classList.toggle('hidden', mode === 'vlc');
   const v = partyPlayer.video;
+  // Closing VLC brings you back to the built-in player, still in the party.
+  v.addEventListener('vlcclosed', () => {
+    if (openPartyId === id) {
+      toast('VLC was closed. Back to the built-in player.');
+      openParty(id, 'app');
+    }
+  });
   v.addEventListener('play', () => { if (expecting('play')) { expect.play = 0; return; } userControl(); });
   v.addEventListener('pause', () => { if (expecting('pause')) { expect.pause = 0; return; } if (!v.ended) userControl(); });
   v.addEventListener('seeked', () => { if (expecting('seek')) { expect.seek = 0; return; } userControl(); });
@@ -1380,6 +1582,14 @@ function renderParty(p) {
   }
   applyPartyState(p);
 }
+
+$('partyVlc').addEventListener('click', async () => {
+  if (!S.me.vlc) {
+    if (await ask('VLC isn’t installed on this computer. Open the VLC website to get it? It’s free.', 'Get VLC')) invoke('open_vlc_site');
+    return;
+  }
+  if (openPartyId) openParty(openPartyId, 'vlc');
+});
 
 $('partyStart').addEventListener('click', () => {
   const p = S.parties.get(openPartyId);

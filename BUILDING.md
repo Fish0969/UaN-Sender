@@ -23,6 +23,10 @@ npx @tauri-apps/cli@2 build
 
 - `desktop/src/node.rs`: the peer-to-peer node (iroh): friends, groups, messages, file streaming,
   downloads, watch together, mailbox client, search.
+- `desktop/src/vlc.rs`: "Open in VLC": starts VLC on UaN's local player server (`?stream=1`, nothing is
+  downloaded) and controls it through VLC's web interface on 127.0.0.1, so watch together stays in sync.
+  Self-test: `UAN_SELFTEST_VIDEO=film.mkv UAN_SELFTEST_VLC=1 UAN_SELFTEST_OUT=r.txt`
+  (`UAN_VLC_EXTRA="--intf=dummy --vout=dummy --aout=dummy"` runs VLC without a window).
 - `desktop/src/main.rs`: the window, tray icon, autostart and commands for the UI.
 - `desktop/ui/`: the interface (plain HTML, CSS and JavaScript).
 - `mailbox/`: the offline mailbox, a Cloudflare Worker with a D1 database (free tier).
