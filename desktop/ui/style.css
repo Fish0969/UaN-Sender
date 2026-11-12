@@ -383,3 +383,9 @@ video::cue { font-size: 1.1em; background: rgba(0, 0, 0, .75); }
   border-radius: 6px; background: rgba(0, 0, 0, .75); color: #fff; font-size: 12px; z-index: 3;
 }
 .pl-resume button { height: 24px; background: rgba(255, 255, 255, .15); color: #fff; border: 0; }
+
+.code-row { flex-direction: column; gap: 4px; }
+.code-row button { width: 100%; flex: none; height: 26px; }
+.update-bar { display: flex; align-items: center; gap: 6px; margin: 4px 8px 2px 12px; padding: 6px 8px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font-size: 12px; }
+.update-bar span { flex: 1; min-width: 0; }
+.update-bar button { height: 24px; padding: 0 8px; font-size: 12px; background: rgba(255, 255, 255, .9); color: #000; border: 0; }

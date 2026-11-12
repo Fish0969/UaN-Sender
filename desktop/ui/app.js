@@ -131,6 +131,7 @@ document.addEventListener('keydown', (e) => {
 // ---------- Start ----------
 async function boot() {
   S.me = await invoke('state');
+  if (S.me.selftest) return runSelfTest(S.me.selftest);
   if (!S.me.name) {
     $('setup').classList.remove('hidden');
     $('setupName').focus();
@@ -159,6 +160,53 @@ async function enterMain() {
   await loadContacts();
   for (const p of await invoke('parties')) S.parties.set(p.id, p);
   renderInviteBar();
+  checkUpdate();
+  setInterval(checkUpdate, 6 * 3600 * 1000);
+}
+
+// ---------- Updates: one click replaces the installed version ----------
+async function checkUpdate() {
+  const u = await invoke('check_update').catch(() => null);
+  const bar = $('updateBar');
+  bar.classList.toggle('hidden', !u);
+  if (!u) return;
+  const btn = el('button', { type: 'button', text: 'Update' });
+  btn.onclick = async () => {
+    if (!u.url) return toast('No download for this system in that release yet.');
+    if (!(await ask(`Update to UaN ${u.version}? It downloads the new version and replaces this one. UaN restarts afterwards.`, 'Update'))) return;
+    btn.disabled = true;
+    btn.textContent = 'Downloading…';
+    try {
+      await invoke('install_update', { url: u.url, name: u.name });
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Update';
+      toast(err);
+    }
+  };
+  bar.replaceChildren(el('span', { text: `UaN ${u.version} is available` }), btn);
+}
+
+// ---------- Built-in playback self-test (used by the automatic Linux/Windows build checks) ----------
+async function runSelfTest(file) {
+  const report = (ok, detail) => invoke('selftest_result', { ok, detail });
+  const v = el('video', { src: mediaUrl(file) });
+  v.muted = true;
+  document.body.append(v);
+  const t0 = Date.now();
+  v.addEventListener('error', () => report(false, `error code ${v.error?.code}: ${v.error?.message || ''} src=${v.src}`));
+  v.play().catch(() => {});
+  const played = await new Promise((res) => {
+    const iv = setInterval(() => {
+      if (v.currentTime > 2) { clearInterval(iv); res(true); }
+      if (Date.now() - t0 > 45000) { clearInterval(iv); res(false); }
+    }, 250);
+  });
+  if (!played) return report(false, `timeout: readyState=${v.readyState} networkState=${v.networkState} t=${v.currentTime} err=${v.error?.code} src=${v.src}`);
+  v.currentTime = 12;
+  await new Promise((r) => { v.addEventListener('seeked', r, { once: true }); setTimeout(r, 15000); });
+  await new Promise((r) => setTimeout(r, 2000));
+  report(v.currentTime > 12.5, `played and seeked: t=${v.currentTime.toFixed(2)} duration=${v.duration} via ${S.me.mediaBase ? 'http' : 'media scheme'}`);
 }
 
 function renderMe() {
@@ -662,10 +710,13 @@ function openViewer(file) {
   viewerPlayer = null;
   const note = $('viewerNote');
   note.classList.add('hidden');
-  const showError = () => {
-    note.textContent = file.owner === S.me.id
+  const showError = (e) => {
+    const err = e?.target?.error;
+    const why = { 1: 'loading was stopped', 2: 'network error', 3: 'the video couldn’t be decoded', 4: 'this format isn’t supported here' }[err?.code] || 'unknown error';
+    note.textContent = (file.owner === S.me.id
       ? 'This format can’t be played inside UaN. Open it from your own disk instead.'
-      : 'Can’t play this here. The sender may be offline, or the format isn’t supported (e.g. some AVI files). Download it to watch it in your own player.';
+      : 'Can’t play this here. The sender may be offline, or the format isn’t supported (e.g. some AVI files). Download it to watch it in your own player.')
+      + ` (Details: ${why}${err?.code ? `, code ${err.code}` : ''}${err?.message ? `: ${err.message}` : ''}.)`;
     note.classList.remove('hidden');
   };
   if (/^video\//i.test(file.mime)) {

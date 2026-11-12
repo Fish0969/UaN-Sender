@@ -26,6 +26,9 @@ struct Profile {
 /// Base URL of the local player server (Linux), or None to use the media:// scheme (Windows).
 struct MediaBase(Option<String>);
 
+/// Built-in playback self-test (local and CI builds only): a video to play on start-up.
+struct SelfTest(Option<FileMeta>);
+
 struct TrayItems {
     autostart: CheckMenuItem<Wry>,
 }
@@ -67,7 +70,7 @@ pub fn sync_tray(app: &AppHandle) {
 // ---------- Commands ----------
 
 #[tauri::command]
-fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'_, MediaBase>, app: AppHandle) -> Value {
+fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'_, MediaBase>, selftest: State<'_, SelfTest>, app: AppHandle) -> Value {
     json!({
         "id": node.id(),
         "code": node.friend_code(),
@@ -78,6 +81,8 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "autostart": app.autolaunch().is_enabled().unwrap_or(false),
         "mediaBase": media.0,
         "platform": std::env::consts::OS,
+        "version": app.package_info().version.to_string(),
+        "selftest": selftest.0,
     })
 }
 
@@ -100,6 +105,101 @@ fn set_mailbox(node: State<'_, Arc<Node>>, url: String) -> CmdResult<()> {
 async fn check_mailbox(node: State<'_, Arc<Node>>) -> CmdResult<()> {
     node.mailbox_poll().await;
     Ok(())
+}
+
+const RELEASES_API: &str = "https://api.github.com/repos/Fish0969/UaN-Sender/releases/latest";
+
+fn version_tuple(v: &str) -> (u64, u64, u64) {
+    let mut it = v.trim_start_matches('v').split('.').map(|p| p.parse::<u64>().unwrap_or(0));
+    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
+}
+
+/// Which download fits this install: Windows installer, AppImage, or .deb.
+fn update_kind() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if std::env::var_os("APPIMAGE").is_some() {
+        "appimage"
+    } else {
+        "deb"
+    }
+}
+
+/// Looks for a newer release on GitHub. Returns null when up to date.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> CmdResult<Value> {
+    let client = reqwest::Client::builder().user_agent("UaN-updater").timeout(std::time::Duration::from_secs(20)).build().map_err(|e| e.to_string())?;
+    let rel: Value = client.get(RELEASES_API).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let tag = rel["tag_name"].as_str().unwrap_or_default().to_string();
+    let current = app.package_info().version.to_string();
+    if tag.is_empty() || version_tuple(&tag) <= version_tuple(&current) {
+        return Ok(Value::Null);
+    }
+    let suffix = match update_kind() {
+        "windows" => "_x64-setup.exe",
+        "appimage" => ".AppImage",
+        _ => ".deb",
+    };
+    let asset = rel["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str().map(|n| n.ends_with(suffix)).unwrap_or(false))).cloned();
+    Ok(json!({
+        "version": tag.trim_start_matches('v'),
+        "page": rel["html_url"],
+        "url": asset.as_ref().map(|a| a["browser_download_url"].clone()),
+        "name": asset.as_ref().map(|a| a["name"].clone()),
+    }))
+}
+
+/// Downloads the new version and replaces this one (the installer/package manager removes the old version).
+#[tauri::command]
+async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<()> {
+    if !url.starts_with("https://github.com/Fish0969/UaN-Sender/releases/download/") {
+        return Err("Unexpected download address.".into());
+    }
+    let client = reqwest::Client::builder().user_agent("UaN-updater").build().map_err(|e| e.to_string())?;
+    let bytes = client.get(&url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
+    let safe: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c)).collect();
+    let tmp = std::env::temp_dir().join(if safe.is_empty() { "uan-update".to_string() } else { safe });
+    std::fs::write(&tmp, &bytes).map_err(|e| format!("Couldn't save the update: {e}"))?;
+    match update_kind() {
+        "windows" => {
+            // The installer replaces the installed version; we quit so it can.
+            std::process::Command::new(&tmp).spawn().map_err(|e| format!("Couldn't start the installer: {e}"))?;
+            app.exit(0);
+        }
+        "appimage" => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let target = std::path::PathBuf::from(std::env::var_os("APPIMAGE").unwrap());
+                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+                std::fs::copy(&tmp, target.with_extension("new")).map_err(|e| e.to_string())?;
+                std::fs::rename(target.with_extension("new"), &target).map_err(|e| e.to_string())?;
+                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+                std::process::Command::new(&target).spawn().map_err(|e| e.to_string())?;
+                app.exit(0);
+            }
+        }
+        _ => {
+            // .deb: install with the system's password prompt, then restart.
+            let ok = std::process::Command::new("pkexec").args(["apt-get", "install", "-y"]).arg(&tmp).status().map(|s| s.success()).unwrap_or(false);
+            if ok {
+                let _ = std::process::Command::new("uan").spawn();
+                app.exit(0);
+            } else {
+                let _ = std::process::Command::new("xdg-open").arg(&tmp).spawn();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Self-test result: written to UAN_SELFTEST_OUT, then the app exits (0 = ok).
+#[tauri::command]
+fn selftest_result(app: AppHandle, ok: bool, detail: String) {
+    if let Ok(out) = std::env::var("UAN_SELFTEST_OUT") {
+        let _ = std::fs::write(out, format!("{} {}\n", if ok { "ok" } else { "fail" }, detail));
+        app.exit(if ok { 0 } else { 1 });
+    }
 }
 
 #[tauri::command]
@@ -256,6 +356,12 @@ fn main() {
             let use_http = cfg!(target_os = "linux") || std::env::var("UAN_HTTP_MEDIA").is_ok();
             let media_base = if use_http { tauri::async_runtime::block_on(node::start_media_server(node.clone())).ok() } else { None };
             app.manage(MediaBase(media_base));
+            let selftest = if cfg!(feature = "test-profiles") {
+                std::env::var("UAN_SELFTEST_VIDEO").ok().and_then(|p| node.selftest_file(&p).ok())
+            } else {
+                None
+            };
+            app.manage(SelfTest(selftest));
             app.manage(node);
             let is_profile = profile_name.is_some();
             app.manage(Profile { name: profile_name.clone(), dir });
@@ -293,6 +399,9 @@ fn main() {
                 })
                 .build(app)?;
             app.manage(TrayItems { autostart });
+            if !is_profile && app.autolaunch().is_enabled().unwrap_or(false) {
+                let _ = app.autolaunch().enable(); // refresh the path after an update
+            }
 
             if !start_hidden {
                 show_main(app.handle());
@@ -327,6 +436,9 @@ fn main() {
             transfers,
             transfer_action,
             set_autostart,
+            check_update,
+            install_update,
+            selftest_result,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start UaN")

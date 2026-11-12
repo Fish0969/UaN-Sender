@@ -1572,6 +1572,18 @@ impl Node {
         Ok(())
     }
 
+    /// Self-test only: registers a local video as if we had sent it, so the player can be tested on this PC.
+    pub fn selftest_file(&self, path: &str) -> Result<FileMeta, String> {
+        let p = PathBuf::from(path);
+        let size = std::fs::metadata(&p).map_err(e2s)?.len();
+        let file = FileMeta { id: new_id(), name: p.file_name().and_then(|n| n.to_str()).unwrap_or("test").to_string(), size, mime: guess_mime(&p).to_string(), owner: self.me_s.clone() };
+        self.db.lock().unwrap().execute(
+            "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![file.id, path, file.name, size as i64, file.mime, now()],
+        ).map_err(e2s)?;
+        Ok(file)
+    }
+
     pub fn share_files(self: &Arc<Self>, paths: Vec<PathBuf>, chats: &[String], text: Option<String>) -> Result<usize, String> {
         for chat in chats {
             self.chat_targets(chat)?;

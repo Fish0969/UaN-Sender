@@ -59,6 +59,40 @@ jobs:
           fi
           ls -la dist
 
+      # Plays a real H.264 video inside UaN (with seeking) to check in-app playback on each system.
+      - name: Playback self-test (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        working-directory: desktop
+        run: |
+          sudo apt-get install -y xvfb ffmpeg dbus-x11
+          ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=30:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=30 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest /tmp/uan-test.mp4
+          cargo build --release --features test-profiles
+          export UAN_DATA=/tmp/uan-selftest UAN_SELFTEST_VIDEO=/tmp/uan-test.mp4 UAN_SELFTEST_OUT=/tmp/uan-result.txt
+          export WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
+          timeout 150 dbus-run-session -- xvfb-run -a ./target/release/uan || true
+          echo "---- result ----"
+          cat /tmp/uan-result.txt || echo "no result"
+          grep -q '^ok' /tmp/uan-result.txt
+
+      - name: Playback self-test (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        working-directory: desktop
+        run: |
+          choco install ffmpeg -y --no-progress > /dev/null
+          ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=30:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=30 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$RUNNER_TEMP/uan-test.mp4"
+          cargo build --release --features test-profiles
+          for mode in scheme http; do
+            rm -rf "$RUNNER_TEMP/uan-$mode"
+            if [ "$mode" = http ]; then export UAN_HTTP_MEDIA=1; fi
+            UAN_DATA="$RUNNER_TEMP/uan-$mode" UAN_SELFTEST_VIDEO="$RUNNER_TEMP/uan-test.mp4" UAN_SELFTEST_OUT="$RUNNER_TEMP/result-$mode.txt" timeout 150 ./target/release/uan.exe || true
+            echo "---- $mode ----"
+            cat "$RUNNER_TEMP/result-$mode.txt" || echo "no result"
+          done
+          grep -q '^ok' "$RUNNER_TEMP/result-scheme.txt" && grep -q '^ok' "$RUNNER_TEMP/result-http.txt"
+
       - uses: actions/upload-artifact@v4
         with:
           name: UaN-${{ runner.os }}
