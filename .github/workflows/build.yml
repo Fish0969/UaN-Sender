@@ -60,20 +60,26 @@ jobs:
           ls -la dist
 
       # Plays a real H.264 video inside UaN (with seeking) to check in-app playback on each system.
-      - name: Playback self-test (Linux)
+      # Tests exactly what people download: the installed .deb and the AppImage, with an MKV film.
+      - name: Playback self-test (Linux .deb and AppImage)
         if: runner.os == 'Linux'
         continue-on-error: true
-        working-directory: desktop
         run: |
           sudo apt-get install -y xvfb ffmpeg dbus-x11
-          ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=30:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=30 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest /tmp/uan-test.mp4
-          cargo build --release --features test-profiles
-          export UAN_DATA=/tmp/uan-selftest UAN_SELFTEST_VIDEO=/tmp/uan-test.mp4 UAN_SELFTEST_OUT=/tmp/uan-result.txt
+          ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=30:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=30 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest /tmp/uan-test.mkv
+          sudo apt-get install -y ./dist/*.deb
+          chmod +x dist/*.AppImage
           export LIBGL_ALWAYS_SOFTWARE=1  # the app sets the WebKit fallbacks itself
-          timeout 150 dbus-run-session -- xvfb-run -a ./target/release/uan || true
-          echo "---- result ----"
-          cat /tmp/uan-result.txt || echo "no result"
-          grep -q '^ok' /tmp/uan-result.txt
+          t() {
+            name=$1; shift
+            rm -rf "/tmp/uan-$name" "/tmp/r-$name.txt"
+            UAN_DATA="/tmp/uan-$name" UAN_SELFTEST_VIDEO=/tmp/uan-test.mkv UAN_SELFTEST_OUT="/tmp/r-$name.txt" timeout 150 dbus-run-session -- xvfb-run -a "$@" || true
+            echo "---- result $name ----"
+            cat "/tmp/r-$name.txt" || echo "no result"
+          }
+          t deb uan
+          t appimage dist/*.AppImage --appimage-extract-and-run
+          grep -q '^ok' /tmp/r-deb.txt && grep -q '^ok' /tmp/r-appimage.txt
 
       - name: Playback self-test (Windows)
         if: runner.os == 'Windows'
@@ -83,7 +89,6 @@ jobs:
         run: |
           choco install ffmpeg -y --no-progress > /dev/null
           ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=30:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=30 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$RUNNER_TEMP/uan-test.mp4"
-          cargo build --release --features test-profiles
           for mode in scheme http; do
             rm -rf "$RUNNER_TEMP/uan-$mode"
             if [ "$mode" = http ]; then export UAN_HTTP_MEDIA=1; fi

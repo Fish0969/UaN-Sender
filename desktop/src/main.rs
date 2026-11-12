@@ -379,11 +379,8 @@ fn main() {
             let use_http = cfg!(target_os = "linux") || std::env::var("UAN_HTTP_MEDIA").is_ok();
             let media_base = if use_http { tauri::async_runtime::block_on(node::start_media_server(node.clone())).ok() } else { None };
             app.manage(MediaBase(media_base));
-            let selftest = if cfg!(feature = "test-profiles") {
-                std::env::var("UAN_SELFTEST_VIDEO").ok().and_then(|p| node.selftest_file(&p).ok())
-            } else {
-                None
-            };
+            // Playback self-test, used by the automatic build checks on the real downloadable packages.
+            let selftest = std::env::var("UAN_SELFTEST_VIDEO").ok().and_then(|p| node.selftest_file(&p).ok());
             app.manage(SelfTest(selftest));
             app.manage(node);
             let is_profile = profile_name.is_some();

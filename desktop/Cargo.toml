@@ -1,6 +1,6 @@
 [package]
 name = "uan"
-version = "1.1.5"
+version = "1.1.6"
 description = "Peer-to-peer chat and file sharing"
 edition = "2021"
 

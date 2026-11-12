@@ -710,13 +710,24 @@ function openViewer(file) {
   viewerPlayer = null;
   const note = $('viewerNote');
   note.classList.add('hidden');
-  const showError = (e) => {
+  const showError = async (e) => {
     const err = e?.target?.error;
-    const why = { 1: 'loading was stopped', 2: 'network error', 3: 'the video couldn’t be decoded', 4: 'this format isn’t supported here' }[err?.code] || 'unknown error';
-    note.textContent = (file.owner === S.me.id
-      ? 'This format can’t be played inside UaN. Open it from your own disk instead.'
-      : 'Can’t play this here. The sender may be offline, or the format isn’t supported (e.g. some AVI files). Download it to watch it in your own player.')
-      + ` (Details: ${why}${err?.code ? `, code ${err.code}` : ''}${err?.message ? `: ${err.message}` : ''}.)`;
+    // A failed load looks like "unsupported format" to the player, so first check whether the film is reachable.
+    let reach = null;
+    try {
+      const r = await fetch(mediaUrl(file), { headers: { Range: 'bytes=0-0' } });
+      reach = r.ok ? 'ok' : (r.headers.get('X-UaN-Error') || `error ${r.status}`);
+    } catch (x) {
+      reach = String(x);
+    }
+    const code = err?.code ? ` (code ${err.code}${err.message ? `: ${err.message}` : ''})` : '';
+    if (reach !== 'ok') {
+      note.textContent = file.owner === S.me.id
+        ? `UaN can’t read this file from your disk any more (moved or deleted?). ${reach}`
+        : `Can’t reach this film right now: the sender’s PC is off, or UaN isn’t running on it. Try again when they are online. (${reach})`;
+    } else {
+      note.textContent = `This video’s format can’t be played inside UaN on this computer${code}. Download it and watch it in your own player (e.g. VLC).`;
+    }
     note.classList.remove('hidden');
   };
   if (/^video\//i.test(file.mime)) {

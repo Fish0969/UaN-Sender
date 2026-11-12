@@ -2684,7 +2684,7 @@ fn player_mime(mime: &str) -> String {
 /// Shared by both ways of serving the in-app player. Path: <owner>/<file id>/<size>/<mime>
 /// Returns (status, headers, body).
 async fn media_core(node: &Arc<Node>, path: &str, range: Option<&str>) -> (u16, Vec<(&'static str, String)>, Vec<u8>) {
-    let cors = vec![("Access-Control-Allow-Origin", "*".to_string()), ("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges".to_string())];
+    let cors = vec![("Access-Control-Allow-Origin", "*".to_string()), ("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, X-UaN-Error".to_string())];
     let parts: Vec<String> = path.trim_start_matches('/').split('/').map(pct_decode).collect();
     if parts.len() < 4 {
         return (400, cors, Vec::new());
@@ -2717,7 +2717,12 @@ async fn media_core(node: &Arc<Node>, path: &str, range: Option<&str>) -> (u16, 
             }
             (if partial { 206 } else { 200 }, headers, bytes)
         }
-        Err(_) => (503, headers, Vec::new()),
+        Err(e) => {
+            // Lets the player tell "sender unreachable" apart from "format not supported".
+            let mut h = headers;
+            h.push(("X-UaN-Error", e.chars().filter(|c| c.is_ascii() && !c.is_control()).collect()));
+            (503, h, Vec::new())
+        }
     }
 }
 
