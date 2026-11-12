@@ -1,0 +1,74 @@
+# Tries many video formats in UaN's built-in player (run by hand from the Actions tab).
+name: Playback formats
+
+on:
+  workflow_dispatch:
+
+jobs:
+  formats:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav xvfb ffmpeg dbus-x11
+
+      - name: Windows dependencies
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress > $null
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Build
+        working-directory: desktop
+        run: cargo build --release --features test-profiles
+
+      - name: Make test videos
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/v"
+          src="-f lavfi -i testsrc=duration=30:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=30 -shortest"
+          mk() { ffmpeg -loglevel error -y $src "$@" || echo "could not make $*"; }
+          mk -c:v libx264 -pix_fmt yuv420p -c:a aac "$RUNNER_TEMP/v/h264-aac.mkv"
+          mk -c:v libx264 -pix_fmt yuv420p10le -c:a aac "$RUNNER_TEMP/v/h264-10bit-aac.mkv"
+          mk -c:v libx265 -pix_fmt yuv420p -c:a aac "$RUNNER_TEMP/v/h265-aac.mkv"
+          mk -c:v libx264 -pix_fmt yuv420p -c:a ac3 "$RUNNER_TEMP/v/h264-ac3.mkv"
+          mk -c:v libx264 -pix_fmt yuv420p -c:a dca -strict -2 "$RUNNER_TEMP/v/h264-dts.mkv"
+          mk -c:v libx264 -pix_fmt yuv420p -c:a aac "$RUNNER_TEMP/v/h264-aac.mp4"
+          mk -c:v libx265 -pix_fmt yuv420p -tag:v hvc1 -c:a aac "$RUNNER_TEMP/v/h265-aac.mp4"
+          ls -la "$RUNNER_TEMP/v"
+
+      - name: Try each video
+        shell: bash
+        working-directory: desktop
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            exe=./target/release/uan
+            run() { timeout 90 dbus-run-session -- xvfb-run -a "$exe" > /dev/null 2>&1 || true; }
+            export LIBGL_ALWAYS_SOFTWARE=1
+          else
+            exe=./target/release/uan.exe
+            run() { timeout 90 "$exe" > /dev/null 2>&1 || true; }
+          fi
+          for f in "$RUNNER_TEMP"/v/*; do
+            labels="default"
+            case "$f" in *.mkv) labels="default video/webm video/mp4" ;; esac
+            for label in $labels; do
+              if [ "$label" = default ]; then unset UAN_MKV_MIME; else export UAN_MKV_MIME="$label"; fi
+              rm -rf "$RUNNER_TEMP/uan-data" "$RUNNER_TEMP/r.txt"
+              UAN_DATA="$RUNNER_TEMP/uan-data" UAN_SELFTEST_VIDEO="$f" UAN_SELFTEST_OUT="$RUNNER_TEMP/r.txt" run
+              printf 'RESULT %-22s %-18s %s\n' "$(basename "$f")" "$label" "$(cat "$RUNNER_TEMP/r.txt" 2>/dev/null | cut -c1-120 || echo 'no result')"
+            done
+          done

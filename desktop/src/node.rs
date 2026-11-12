@@ -2670,6 +2670,17 @@ fn pct_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The type label the built-in player sees. Players are picky about labels, not just contents:
+/// UAN_MKV_MIME lets the automatic tests try other labels for .mkv files.
+fn player_mime(mime: &str) -> String {
+    if mime == "video/x-matroska" {
+        if let Ok(m) = std::env::var("UAN_MKV_MIME") {
+            return m;
+        }
+    }
+    mime.to_string()
+}
+
 /// Shared by both ways of serving the in-app player. Path: <owner>/<file id>/<size>/<mime>
 /// Returns (status, headers, body).
 async fn media_core(node: &Arc<Node>, path: &str, range: Option<&str>) -> (u16, Vec<(&'static str, String)>, Vec<u8>) {
@@ -2681,7 +2692,7 @@ async fn media_core(node: &Arc<Node>, path: &str, range: Option<&str>) -> (u16, 
     let Ok(size) = parts[2].parse::<u64>() else { return (400, cors, Vec::new()) };
     let file = FileMeta { owner: parts[0].clone(), id: parts[1].clone(), size, mime: parts[3].clone(), name: String::new() };
     let mut headers = cors;
-    headers.push(("Content-Type", file.mime.clone()));
+    headers.push(("Content-Type", player_mime(&file.mime)));
     headers.push(("Accept-Ranges", "bytes".to_string()));
     if size == 0 {
         return (200, headers, Vec::new());
