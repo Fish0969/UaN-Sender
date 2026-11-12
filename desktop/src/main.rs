@@ -224,7 +224,8 @@ fn set_autostart(app: AppHandle, enabled: bool) -> CmdResult<bool> {
 
 fn main() {
     let start_hidden = std::env::args().any(|a| a == "--hidden");
-    let profile_name = arg_value("--profile").map(|p| p.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect::<String>()).filter(|p| !p.is_empty());
+    // Side-by-side test identities only exist in local builds made with --features test-profiles.
+    let profile_name = (if cfg!(feature = "test-profiles") { arg_value("--profile") } else { None }).map(|p| p.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect::<String>()).filter(|p| !p.is_empty());
     let base = std::env::var_os("UAN_DATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("UaN"));

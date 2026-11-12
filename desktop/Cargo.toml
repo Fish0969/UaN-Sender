@@ -1,6 +1,6 @@
 [package]
 name = "uan"
-version = "1.1.0"
+version = "1.1.1"
 description = "Peer-to-peer chat and file sharing"
 edition = "2021"
 
@@ -31,6 +31,8 @@ dirs = "6"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Extra side-by-side identities (--profile) for testing on one PC. Not in published builds.
+test-profiles = []
 
 [profile.release]
 opt-level = "s"
