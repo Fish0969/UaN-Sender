@@ -252,6 +252,11 @@ fn open_vlc_site() {
 }
 
 #[tauri::command]
+async fn install_vlc() -> bool {
+    tauri::async_runtime::spawn_blocking(vlc::install).await.unwrap_or(false)
+}
+
+#[tauri::command]
 fn vlc_close(vlc: State<'_, vlc::Vlc>, id: String) {
     vlc.close(&id)
 }
@@ -517,6 +522,7 @@ fn main() {
             vlc_command,
             vlc_close,
             open_vlc_site,
+            install_vlc,
             set_thumb,
             set_autodl,
             check_update,

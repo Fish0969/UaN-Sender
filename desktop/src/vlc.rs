@@ -61,6 +61,57 @@ pub fn find() -> Option<(PathBuf, Vec<String>)> {
     }
 }
 
+/// Installs VLC with the system's own installer (blocking). True when VLC is there afterwards.
+/// Windows: winget (Windows may ask for permission). Linux: apt with the password prompt, else Flatpak.
+pub fn install() -> bool {
+    if find().is_some() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("winget")
+            .args(["install", "-e", "--id", "VideoLAN.VLC", "--silent", "--accept-package-agreements", "--accept-source-agreements"])
+            .creation_flags(0x0800_0000) // no console window
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let has = |p: &str| std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| d.join(p).exists());
+        if has("apt-get") && has("pkexec") {
+            let _ = system_command("pkexec")
+                .args(["sh", "-c", "apt-get install -y vlc || (apt-get update && apt-get install -y vlc)"])
+                .status();
+        }
+        if find().is_none() && has("flatpak") {
+            let _ = system_command("flatpak")
+                .args(["install", "-y", "--user", "--noninteractive", "flathub", "org.videolan.VLC"])
+                .status();
+        }
+    }
+    find().is_some()
+}
+
+/// A command for a system program. Inside an AppImage, UaN's bundled libraries and plugin paths are
+/// in the environment; system programs like VLC must not see them.
+fn system_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut c = Command::new(program);
+    #[cfg(not(windows))]
+    if std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some() {
+        for (k, _) in std::env::vars_os() {
+            let k = k.to_string_lossy().into_owned();
+            if k == "LD_LIBRARY_PATH" || k == "LD_PRELOAD" || k.starts_with("GST_") || k.starts_with("GIO_") || k.starts_with("GTK_")
+                || k.starts_with("GDK_") || k == "PYTHONHOME" || k == "PYTHONPATH" || k == "PERLLIB" || k == "QT_PLUGIN_PATH"
+                || k == "XDG_DATA_DIRS" && std::env::var("XDG_DATA_DIRS").map(|v| v.contains("/tmp/.mount_")).unwrap_or(false)
+            {
+                c.env_remove(&k);
+            }
+        }
+    }
+    c
+}
+
 fn free_port() -> Option<u16> {
     std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok().map(|a| a.port())
 }
@@ -89,7 +140,7 @@ impl Vlc {
             args.extend(extra.split_whitespace().map(String::from));
         }
         args.push(url.to_string());
-        let child = Command::new(&program).args(&args).spawn().map_err(|e| format!("Couldn't start VLC: {e}"))?;
+        let child = system_command(&program).args(&args).spawn().map_err(|e| format!("Couldn't start VLC: {e}"))?;
         let id = uuid::Uuid::new_v4().simple().to_string();
         self.sessions.lock().unwrap().insert(id.clone(), Session { child, port, password });
         Ok(id)

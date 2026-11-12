@@ -87,10 +87,17 @@ jobs:
         continue-on-error: true
         run: |
           sudo apt-get install -y vlc > /dev/null
-          rm -rf /tmp/uan-vlc
-          UAN_DATA=/tmp/uan-vlc UAN_SELFTEST_VIDEO=/tmp/uan-test.mkv UAN_SELFTEST_VLC=1 UAN_VLC_EXTRA="--intf=dummy --vout=dummy --aout=dummy" UAN_SELFTEST_OUT=/tmp/r-vlc.txt LIBGL_ALWAYS_SOFTWARE=1 timeout 150 dbus-run-session -- xvfb-run -a uan || true
-          cat /tmp/r-vlc.txt || echo "no result"
-          grep -q '^ok' /tmp/r-vlc.txt
+          export LIBGL_ALWAYS_SOFTWARE=1
+          t() {
+            name=$1; shift
+            rm -rf "/tmp/uan-$name" "/tmp/r-$name.txt"
+            UAN_DATA="/tmp/uan-$name" UAN_SELFTEST_VIDEO=/tmp/uan-test.mkv UAN_SELFTEST_VLC=1 UAN_VLC_EXTRA="--intf=dummy --vout=dummy --aout=dummy" UAN_SELFTEST_OUT="/tmp/r-$name.txt" timeout 150 dbus-run-session -- xvfb-run -a "$@" || true
+            echo "---- result $name ----"
+            cat "/tmp/r-$name.txt" || echo "no result"
+          }
+          t vlc-deb uan
+          t vlc-appimage dist/*.AppImage --appimage-extract-and-run
+          grep -q '^ok' /tmp/r-vlc-deb.txt && grep -q '^ok' /tmp/r-vlc-appimage.txt
 
       - name: Playback self-test (Windows)
         if: runner.os == 'Windows'

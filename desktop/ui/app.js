@@ -815,11 +815,36 @@ function httpUrl(file) {
   return `${S.me.httpBase}/${file.owner}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}?stream=1`;
 }
 
-async function openInVlc(file) {
-  if (!S.me.vlc) {
-    if (await ask('VLC isn’t installed on this computer. Open the VLC website to get it? It’s free.', 'Get VLC')) invoke('open_vlc_site');
-    return false;
+// Makes sure VLC is on this computer: offers to install it (free) with one click.
+async function ensureVlc(why = 'This needs VLC (free), which isn’t on this computer yet.') {
+  if (S.me.vlc) return true;
+  if (!(await ask(`${why} Install VLC now? It takes a minute or two.`, 'Install VLC'))) return false;
+  toast(S.me.platform === 'windows' ? 'Installing VLC… Windows may ask for permission.' : 'Installing VLC… your password may be asked.');
+  try {
+    S.me.vlc = await invoke('install_vlc');
+  } catch {
+    S.me.vlc = false;
   }
+  if (S.me.vlc) {
+    toast('VLC is installed.');
+  } else if (await ask('VLC couldn’t be installed automatically. Open the VLC website to get it?', 'Open website')) {
+    invoke('open_vlc_site');
+  }
+  return S.me.vlc;
+}
+
+// Is the film reachable? 'ok', or the reason it isn't (then a player error is not a format problem).
+async function reachability(file) {
+  try {
+    const r = await fetch(mediaUrl(file), { headers: { Range: 'bytes=0-0' } });
+    return r.ok ? 'ok' : (r.headers.get('X-UaN-Error') || `error ${r.status}`);
+  } catch (x) {
+    return String(x);
+  }
+}
+
+async function openInVlc(file, why) {
+  if (!(await ensureVlc(why))) return false;
   try {
     await invoke('vlc_open', { url: httpUrl(file), title: file.name, paused: false });
     toast('Opening in VLC… (it streams from UaN, nothing is downloaded)');
@@ -976,7 +1001,10 @@ function makeVlcPlayer(container, { file, onBack }) {
 
 // ---------- Viewer: watch films without downloading ----------
 let viewerPlayer = null;
+let viewerToken = 0;
 function openViewer(file) {
+  const token = ++viewerToken;
+  let autoVlc = false;
   const body = $('viewerBody');
   viewerPlayer?.destroy();
   viewerPlayer = null;
@@ -985,25 +1013,27 @@ function openViewer(file) {
   const showError = async (e) => {
     const err = e?.target?.error;
     // A failed load looks like "unsupported format" to the player, so first check whether the film is reachable.
-    let reach = null;
-    try {
-      const r = await fetch(mediaUrl(file), { headers: { Range: 'bytes=0-0' } });
-      reach = r.ok ? 'ok' : (r.headers.get('X-UaN-Error') || `error ${r.status}`);
-    } catch (x) {
-      reach = String(x);
-    }
+    const reach = await reachability(file);
+    if (token !== viewerToken) return; // the viewer was closed or shows something else now
     const code = err?.code ? ` (code ${err.code}${err.message ? `: ${err.message}` : ''})` : '';
     if (reach !== 'ok') {
       note.textContent = file.owner === S.me.id
         ? `UaN can’t read this file from your disk any more (moved or deleted?). ${reach}`
         : `Can’t reach this film right now: the sender’s PC is off, or UaN isn’t running on it. Try again when they are online. (${reach})`;
     } else {
-      note.textContent = `This video’s format can’t be played inside UaN on this computer${code}.`;
+      const video = /^video\//i.test(file.mime);
+      note.textContent = video
+        ? `This video’s format can’t be played inside UaN on this computer${code}, so it plays in VLC instead (nothing is downloaded).`
+        : `This file’s format can’t be played inside UaN on this computer${code}.`;
       note.append(el('div', { class: 'note-actions' },
-        el('button', { type: 'button', class: 'small', text: S.me.vlc ? 'Open in VLC (no download)' : 'Get VLC', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } }),
+        video ? el('button', { type: 'button', class: 'small', text: 'Open in VLC (no download)', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } }) : '',
         el('button', { type: 'button', class: 'small', text: 'Download', onclick: () => startDownload(file, S.active) })));
     }
     note.classList.remove('hidden');
+    if (reach === 'ok' && /^video\//i.test(file.mime) && !autoVlc) {
+      autoVlc = true;
+      openInVlc(file, 'This video’s format can’t be played inside UaN on this computer, but VLC can play it without downloading.');
+    }
   };
   if (/^video\//i.test(file.mime)) {
     viewerPlayer = makePlayer(body, { file, chat: S.active });
@@ -1022,6 +1052,7 @@ function openViewer(file) {
   $('viewer').classList.remove('hidden');
 }
 function closeViewer() {
+  viewerToken++;
   viewerPlayer?.destroy();
   viewerPlayer = null;
   $('viewer').classList.add('hidden');
@@ -1454,6 +1485,7 @@ const expect = { play: 0, pause: 0, seek: 0 };
 const expecting = (k) => performance.now() < expect[k];
 
 let partyMode = 'app'; // 'app' = built-in player, 'vlc' = VLC kept in sync
+const noAutoVlc = new Set(); // parties where you went back from VLC yourself
 
 function openParty(id, mode = partyMode) {
   const p = S.parties.get(id);
@@ -1463,17 +1495,31 @@ function openParty(id, mode = partyMode) {
   autoPaused = false;
   partyMode = mode;
   partyPlayer = mode === 'vlc'
-    ? makeVlcPlayer($('partyStage'), { file: p.file, onBack: () => openParty(id, 'app') })
+    ? makeVlcPlayer($('partyStage'), { file: p.file, onBack: () => { noAutoVlc.add(id); openParty(id, 'app'); } })
     : makePlayer($('partyStage'), { file: p.file, chat: `g:${p.group}`, autoplay: false, stream: true, resume: false });
   $('partyVlc').classList.toggle('hidden', mode === 'vlc');
   const v = partyPlayer.video;
   // Closing VLC brings you back to the built-in player, still in the party.
   v.addEventListener('vlcclosed', () => {
     if (openPartyId === id) {
+      noAutoVlc.add(id);
       toast('VLC was closed. Back to the built-in player.');
       openParty(id, 'app');
     }
   });
+  if (mode === 'app') {
+    v.addEventListener('error', async () => {
+      if (openPartyId !== id || partyPlayer?.video !== v) return;
+      if ((await reachability(p.file)) !== 'ok' || openPartyId !== id || partyPlayer?.video !== v) return;
+      if (noAutoVlc.has(id)) return toast('This film’s format can’t play inside UaN here. Press “Watch in VLC” to watch it in sync.');
+      toast('This film’s format can’t play inside UaN here, so it plays in VLC, still in sync with everyone.');
+      if (await ensureVlc('This film’s format can’t play inside UaN on this computer, but VLC can play it in sync with everyone, without downloading.')) {
+        if (openPartyId === id && partyMode === 'app') openParty(id, 'vlc');
+      } else {
+        noAutoVlc.add(id);
+      }
+    });
+  }
   v.addEventListener('play', () => { if (expecting('play')) { expect.play = 0; return; } userControl(); });
   v.addEventListener('pause', () => { if (expecting('pause')) { expect.pause = 0; return; } if (!v.ended) userControl(); });
   v.addEventListener('seeked', () => { if (expecting('seek')) { expect.seek = 0; return; } userControl(); });
@@ -1584,10 +1630,7 @@ function renderParty(p) {
 }
 
 $('partyVlc').addEventListener('click', async () => {
-  if (!S.me.vlc) {
-    if (await ask('VLC isn’t installed on this computer. Open the VLC website to get it? It’s free.', 'Get VLC')) invoke('open_vlc_site');
-    return;
-  }
+  if (!(await ensureVlc())) return;
   if (openPartyId) openParty(openPartyId, 'vlc');
 });
 

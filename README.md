@@ -41,8 +41,8 @@ sudo apt install ./UaN_*_amd64.deb
 - **Watch together.** In a group, every video has a *Watch together* button. The PC with the fastest
   connection shares the film, it streams for everyone, starts when everyone has enough loaded, and
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
-- **Open in VLC.** If a film's format can't play inside UaN (or you just prefer VLC), *Open in VLC*
-  streams it into VLC without downloading. In a watch party, *Watch in VLC* keeps VLC in sync with
+- **Open in VLC.** If a film's format can't play inside UaN, it opens in VLC by itself, streamed
+  without downloading (if VLC is missing, UaN offers to install it with one click). *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in sync with
   everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
 - **Previews.** Photos and videos show a preview picture (and the video's length) in the chat, even
   when the sender's PC is off.
@@ -62,8 +62,8 @@ sudo apt install ./UaN_*_amd64.deb
   background). That's why UaN starts with your PC and stays in the tray when you close the window.
   Quit it from the tray icon menu.
 - If two PCs can't connect directly, traffic goes through a public relay, which is slower.
-- Some video formats (e.g. some AVI files) can't be played inside UaN; open those in VLC (free,
-  [videolan.org](https://www.videolan.org)) or download them.
+- Some video formats (e.g. some AVI files) can't be played inside UaN; those open in VLC
+  automatically (free, [videolan.org](https://www.videolan.org)).
 
 For developers: see [BUILDING.md](BUILDING.md).
 
