@@ -269,6 +269,7 @@ $('showCode').addEventListener('click', () => toggleCode());
 
 // ---------- Live events ----------
 listen('message', ({ payload: m }) => onMessage(m));
+listen('unsent', ({ payload }) => removeMessage(payload.id, payload.chat));
 listen('contacts', () => loadContacts());
 listen('presence', ({ payload }) => {
   const f = friendById(payload.id);
@@ -421,11 +422,47 @@ function renderMessages() {
 }
 
 function messageNode(m, showSender = true) {
-  return el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs'), 'data-id': m.id },
+  const node = el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs'), 'data-id': m.id },
     isGroup(m.chat) && !m.mine && showSender ? el('div', { class: 'sender', text: m.senderName }) : null,
     m.file ? fileCard(m.file, m.chat, m.thumb) : null,
     m.text ? el('div', { class: 'bubble', text: m.text }) : null,
-    el('span', { class: 'time', text: timeFmt.format(m.ts) }));
+    el('div', { class: 'meta' },
+      el('span', { class: 'time', text: timeFmt.format(m.ts) }),
+      el('button', { type: 'button', class: 'msg-del', title: 'Delete message', onclick: () => deleteMessage(m) }, svg(ICON.x))));
+  return node;
+}
+
+// Delete a message: just for you, or (your own) for everyone in the chat.
+function deleteMessage(m) {
+  const d = $('delDlg');
+  $('delAll').classList.toggle('hidden', !m.mine);
+  $('delText').textContent = m.mine
+    ? (m.file ? 'Delete for everyone also stops sharing this file: nobody in this chat can watch or download it from your PC any more.' : 'Delete for everyone removes it for everyone in this chat, also for those who are offline now.')
+    : 'This removes it only on this computer.';
+  d.returnValue = '';
+  d.addEventListener('close', async () => {
+    if (d.returnValue !== 'me' && d.returnValue !== 'all') return;
+    try {
+      await invoke('delete_message', { id: m.id, everyone: d.returnValue === 'all' });
+    } catch (e) {
+      toast(e);
+    }
+  }, { once: true });
+  d.showModal();
+}
+
+function removeMessage(id, chat) {
+  const list = S.msgs.get(chat);
+  if (list) {
+    const i = list.findIndex((x) => x.id === id);
+    if (i >= 0) list.splice(i, 1);
+  }
+  if (chat === S.active) {
+    const box = $('msgs');
+    const top = box.scrollTop;
+    renderMessages();
+    box.scrollTop = Math.min(top, box.scrollHeight);
+  }
 }
 
 function fileCard(file, chat, thumb) {
@@ -843,6 +880,27 @@ async function reachability(file) {
   }
 }
 
+function watchSound(video, file, onSilent) {
+  if (!/^video\//i.test(file.mime)) return;
+  let done = false;
+  let timer;
+  video.addEventListener('playing', () => {
+    if (done) return;
+    const start = video.currentTime;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (done || video.paused || video.muted || video.volume === 0 || video.currentTime - start < 2) return;
+      const decoded = video.webkitAudioDecodedByteCount;
+      if (typeof decoded !== 'number') return;
+      done = true;
+      if (decoded > 0) return;
+      let has = false;
+      try { has = await invoke('audio_track', { file }); } catch { return; }
+      if (has && video.isConnected) onSilent();
+    }, 4000);
+  });
+}
+
 async function openInVlc(file, why) {
   if (!(await ensureVlc(why))) return false;
   try {
@@ -1038,6 +1096,16 @@ function openViewer(file) {
   if (/^video\//i.test(file.mime)) {
     viewerPlayer = makePlayer(body, { file, chat: S.active });
     viewerPlayer.video.addEventListener('error', showError);
+    watchSound(viewerPlayer.video, file, () => {
+      if (token !== viewerToken || autoVlc) return;
+      autoVlc = true;
+      viewerPlayer?.video.pause();
+      note.textContent = 'This film’s sound can’t be played inside UaN on this computer, so it plays in VLC instead (nothing is downloaded).';
+      note.append(el('div', { class: 'note-actions' },
+        el('button', { type: 'button', class: 'small', text: 'Open in VLC (no download)', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } })));
+      note.classList.remove('hidden');
+      openInVlc(file, 'This film’s sound can’t be played inside UaN on this computer, but VLC can play it without downloading.');
+    });
   } else {
     const src = mediaUrl(file);
     const node = IMAGE.test(file.mime) ? el('img', { src, alt: file.name }) : el('audio', { src, controls: true, autoplay: true });
@@ -1470,7 +1538,8 @@ function renderInviteBar() {
   bar.replaceChildren(
     svg(ICON.bigplay),
     el('span', { class: 'grow ellipsis', text: `${host} invited you to watch “${p.file.name}” together` }),
-    el('button', { class: 'accent small', type: 'button', text: 'Join', onclick: async () => { await invoke('party_join', { id: p.id }).catch(toast); openParty(p.id); } }),
+    el('button', { class: 'accent small', type: 'button', text: 'Join', title: 'Streams the film, nothing is downloaded', onclick: async () => { await invoke('party_join', { id: p.id, full: false }).catch(toast); openParty(p.id); } }),
+    el('button', { class: 'small', type: 'button', text: 'Join, download first', title: 'Downloads the whole film before it starts (smoothest; kept in Downloads/UaN)', onclick: async () => { await invoke('party_join', { id: p.id, full: true }).catch(toast); openParty(p.id); } }),
     el('button', { class: 'small', type: 'button', text: 'Not now', onclick: () => { invoke('party_leave', { id: p.id }); S.parties.delete(p.id); renderInviteBar(); } }));
 }
 
@@ -1508,17 +1577,22 @@ function openParty(id, mode = partyMode) {
     }
   });
   if (mode === 'app') {
-    v.addEventListener('error', async () => {
+    const toVlc = async (what) => {
       if (openPartyId !== id || partyPlayer?.video !== v) return;
-      if ((await reachability(p.file)) !== 'ok' || openPartyId !== id || partyPlayer?.video !== v) return;
-      if (noAutoVlc.has(id)) return toast('This film’s format can’t play inside UaN here. Press “Watch in VLC” to watch it in sync.');
-      toast('This film’s format can’t play inside UaN here, so it plays in VLC, still in sync with everyone.');
-      if (await ensureVlc('This film’s format can’t play inside UaN on this computer, but VLC can play it in sync with everyone, without downloading.')) {
+      if (noAutoVlc.has(id)) return toast(`This film’s ${what} can’t play inside UaN here. Press “Watch in VLC” to watch it in sync.`);
+      toast(`This film’s ${what} can’t play inside UaN here, so it plays in VLC, still in sync with everyone.`);
+      if (await ensureVlc(`This film’s ${what} can’t play inside UaN on this computer, but VLC can play it in sync with everyone, without downloading.`)) {
         if (openPartyId === id && partyMode === 'app') openParty(id, 'vlc');
       } else {
         noAutoVlc.add(id);
       }
+    };
+    v.addEventListener('error', async () => {
+      if (openPartyId !== id || partyPlayer?.video !== v) return;
+      if ((await reachability(p.file)) !== 'ok') return;
+      toVlc('format');
     });
+    watchSound(v, p.file, () => toVlc('sound'));
   }
   v.addEventListener('play', () => { if (expecting('play')) { expect.play = 0; return; } userControl(); });
   v.addEventListener('pause', () => { if (expecting('pause')) { expect.pause = 0; return; } if (!v.ended) userControl(); });
@@ -1591,12 +1665,15 @@ function renderParty(p) {
   $('partyTitle').textContent = `Watching together: ${p.file.name}${leader ? '' : ` · hosted by ${leaderName}`}`;
   $('partyMembers').replaceChildren(...p.members.filter((m) => !m.left).map((m) => {
     const full = m.have >= p.file.size;
+    const pct = Math.floor((m.have / (p.file.size || 1)) * 100);
     const status = !m.joined ? 'invited'
       : m.buffering ? 'loading…'
+      : m.full && !full ? `downloading the whole film · ${pct}%`
       : m.ready ? (full ? 'ready ✓' : `ready ✓ · ${fmtBytes(m.have)} ahead`)
       : `buffering ${fmtBytes(m.have)}`;
     const bar = el('div');
-    bar.style.width = `${m.joined ? Math.min(100, (m.have / Math.min(READY_AHEAD, p.file.size || 1)) * 100) : 0}%`;
+    const target = m.full ? p.file.size : Math.min(READY_AHEAD, p.file.size);
+    bar.style.width = `${m.joined ? Math.min(100, (m.have / (target || 1)) * 100) : 0}%`;
     return el('div', { class: 'pm' + (m.ready && m.joined && !m.buffering ? ' ready' : '') },
       el('div', { class: 'strong ellipsis', text: (m.id === S.me.id ? 'You' : m.name) + (m.id === p.seeder ? ' ⭐' : '') }),
       el('div', { class: 'sub', text: status + (m.id === p.seeder ? ' · shares the film' : '') }),
@@ -1608,7 +1685,7 @@ function renderParty(p) {
   if (p.state === 'loading') {
     wait.textContent = partyReady(p)
       ? 'Everyone is ready. Starting…'
-      : `Getting the film ready for everyone. Nothing is downloaded, it streams.\nIt starts as soon as everyone has enough loaded${stuck.length ? ` (waiting for ${stuck.map((m) => (m.id === S.me.id ? 'you' : m.name)).join(', ')})` : ''}.`;
+      : `Getting the film ready for everyone. It streams, unless someone chose to download it first.\nIt starts as soon as everyone has enough loaded${stuck.length ? ` (waiting for ${stuck.map((m) => (m.id === S.me.id ? 'you' : m.name) + (m.full ? ` to download it, ${Math.floor((m.have / (p.file.size || 1)) * 100)}%` : '')).join(', ')})` : ''}.`;
     wait.classList.remove('hidden');
   } else if (p.state === 'paused' && stuck.length) {
     wait.textContent = `Waiting for ${stuck.map((m) => (m.id === S.me.id ? 'you' : m.name)).join(', ')} to catch up…\nThe film continues for everyone automatically.`;
@@ -1616,6 +1693,14 @@ function renderParty(p) {
   } else {
     wait.classList.add('hidden');
   }
+  const mine = p.members.find((m) => m.id === S.me.id);
+  // Nothing to choose once you have the whole film (you sent it, or your download is finished).
+  const haveAll = p.file.owner === S.me.id || (mine?.full && mine.have >= p.file.size);
+  $('partyFull').classList.toggle('hidden', !mine || haveAll);
+  $('partyFull').textContent = mine?.full ? 'Just stream instead' : 'Download whole film first';
+  $('partyFull').title = mine?.full
+    ? 'Stop downloading and stream the film like the others (what is downloaded so far is kept)'
+    : 'Download the whole film before watching: smoothest playback, the party waits for you. A copy is kept in Downloads/UaN.';
   $('partyStart').classList.toggle('hidden', !(leader && p.state === 'loading'));
   $('partyEnd').classList.toggle('hidden', !leader);
 
@@ -1632,6 +1717,18 @@ function renderParty(p) {
 $('partyVlc').addEventListener('click', async () => {
   if (!(await ensureVlc())) return;
   if (openPartyId) openParty(openPartyId, 'vlc');
+});
+
+$('partyFull').addEventListener('click', async () => {
+  const p = S.parties.get(openPartyId);
+  const mine = p?.members.find((m) => m.id === S.me.id);
+  if (!p || !mine) return;
+  try {
+    await invoke('party_full', { id: p.id, full: !mine.full });
+    toast(mine.full ? 'Streaming the film again.' : 'Downloading the whole film. The party waits until you have it.');
+  } catch (e) {
+    toast(e);
+  }
 });
 
 $('partyStart').addEventListener('click', () => {

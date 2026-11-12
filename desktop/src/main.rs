@@ -252,6 +252,24 @@ fn open_vlc_site() {
 }
 
 #[tauri::command]
+fn delete_message(node: State<'_, Arc<Node>>, id: String, everyone: bool) -> CmdResult<()> {
+    node.delete_message(&id, everyone)
+}
+
+/// Does the film have a sound track? (Checked when the built-in player plays it silently.)
+#[tauri::command]
+async fn audio_track(node: State<'_, Arc<Node>>, file: FileMeta) -> CmdResult<bool> {
+    const PART: u64 = 4 * 1024 * 1024;
+    let head = file.size.min(PART);
+    let mut data = node.read_range(&file, 0, head).await?;
+    if file.size > head {
+        let tail = (file.size - head).min(PART);
+        data.extend(node.read_range(&file, file.size - tail, tail).await?);
+    }
+    Ok(node::has_audio_track(&data))
+}
+
+#[tauri::command]
 async fn install_vlc() -> bool {
     tauri::async_runtime::spawn_blocking(vlc::install).await.unwrap_or(false)
 }
@@ -333,8 +351,13 @@ fn party_create(node: State<'_, Arc<Node>>, group: String, file: FileMeta, membe
 }
 
 #[tauri::command]
-fn party_join(node: State<'_, Arc<Node>>, id: String) -> CmdResult<()> {
-    node.join_party(&id)
+fn party_join(node: State<'_, Arc<Node>>, id: String, full: Option<bool>) -> CmdResult<()> {
+    node.join_party(&id, full.unwrap_or(false))
+}
+
+#[tauri::command]
+fn party_full(node: State<'_, Arc<Node>>, id: String, full: bool) -> CmdResult<()> {
+    node.party_full(&id, full)
 }
 
 #[tauri::command]
@@ -523,6 +546,9 @@ fn main() {
             vlc_close,
             open_vlc_site,
             install_vlc,
+            audio_track,
+            delete_message,
+            party_full,
             set_thumb,
             set_autodl,
             check_update,

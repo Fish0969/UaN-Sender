@@ -121,6 +121,7 @@
     <div class="viewer-bar">
       <span class="party-dot"></span>
       <span id="partyTitle" class="grow ellipsis strong"></span>
+      <button id="partyFull" class="small" type="button"></button>
       <button id="partyVlc" class="small" type="button" title="Watch in VLC instead; stays in sync with everyone">Watch in VLC</button>
       <button id="partyStart" class="small hidden" type="button">Start now</button>
       <button id="partyEnd" class="small hidden" type="button">End for everyone</button>
@@ -224,7 +225,7 @@
       <div class="group">
         <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when your computer starts (runs in the tray)</label>
         <label class="check"><input type="checkbox" id="sAutoDl"> Automatically download files friends send, up to <input id="sAutoDlGb" type="number" min="1" max="4096" class="gb"> GB</label>
-        <div class="note">Saved to Downloads/UaN, so they still open when the sender’s PC is off later.</div>
+        <div class="note">Off by default: films stream without downloading. If on, files are saved to Downloads/UaN, so they still open when the sender’s PC is off later.</div>
         <div class="note">UaN keeps running in the tray when you close the window, so friends can watch and download what you sent them. Quit it from the tray icon.</div>
       </div>
       <div class="group">
@@ -287,6 +288,18 @@
   </dialog>
 
   <!-- Confirm -->
+  <dialog id="delDlg">
+    <form method="dialog">
+      <h2>Delete message?</h2>
+      <p id="delText" class="note"></p>
+      <div class="actions">
+        <span class="grow"></span>
+        <button value="no">Cancel</button>
+        <button value="me" id="delMe">Delete for me</button>
+        <button value="all" class="accent" id="delAll">Delete for everyone</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="askDlg">
     <form method="dialog">
       <p id="askText"></p>

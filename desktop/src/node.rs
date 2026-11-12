@@ -129,6 +129,8 @@ pub enum Req {
     Msg { msg: WireMsg },
     Group { group: WireGroup },
     GroupLeave { group_id: String },
+    /// The sender deleted one of their messages for everyone.
+    Unsend { msg_id: String },
     /// A small preview picture for a photo or video someone sent.
     Thumb { file_id: String, data: String },
     FileGet { file_id: String, offset: u64, len: Option<u64> },
@@ -144,6 +146,9 @@ pub enum Req {
         ready: bool,
         #[serde(default)]
         buffering: bool,
+        /// Downloads the whole film before watching (instead of streaming around the playhead).
+        #[serde(default)]
+        full: bool,
     },
     PartyControl { party_id: String, state: String, position: f64 },
 }
@@ -163,6 +168,8 @@ pub struct PartyMember {
     pub ready: bool,
     #[serde(default)]
     pub buffering: bool,
+    #[serde(default)]
+    pub full: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -448,6 +455,8 @@ pub struct Node {
     parties: Mutex<HashMap<String, Party>>,
     caches: Mutex<HashMap<String, Arc<StreamCache>>>,
     buffering: Mutex<HashSet<String>>,
+    /// Watch parties where we download the whole film first.
+    full_parties: Mutex<HashSet<String>>,
     // Speed tests requested by peers run on a separate task (keeps the async call graph acyclic).
     probe_tx: tokio::sync::mpsc::UnboundedSender<(String, tokio::sync::oneshot::Sender<Option<f64>>)>,
     secret: SecretKey,
@@ -509,6 +518,7 @@ impl Node {
             parties: Mutex::new(HashMap::new()),
             caches: Mutex::new(HashMap::new()),
             buffering: Mutex::new(HashSet::new()),
+            full_parties: Mutex::new(HashSet::new()),
             probe_tx,
             secret,
             http,
@@ -688,13 +698,14 @@ impl Node {
 
     // ----- Automatic downloads -----
 
-    /// (on, max size in GB). Files friends send are fetched in the background so they open even when the sender is offline later.
+    /// (on, max size in GB). Off unless you turn it on in Settings: films stream, nothing is downloaded by itself.
+    /// (A new key: the old "autodl" setting was on by default and is ignored.)
     pub fn autodl(&self) -> (bool, u64) {
-        (self.kv("autodl").map(|v| v != "0").unwrap_or(true), self.kv("autodl_gb").and_then(|v| v.parse().ok()).unwrap_or(10))
+        (self.kv("auto_download").map(|v| v == "1").unwrap_or(false), self.kv("autodl_gb").and_then(|v| v.parse().ok()).unwrap_or(10))
     }
 
     pub fn set_autodl(&self, on: bool, gb: u64) {
-        self.set_kv("autodl", if on { "1" } else { "0" });
+        self.set_kv("auto_download", if on { "1" } else { "0" });
         self.set_kv("autodl_gb", &gb.clamp(1, 4096).to_string());
     }
 
@@ -842,7 +853,7 @@ impl Node {
     }
 
     fn mailbox_ok(req: &Req) -> bool {
-        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. })
+        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. })
     }
 
     async fn mailbox_post(&self, path: &str, body: Value) -> Result<Value, String> {
@@ -1317,6 +1328,11 @@ impl Node {
                 }
                 Ok(ok)
             }
+            Req::Unsend { msg_id } => {
+                // Only the person who sent a message can delete it for everyone.
+                self.remove_message(&msg_id, Some(peer));
+                Ok(ok)
+            }
             Req::GroupLeave { group_id } => {
                 if self.is_member(&group_id, peer) {
                     let _ = self
@@ -1365,12 +1381,12 @@ impl Node {
                 }
                 Ok(ok)
             }
-            Req::PartyReport { party_id, have, joined, left, ready, buffering } => {
+            Req::PartyReport { party_id, have, joined, left, ready, buffering, full } => {
                 let leads = self.parties.lock().unwrap().get(&party_id).map(|p| p.leader == self.me_s).unwrap_or(false);
                 if !leads {
                     return Err("Not the host.".into());
                 }
-                self.apply_report(&party_id, peer, have, joined, left, ready, buffering);
+                self.apply_report(&party_id, peer, have, joined, left, ready, buffering, full);
                 Ok(ok)
             }
             Req::PartyControl { party_id, state, position } => {
@@ -1712,6 +1728,71 @@ impl Node {
             .collect();
         rows.reverse();
         rows
+    }
+
+    /// Deletes a message here. With `sender`, only if that person sent it. Returns (chat, sender, file).
+    fn remove_message(&self, id: &str, sender: Option<&str>) -> Option<(String, String, Option<FileMeta>)> {
+        let found: Option<(String, String, Option<String>)> = {
+            let db = self.db.lock().unwrap();
+            db.query_row("SELECT chat, sender, file FROM messages WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .optional()
+                .ok()
+                .flatten()
+        };
+        let (chat, from, file) = found?;
+        if sender.is_some_and(|s| s != from) {
+            return None;
+        }
+        let file: Option<FileMeta> = file.and_then(|f| serde_json::from_str(&f).ok());
+        {
+            let db = self.db.lock().unwrap();
+            let _ = db.execute("DELETE FROM messages WHERE id = ?1", [id]);
+            if let Some(f) = &file {
+                // Keep the preview while another message still shows the same file (sent to several chats).
+                let still: i64 = db
+                    .query_row("SELECT COUNT(*) FROM messages WHERE json_extract(file, '$.id') = ?1", [&f.id], |r| r.get(0))
+                    .unwrap_or(0);
+                if still == 0 {
+                    let _ = db.execute("DELETE FROM thumbs WHERE file_id = ?1", [&f.id]);
+                }
+            }
+        }
+        self.emit("unsent", json!({ "id": id, "chat": chat }));
+        Some((chat, from, file))
+    }
+
+    /// Deletes a message: just here, or (your own messages) for everyone in the chat.
+    /// A file you delete for everyone can no longer be watched or downloaded from your PC by that chat.
+    pub fn delete_message(self: &Arc<Self>, id: &str, everyone: bool) -> Result<(), String> {
+        let mine: Option<String> = self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT sender FROM messages WHERE id = ?1", [id], |r| r.get(0))
+            .optional()
+            .map_err(e2s)?;
+        let Some(sender) = mine else { return Ok(()) };
+        if everyone && sender != self.me_s {
+            return Err("You can only delete your own messages for everyone.".into());
+        }
+        let Some((chat, _, file)) = self.remove_message(id, None) else { return Ok(()) };
+        if everyone {
+            if let Ok((_, targets)) = self.chat_targets(&chat) {
+                let req = Req::Unsend { msg_id: id.to_string() };
+                for t in targets {
+                    self.deliver(&t, &req);
+                }
+            }
+            if let Some(f) = file.filter(|f| f.owner == self.me_s) {
+                let db = self.db.lock().unwrap();
+                let _ = db.execute("DELETE FROM file_access WHERE file_id = ?1 AND who = ?2", [&f.id, &chat]);
+                let left: i64 = db.query_row("SELECT COUNT(*) FROM file_access WHERE file_id = ?1", [&f.id], |r| r.get(0)).unwrap_or(0);
+                if left == 0 {
+                    let _ = db.execute("DELETE FROM shared_files WHERE id = ?1", [&f.id]);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Recipients of a chat id: a friend's id, or "g:<group>" for everyone in the group.
@@ -2078,7 +2159,11 @@ impl Node {
 
     /// Files saved automatically go to Downloads/UaN.
     fn auto_dir() -> Result<PathBuf, String> {
-        let dir = dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")?.join("UaN");
+        // UAN_DOWNLOADS: tests keep their files out of the real Downloads folder.
+        let dir = match std::env::var_os("UAN_DOWNLOADS") {
+            Some(d) => PathBuf::from(d),
+            None => dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")?.join("UaN"),
+        };
         std::fs::create_dir_all(&dir).map_err(e2s)?;
         Ok(dir)
     }
@@ -2484,7 +2569,8 @@ impl Node {
     pub fn stop_stream(&self, file_id: &str) {
         if let Some(c) = self.caches.lock().unwrap().remove(file_id) {
             c.cancel.cancel();
-            let dir = c.dir.clone();
+            let trash = c.dir.with_file_name(format!("old-{}", new_id()));
+            let dir = if std::fs::rename(&c.dir, &trash).is_ok() { trash } else { c.dir.clone() };
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 let _ = tokio::fs::remove_dir_all(dir).await;
@@ -2579,10 +2665,10 @@ impl Node {
     pub fn create_party(self: &Arc<Self>, group: &str, file: FileMeta, invite: Vec<String>, seeder: String) -> Result<String, String> {
         let g = self.load_group(group).ok_or("That group no longer exists.")?;
         let (have, ready) = self.buffer_state(&file);
-        let mut members = vec![PartyMember { id: self.me_s.clone(), name: self.my_name(), have, joined: true, left: false, ready, buffering: false }];
+        let mut members = vec![PartyMember { id: self.me_s.clone(), name: self.my_name(), have, joined: true, left: false, ready, buffering: false, full: false }];
         for id in invite {
             if let Some(m) = g.members.iter().find(|m| m.id == id && m.id != self.me_s) {
-                members.push(PartyMember { id: m.id.clone(), name: m.name.clone(), have: 0, joined: false, left: false, ready: false, buffering: false });
+                members.push(PartyMember { id: m.id.clone(), name: m.name.clone(), have: 0, joined: false, left: false, ready: false, buffering: false, full: false });
             }
         }
         if members.len() < 2 {
@@ -2602,14 +2688,19 @@ impl Node {
         };
         self.parties.lock().unwrap().insert(party.id.clone(), party.clone());
         self.broadcast_party(&party);
-        self.join_party(&party.id)?;
+        self.join_party(&party.id, false)?;
         Ok(party.id)
     }
 
-    pub fn join_party(self: &Arc<Self>, id: &str) -> Result<(), String> {
+    pub fn join_party(self: &Arc<Self>, id: &str, full: bool) -> Result<(), String> {
         let party = self.parties.lock().unwrap().get(id).cloned().ok_or("That watch party has ended.")?;
-        // Stream it: pieces around the playhead are fetched ahead of time (no download needed).
-        self.start_stream(party.file.clone(), format!("g:{}", party.group))?;
+        if full {
+            self.full_parties.lock().unwrap().insert(id.to_string());
+            self.download_into(party.file.clone(), format!("g:{}", party.group), true)?;
+        } else {
+            // Stream it: pieces around the playhead are fetched ahead of time (no download needed).
+            self.start_stream(party.file.clone(), format!("g:{}", party.group))?;
+        }
         self.party_report(id, Some(true), false);
         let me = self.clone();
         let id = id.to_string();
@@ -2626,6 +2717,32 @@ impl Node {
         Ok(())
     }
 
+    /// Your own choice in a watch party: download the whole film first (smoothest, kept in Downloads/UaN),
+    /// or just stream it around the playhead (nothing is kept). The party waits until you are ready.
+    pub fn party_full(self: &Arc<Self>, id: &str, full: bool) -> Result<(), String> {
+        let party = self.parties.lock().unwrap().get(id).cloned().ok_or("That watch party has ended.")?;
+        let chat = format!("g:{}", party.group);
+        let have_it = party.file.owner == self.me_s || self.local_copy(&party.file).is_some();
+        if full {
+            self.full_parties.lock().unwrap().insert(id.to_string());
+            if !have_it {
+                self.stop_stream(&party.file.id);
+                self.download_into(party.file.clone(), chat, true)?;
+            }
+        } else {
+            self.full_parties.lock().unwrap().remove(id);
+            if !have_it {
+                let tid = self.transfers.lock().unwrap().iter().find(|t| t.file.id == party.file.id && t.status != "done").map(|t| t.id.clone());
+                if let Some(tid) = tid {
+                    self.pause_download(&tid);
+                }
+                self.start_stream(party.file.clone(), chat)?;
+            }
+        }
+        self.party_report(id, None, false);
+        Ok(())
+    }
+
     /// Leave a watch party. If the host leaves without ending it, someone else becomes the host and the others keep watching.
     pub fn leave_party(self: &Arc<Self>, id: &str, end: bool) {
         let leader = self.parties.lock().unwrap().get(id).map(|p| p.leader.clone());
@@ -2633,6 +2750,7 @@ impl Node {
             self.stop_stream(&fid);
         }
         self.buffering.lock().unwrap().remove(id);
+        self.full_parties.lock().unwrap().remove(id);
         if leader.as_deref() == Some(self.me_s.as_str()) {
             let ended = {
                 let mut parties = self.parties.lock().unwrap();
@@ -2672,12 +2790,13 @@ impl Node {
         let Some(party) = self.parties.lock().unwrap().get(id).cloned() else { return };
         let (have, ready) = self.buffer_state(&party.file);
         let buffering = self.buffering.lock().unwrap().contains(id);
+        let full = self.full_parties.lock().unwrap().contains(id);
         let joined = joined.unwrap_or(true);
         if party.leader == self.me_s {
-            self.apply_report(id, &self.me_s.clone(), have, joined, left, ready, buffering);
+            self.apply_report(id, &self.me_s.clone(), have, joined, left, ready, buffering, full);
         } else {
             let me = self.clone();
-            let req = Req::PartyReport { party_id: id.to_string(), have, joined, left, ready, buffering };
+            let req = Req::PartyReport { party_id: id.to_string(), have, joined, left, ready, buffering, full };
             tauri::async_runtime::spawn(async move {
                 let _ = me.request(&party.leader, &req).await;
             });
@@ -2685,14 +2804,15 @@ impl Node {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn apply_report(self: &Arc<Self>, id: &str, who: &str, have: u64, joined: bool, left: bool, ready: bool, buffering: bool) {
+    fn apply_report(self: &Arc<Self>, id: &str, who: &str, have: u64, joined: bool, left: bool, ready: bool, buffering: bool, full: bool) {
         let updated = {
             let mut parties = self.parties.lock().unwrap();
             let Some(p) = parties.get_mut(id) else { return };
             let Some(m) = p.members.iter_mut().find(|m| m.id == who) else { return };
-            if m.have == have && m.joined == joined && m.left == left && m.ready == ready && m.buffering == buffering {
+            if m.have == have && m.joined == joined && m.left == left && m.ready == ready && m.buffering == buffering && m.full == full {
                 return;
             }
+            m.full = full;
             m.have = have.min(p.file.size);
             m.joined = joined;
             m.left = left;
@@ -2800,22 +2920,24 @@ impl Node {
         }
     }
 
+    fn pause_download(&self, id: &str) {
+        if let Some(r) = self.running.lock().unwrap().remove(id) {
+            r.cancel.cancel();
+            let live = r.live.load(Ordering::Relaxed);
+            self.update(id, |t| t.done = live.min(t.size));
+        }
+        self.update(id, |t| {
+            t.status = "paused".into();
+            t.speed = 0.0;
+        });
+        self.save_transfers();
+        self.emit_transfers();
+    }
+
     pub async fn transfer_action(self: &Arc<Self>, id: &str, action: &str) -> Result<(), String> {
         let t = self.get(id).ok_or("That download is gone.")?;
         match action {
-            "pause" => {
-                if let Some(r) = self.running.lock().unwrap().remove(id) {
-                    r.cancel.cancel();
-                    let live = r.live.load(Ordering::Relaxed);
-                    self.update(id, |t| t.done = live.min(t.size));
-                }
-                self.update(id, |t| {
-                    t.status = "paused".into();
-                    t.speed = 0.0;
-                });
-                self.save_transfers();
-                self.emit_transfers();
-            }
+            "pause" => self.pause_download(id),
             "resume" => self.start_download(id),
             "cancel" | "dismiss" => {
                 if let Some(r) = self.running.lock().unwrap().remove(id) {
@@ -3051,4 +3173,26 @@ async fn serve_media_http(node: Arc<Node>, mut sock: tokio::net::TcpStream, secr
         }
         w.flush().await?;
     }
+}
+
+/// Whether a film's container lists a sound track, from its first and last few MB (MKV/WebM, MP4/MOV, AVI).
+/// Used when the built-in player shows the picture but decodes no sound (e.g. AC3/DTS sound in many films).
+pub fn has_audio_track(data: &[u8]) -> bool {
+    let find_all = |pat: &[u8]| data.windows(pat.len()).enumerate().filter(|(_, w)| *w == pat).map(|(i, _)| i).collect::<Vec<_>>();
+    // MKV/WebM: a CodecID element (0x86, one-byte size) whose value starts with "A_" (A_AC3, A_DTS, A_AAC, …).
+    if data.windows(4).any(|w| w[0] == 0x86 && (0x81..=0x9f).contains(&w[1]) && &w[2..4] == b"A_") {
+        return true;
+    }
+    // MP4/MOV: a sound sample description inside an "stsd" box.
+    const SOUND: [&[u8; 4]; 18] = [
+        b"mp4a", b"ac-3", b"ec-3", b"ac-4", b"dtsc", b"dtsh", b"dtsl", b"dtse", b"dtsx", b"Opus", b"fLaC", b"mlpa", b"alac", b".mp3", b"sowt", b"twos", b"lpcm", b"samr",
+    ];
+    for i in find_all(b"stsd") {
+        let end = (i + 64).min(data.len());
+        if SOUND.iter().any(|f| data[i..end].windows(4).any(|w| w == &f[..])) {
+            return true;
+        }
+    }
+    // AVI: a stream header of type "auds".
+    find_all(b"strh").into_iter().any(|i| data.get(i + 8..i + 12) == Some(b"auds"))
 }

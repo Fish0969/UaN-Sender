@@ -146,6 +146,12 @@ label.inline input { width: 90px; margin: 0; }
 .mine .bubble { background: var(--mine); color: var(--on-mine); }
 .theirs .bubble { background: var(--theirs); border: 1px solid var(--border); }
 .time { font-size: 10px; color: var(--muted); padding: 0 2px 4px; }
+.msg .meta { display: flex; align-items: center; gap: 2px; }
+.msg.mine .meta { flex-direction: row-reverse; }
+.msg-del { width: 18px; height: 18px; padding: 0; border: 0; background: none; color: var(--muted); opacity: 0; display: grid; place-items: center; margin-bottom: 4px; }
+.msg-del svg { width: 11px; height: 11px; }
+.msg:hover .msg-del, .msg-del:focus-visible { opacity: 1; }
+.msg-del:hover { color: var(--danger); }
 
 .file { width: 300px; max-width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .file img, .file video { display: block; width: 100%; max-height: 220px; object-fit: contain; background: #000; }

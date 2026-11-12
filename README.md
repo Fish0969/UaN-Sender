@@ -41,16 +41,21 @@ sudo apt install ./UaN_*_amd64.deb
 - **Watch together.** In a group, every video has a *Watch together* button. The PC with the fastest
   connection shares the film, it streams for everyone, starts when everyone has enough loaded, and
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
-- **Open in VLC.** If a film's format can't play inside UaN, it opens in VLC by itself, streamed
-  without downloading (if VLC is missing, UaN offers to install it with one click). *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in sync with
-  everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
+  Everyone chooses for themselves: just stream it, or **download the whole film first** (smoothest;
+  the party waits for you, and a copy is kept in `Downloads/UaN`).
+- **Open in VLC.** If a film's format or sound can't play inside UaN (picture but no sound, e.g. AC3/DTS
+  sound), it opens in VLC by itself, streamed without downloading. If VLC is missing, UaN offers to
+  install it with one click. *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in
+  sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
+- **Delete messages.** Hover a message and click ×: delete it just for you, or (your own) for everyone.
+  Deleting a file for everyone also stops sharing it.
 - **Previews.** Photos and videos show a preview picture (and the video's length) in the chat, even
   when the sender's PC is off.
 - **Offline friends.** Messages, previews and small files (photos, short clips up to 24 MB) wait
   encrypted in a free mailbox, so they arrive even if you have turned your PC off by the time your
   friend comes online.
-- **Automatic downloads.** Files friends send are downloaded in the background (up to 10 GB each by
-  default, change it in Settings) to `Downloads/UaN`, so they still open later when the sender is offline.
+- **Automatic downloads** (off by default, turn on in Settings): files friends send are downloaded in
+  the background to `Downloads/UaN`, so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
   **profile picture, status, themes**.
@@ -58,8 +63,8 @@ sudo apt install ./UaN_*_amd64.deb
 ## Good to know
 
 - **Big files need both PCs on at the same time once**: the sender's PC must be on, with UaN running,
-  until the friend has watched or downloaded it (automatic downloads take care of this in the
-  background). That's why UaN starts with your PC and stays in the tray when you close the window.
+  until the friend has watched or downloaded it (turn on automatic downloads in Settings if you
+  want this to happen in the background). That's why UaN starts with your PC and stays in the tray when you close the window.
   Quit it from the tray icon menu.
 - If two PCs can't connect directly, traffic goes through a public relay, which is slower.
 - Some video formats (e.g. some AVI files) can't be played inside UaN; those open in VLC
