@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>UaN</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -89,6 +90,7 @@
       </div>
       <div id="chat" class="chat hidden">
         <header class="chat-head">
+          <button type="button" class="icon back-btn" id="backBtn" title="Back"><svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg></button>
           <button type="button" id="chatTitle" class="chat-title grow" title="Members, add people and more">
             <div class="avatar" id="chatAvatar"></div>
             <div class="grow">
@@ -184,6 +186,7 @@
   <div id="ctxMenu" class="menu hidden"></div>
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
   <input type="file" id="avatarFile" accept="image/*" hidden>
+  <input type="file" id="phoneFiles" multiple hidden>
 
   <!-- Gallery -->
   <dialog id="galleryDlg" class="wide-dlg">
@@ -268,9 +271,11 @@
         <select id="sTheme" class="hidden"></select>
         <div class="tiles themes" id="sThemes"></div>
         <div class="swatches" id="sAccent"></div>
+        <div class="pc-only">
         <div class="sub-title">App icon</div>
         <div class="tiles icons" id="sIcons"></div>
         <div class="note">Changes the icon of the window, the taskbar and the tray. The desktop shortcut keeps the original.</div>
+        </div>
       </div>
       <div class="group">
         <div class="group-title">Privacy</div>

@@ -163,3 +163,85 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  # The Android app (APK), built from the same code. Signed with UaN's key (GitHub secrets), so a new
+  # version installs over the old one.
+  android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+          link-to-sdk: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+          key: android
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Android project
+        working-directory: desktop
+        env:
+          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          npx --yes @tauri-apps/cli@2 android init --ci
+          npx --yes @tauri-apps/cli@2 icon icons/icon.png
+          node android-ci/patch.mjs
+
+      - name: Signing key
+        working-directory: desktop
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/uan-release.jks"
+          printf 'storeFile=%s\nkeyAlias=uan\npassword=%s\n' "$RUNNER_TEMP/uan-release.jks" "$KEYSTORE_PASSWORD" > gen/android/keystore.properties
+
+      - name: Build APK
+        working-directory: desktop
+        env:
+          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: npx --yes @tauri-apps/cli@2 android build --apk --target aarch64 armv7
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir dist
+          V=$(grep -m1 '"version"' desktop/tauri.conf.json | cut -d'"' -f4)
+          find desktop/gen/android -name '*.apk' -path '*release*' | head -5
+          APK=$(find desktop/gen/android -name '*universal-release.apk' | head -1)
+          test -n "$APK"
+          cp "$APK" "dist/UaN_${V}_android.apk"
+          ls -la dist
+          # It must be signed (an unsigned APK can't be installed).
+          SIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$SIGNER" verify --print-certs "dist/UaN_${V}_android.apk" | head -3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UaN-Android
+          path: dist/*
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

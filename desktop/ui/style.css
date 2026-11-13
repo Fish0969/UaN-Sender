@@ -573,3 +573,27 @@ body.modern .chat-head { height: 48px; }
 .pq-item .grow { font-size: 12px; }
 .pq-item button { height: 22px; }
 .pq-now { font-size: 11px; color: #9ecbff; }
+
+/* ================= Phones and narrow windows ================= */
+.back-btn { display: none !important; }
+html.phone .pc-only, html.phone #sAutoRow, html.phone #viewerVlc, html.phone #partyVlc, html.phone #trHead + .tr-list .tr-btns button[title="Show in folder"] { display: none !important; }
+html.phone body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+html.phone button, html.phone input { min-height: 36px; }
+html.phone button.icon { width: 36px; }
+html.phone .msg-act, html.phone .msg-del { opacity: .55 !important; width: 26px; height: 26px; }
+html.phone .list li { height: 46px; }
+html.phone .avatar { width: 32px; height: 32px; font-size: 14px; }
+html.phone dialog { width: calc(100vw - 16px); max-height: calc(100vh - 24px); overflow-y: auto; padding: 14px; }
+@media (max-width: 700px) {
+  .main { grid-template-columns: 1fr !important; }
+  .side { border-right: 0; }
+  .main.in-chat .side { display: none; }
+  .main:not(.in-chat) .content { display: none; }
+  .back-btn { display: grid !important; }
+  .msg { max-width: 88%; }
+  .chat-head { padding-left: 4px; }
+  .party-side { display: none !important; }
+  .party-members { padding: 0 8px 8px; }
+  .gallery-grid, .wide-dlg { width: calc(100vw - 16px) !important; }
+  .file { width: 260px; }
+}

@@ -156,6 +156,7 @@ document.addEventListener('keydown', (e) => {
 // ---------- Start ----------
 async function boot() {
   S.me = await invoke('state');
+  if (S.me.platform === 'android' || S.me.platform === 'ios') document.documentElement.classList.add('phone');
   if (S.me.selftest) return runSelfTest(S.me.selftest);
   if (!S.me.name) {
     $('setup').classList.remove('hidden');
@@ -597,6 +598,8 @@ async function openChat(chat, focusId) {
   }
   $('empty').classList.add('hidden');
   $('chat').classList.remove('hidden');
+  if (innerWidth <= 700 && !$('main').classList.contains('in-chat')) { try { history.pushState({ chat }, ''); } catch {} }
+  $('main').classList.add('in-chat');
   const ch = channelOf(chat);
   const gated = !!(ch && ch.locked && !ch.unlocked);
   $('lockGate').classList.toggle('hidden', !gated);
@@ -638,6 +641,7 @@ async function openChat(chat, focusId) {
 
 function closeChat() {
   S.active = null;
+  $('main').classList.remove('in-chat');
   $('chat').classList.add('hidden');
   $('empty').classList.remove('hidden');
 }
@@ -768,6 +772,9 @@ function cancelReply() {
   $('replyBar').classList.add('hidden');
 }
 $('replyCancel').addEventListener('click', cancelReply);
+$('backBtn').addEventListener('click', () => { closeChat(); renderLists(); });
+// Android's back button / gesture: back to the list instead of leaving the app.
+window.addEventListener('popstate', () => { if (S.active && innerWidth <= 700) { closeChat(); renderLists(); } });
 $('msgInput').addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && (S.replyTo || S.editing)) { e.preventDefault(); cancelReply(); }
 });
@@ -1171,8 +1178,34 @@ $('composer').addEventListener('submit', async (e) => {
   }
 });
 
+async function sendPhoneFiles(files) {
+  const chat = S.active;
+  const paths = [];
+  for (const f of files) {
+    const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const CH = 2 * 1024 * 1024;
+    let path = '';
+    for (let off = 0; off < f.size || off === 0; off += CH) {
+      const buf = new Uint8Array(await f.slice(off, off + CH).arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      path = await invoke('upload_part', { id, name: f.name || 'file', offset: off, data: btoa(bin) });
+      if (f.size > CH * 4) toast(`Preparing ${f.name}: ${Math.min(100, Math.round(((off + CH) / f.size) * 100))}%`);
+      if (f.size === 0) break;
+    }
+    paths.push(path);
+  }
+  if (paths.length) await invoke('send_paths', { paths, chats: [chat], text: '' });
+}
+$('phoneFiles').addEventListener('change', () => {
+  const files = [...$('phoneFiles').files];
+  $('phoneFiles').value = '';
+  if (files.length) sendPhoneFiles(files).catch(toast);
+});
+
 $('attachBtn').addEventListener('click', () => {
   if (!S.active) return;
+  if (document.documentElement.classList.contains('phone')) return $('phoneFiles').click();
   const r = $('attachBtn').getBoundingClientRect();
   showMenu(r.left, r.top - 70, [
     { label: 'Send files…', run: () => invoke('pick_and_send', { chats: [S.active], text: '' }).catch(toast) },

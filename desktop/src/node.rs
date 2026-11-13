@@ -3210,7 +3210,7 @@ impl Node {
             }
             return Ok(id);
         }
-        let dir = if auto { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
+        let dir = if auto || std::env::var_os("UAN_DOWNLOADS").is_some() { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
         let path = unique_path(&dir, &safe_file_name(&file.name));
         let id = new_id();
         self.transfers.lock().unwrap().push(Transfer {

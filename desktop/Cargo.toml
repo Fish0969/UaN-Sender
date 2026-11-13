@@ -1,17 +1,21 @@
 [package]
 name = "uan"
-version = "1.7.0"
+version = "1.8.0"
 description = "Peer-to-peer chat and file sharing"
 edition = "2021"
+
+[lib]
+# The app itself; the PC program (src/main.rs) and the Android app both start it.
+name = "uan_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-single-instance = "2"
-tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,11 +27,16 @@ data-encoding = "2"
 crypto_box = "0.9"
 curve25519-dalek = "4"
 sha2 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 flate2 = "1"
+
+# PC only (tray, one copy at a time, start with the computer).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
 
 [features]
 default = ["custom-protocol"]
