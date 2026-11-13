@@ -201,8 +201,9 @@ jobs:
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          npx --yes @tauri-apps/cli@2 android init --ci
-          npx --yes @tauri-apps/cli@2 icon icons/icon.png
+          npm install --no-audit --no-fund
+          npm run tauri -- android init --ci
+          npm run tauri -- icon icons/icon.png
           node android-ci/patch.mjs
 
       - name: Signing key
@@ -218,7 +219,7 @@ jobs:
         working-directory: desktop
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: npx --yes @tauri-apps/cli@2 android build --apk --target aarch64 armv7
+        run: npm run tauri -- android build --apk --target aarch64 armv7
 
       - name: Collect APK
         shell: bash

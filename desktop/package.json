@@ -1,0 +1,7 @@
+{
+  "name": "uan",
+  "private": true,
+  "description": "Only for building the Android app (the Tauri command-line tool).",
+  "scripts": { "tauri": "tauri" },
+  "devDependencies": { "@tauri-apps/cli": "^2" }
+}
