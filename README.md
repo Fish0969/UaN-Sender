@@ -49,9 +49,7 @@ sudo apt install ./UaN_*_amd64.deb
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
 - **Delete messages.** Hover a message and click ×: delete it just for you, or (your own) for everyone.
   Deleting a file for everyone also stops sharing it.
-- **New look.** Groups sit on a rail on the left (like Discord), their channels and members next to it, your
-  profile at the bottom. Prefer the old look? Settings → Layout → Legacy. All themes work with both.
-- **Channels.** Groups can have channels besides *general*. A channel can be locked with a password: its
+- **Channels.** Groups can have channels besides *general* (tabs above the messages; + makes a new one). A channel can be locked with a password: its
   messages are encrypted with that password, so only people who know it can read them.
 - **GIFs.** The GIF button in the message bar searches KLIPY (the GIF service Discord uses; Tenor closed in 2026).
 - **Groups.** Click a group's name (or right-click it in the list) for members, adding people and more.

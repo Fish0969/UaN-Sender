@@ -516,8 +516,9 @@ $('lockForm').addEventListener('submit', async (e) => {
 });
 
 // ---------- Layout: new or legacy ----------
+// The classic layout (the rail layout of 1.6.0 was dropped; its code stays switched off).
 function currentLayout() {
-  try { return localStorage.getItem('uan.layout') || 'modern'; } catch { return 'modern'; }
+  return 'legacy';
 }
 function applyLayout() {
   document.body.classList.toggle('modern', currentLayout() === 'modern');
@@ -2391,6 +2392,41 @@ function setSnow(on) {
   };
   snow = { canvas, raf: requestAnimationFrame(frame) };
 }
+// Where the face is in the secret picture (0..1 of width/height). For the original photo it is
+// known; for other pictures: portrait photos usually have the face in the upper part.
+let secretPic = null;
+function secretFocus(img) {
+  if (img.naturalWidth === 987 && img.naturalHeight === 1755) return [0.565, 0.135];
+  return img.naturalHeight > img.naturalWidth * 1.15 ? [0.5, 0.25] : [0.5, 0.4];
+}
+function placeSecret() {
+  if (!secretPic || theme.mode !== 'secret') return;
+  const img = secretPic.img;
+  if (!img.naturalWidth) return;
+  const W = innerWidth, H = innerHeight;
+  const [fx, fy] = secretFocus(img);
+  // Centre of the chat area (right of the side bar), or of the window.
+  const area = document.querySelector('#main:not(.hidden) .content')?.getBoundingClientRect();
+  const cx = area && area.width ? area.left + area.width / 2 : W / 2;
+  const cy = area && area.height ? area.top + area.height / 2 : H / 2;
+  // Big enough to cover the window, and to have room to put the face in the centre.
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const k = Math.min(3, Math.max(W / iw, H / ih, cx / (fx * iw), (W - cx) / ((1 - fx) * iw), cy / (fy * ih), (H - cy) / ((1 - fy) * ih)));
+  const w = iw * k, h = ih * k;
+  const x = Math.min(0, Math.max(W - w, cx - fx * w));
+  const y = Math.min(0, Math.max(H - h, cy - fy * h));
+  SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${secretPic.url}") ${Math.round(x)}px ${Math.round(y)}px / ${Math.round(w)}px ${Math.round(h)}px no-repeat`;
+  document.documentElement.style.setProperty('--bg-image', SECRET.image);
+}
+function useSecretPicture(url) {
+  const img = new Image();
+  secretPic = { url, img };
+  img.onload = placeSecret;
+  img.src = url;
+  SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${url}") center / cover no-repeat`;
+}
+window.addEventListener('resize', placeSecret);
+
 async function unlockSecret() {
   let pic = await invoke('secret_picture').catch(() => null);
   if (!pic) {
@@ -2416,8 +2452,9 @@ async function unlockSecret() {
     });
     if (!pic) return;
   }
-  SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${pic}") center / cover no-repeat`;
+  useSecretPicture(pic);
   setTheme('secret');
+  placeSecret();
   toast('Secret theme unlocked.');
 }
 
@@ -2479,7 +2516,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 applyTheme();
 if (theme.mode === 'secret') {
   invoke('secret_picture').then((pic) => {
-    if (pic) { SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${pic}") center / cover no-repeat`; applyTheme(); }
+    if (pic) { useSecretPicture(pic); applyTheme(); }
     else setTheme('dark');
   }).catch(() => {});
 }
@@ -2572,7 +2609,18 @@ const AVATARS = [
   { name: 'Star', from: '#818cf8', to: '#3730a3', draw: (c) => { c.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 13 : 30; const a = -Math.PI / 2 + (i * Math.PI) / 5; c.lineTo(50 + r * Math.cos(a), 52 + r * Math.sin(a)); } c.closePath(); c.fill(); } },
   { name: 'Cat', from: '#fdba74', to: '#c2410c', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 44); c.lineTo(28, 18); c.lineTo(46, 32); c.closePath(); c.fill(); c.beginPath(); c.moveTo(74, 44); c.lineTo(72, 18); c.lineTo(54, 32); c.closePath(); c.fill(); c.beginPath(); c.arc(50, 54, 26, 0, Math.PI * 2); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(40, 50, 4, 0, Math.PI * 2); c.arc(60, 50, 4, 0, Math.PI * 2); c.fill(); c.beginPath(); c.moveTo(46, 60); c.lineTo(54, 60); c.lineTo(50, 65); c.closePath(); c.fill(); } },
   { name: 'Ghost', from: '#64748b', to: '#1e293b', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 82); c.lineTo(26, 46); c.arc(50, 46, 24, Math.PI, 0); c.lineTo(74, 82); c.lineTo(66, 74); c.lineTo(58, 82); c.lineTo(50, 74); c.lineTo(42, 82); c.lineTo(34, 74); c.closePath(); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(41, 46, 4.5, 0, Math.PI * 2); c.arc(59, 46, 4.5, 0, Math.PI * 2); c.fill(); } },
-  { name: 'Mushroom', from: '#d6a36b', to: '#7a4a24', secret: true, draw: (c, bg) => { c.beginPath(); c.moveTo(18, 52); c.bezierCurveTo(18, 22, 82, 22, 82, 52); c.closePath(); c.fill(); c.beginPath(); c.moveTo(40, 52); c.lineTo(60, 52); c.lineTo(63, 80); c.quadraticCurveTo(50, 86, 37, 80); c.closePath(); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(38, 39, 4, 0, Math.PI * 2); c.arc(58, 34, 5, 0, Math.PI * 2); c.arc(68, 46, 3, 0, Math.PI * 2); c.fill(); } },
+  { name: 'Mushroom', from: '#e0a96d', to: '#8a4f22', secret: true, draw: (c, bg) => {
+    // stem: a thick, slightly bulging trunk
+    c.globalAlpha = 0.78;
+    c.beginPath(); c.moveTo(39, 50); c.bezierCurveTo(31, 62, 31, 80, 50, 83); c.bezierCurveTo(69, 80, 69, 62, 61, 50); c.closePath(); c.fill();
+    c.globalAlpha = 1;
+    // cap: a wide dome with a soft rim
+    c.beginPath(); c.moveTo(14, 52); c.bezierCurveTo(14, 21, 86, 21, 86, 52); c.bezierCurveTo(72, 58, 28, 58, 14, 52); c.closePath(); c.fill();
+    // a small shine on the cap
+    c.fillStyle = bg; c.globalAlpha = 0.35;
+    c.beginPath(); c.ellipse(36, 36, 8, 4, -0.5, 0, Math.PI * 2); c.fill();
+    c.globalAlpha = 1;
+  } },
   { name: 'Game', from: '#f472b6', to: '#7c3aed', draw: (c, bg) => { c.beginPath(); c.roundRect(16, 34, 68, 36, 18); c.fill(); c.fillStyle = bg; c.fillRect(30, 49, 14, 5); c.fillRect(34.5, 44.5, 5, 14); c.beginPath(); c.arc(62, 47, 3.5, 0, Math.PI * 2); c.arc(70, 56, 3.5, 0, Math.PI * 2); c.fill(); } },
 ];
 function drawAvatar(canvas, a) {
