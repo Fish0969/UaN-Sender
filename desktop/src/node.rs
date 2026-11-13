@@ -706,16 +706,6 @@ impl Node {
             .unwrap_or_default()
     }
 
-    /// A random id used only for KLIPY's GIF API (not your UaN identity).
-    pub fn gif_customer_id(&self) -> String {
-        if let Some(id) = self.kv("gif_cid") {
-            return id;
-        }
-        let id = new_id();
-        self.set_kv("gif_cid", &id);
-        id
-    }
-
     fn kv(&self, k: &str) -> Option<String> {
         self.db.lock().unwrap().query_row("SELECT v FROM kv WHERE k = ?1", [k], |r| r.get(0)).optional().ok().flatten()
     }

@@ -531,61 +531,7 @@ document.querySelectorAll('#sLayout button').forEach((b) => b.addEventListener('
 }));
 applyLayout();
 
-// ---------- GIFs (GIPHY or KLIPY, searched through the UaN mailbox server) ----------
-const GIF_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(giphy\.com|klipy\.com)\/\S+$/i;
-function isGifUrl(t) { return typeof t === 'string' && t.length < 600 && GIF_HOSTS.test(t.trim()) && !/\s/.test(t.trim()); }
-const gif = { q: '', page: 1, more: false, loading: false, seq: 0 };
-function hideGifs() {
-  $('gifPanel')?.classList.add('hidden');
-  $('gifBtn')?.classList.remove('on');
-}
-async function loadGifs(reset) {
-  if (reset) { gif.page = 1; $('gifGrid').replaceChildren(); $('gifGrid').scrollTop = 0; }
-  const seq = ++gif.seq;
-  gif.loading = true;
-  $('gifNote').textContent = 'Loading…';
-  try {
-    const d = await invoke('gif_search', { q: gif.q, page: gif.page });
-    if (seq !== gif.seq) return;
-    gif.more = d.more;
-    $('gifGrid').append(...d.items.map((it) => el('button', { type: 'button', title: 'Send', onclick: () => sendGif(it.url, it.slug) },
-      el('img', { src: it.preview, alt: '', loading: 'lazy', width: it.w, height: it.h }))));
-    $('gifNote').textContent = d.items.length || gif.page > 1 ? 'Powered by KLIPY' : 'No GIFs found.';
-  } catch (e) {
-    if (seq === gif.seq) $('gifNote').textContent = String(e.message || e);
-  } finally {
-    if (seq === gif.seq) gif.loading = false;
-  }
-}
-async function sendGif(url, slug) {
-  if (!S.active) return;
-  hideGifs();
-  try {
-    await invoke('send_text', { chats: [S.active], text: url });
-    if (slug) invoke('gif_shared', { slug }).catch(() => {});
-  } catch (e) { toast(e); }
-}
-$('gifBtn').addEventListener('click', () => {
-  const open = $('gifPanel').classList.toggle('hidden');
-  $('gifBtn').classList.toggle('on', !open);
-  if (!open) {
-    if (!$('gifGrid').children.length) loadGifs(true);
-    setTimeout(() => $('gifSearch').focus(), 30);
-  }
-});
-let gifTimer;
-$('gifSearch').addEventListener('input', () => {
-  clearTimeout(gifTimer);
-  gifTimer = setTimeout(() => { gif.q = $('gifSearch').value.trim(); loadGifs(true); }, 350);
-});
-$('gifGrid').addEventListener('scroll', () => {
-  const g = $('gifGrid');
-  if (gif.more && !gif.loading && g.scrollTop + g.clientHeight > g.scrollHeight - 200) { gif.page++; loadGifs(false); }
-});
-document.addEventListener('mousedown', (e) => {
-  if (!$('gifPanel').classList.contains('hidden') && !e.target.closest('#gifPanel, #gifBtn')) hideGifs();
-});
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideGifs(); });
+
 
 async function friendAction(id, action) {
   try {
@@ -615,7 +561,6 @@ $('addForm').addEventListener('submit', async (e) => {
 async function openChat(chat, focusId) {
   S.active = chat;
   S.unread.delete(chat);
-  hideGifs();
   if (isGroup(chat)) {
     S.view = groupIdOf(chat);
     S.lastChan[S.view] = chat;
@@ -665,7 +610,6 @@ async function openChat(chat, focusId) {
 
 function closeChat() {
   S.active = null;
-  hideGifs();
   $('chat').classList.add('hidden');
   $('empty').classList.remove('hidden');
 }
@@ -713,7 +657,6 @@ function messageNode(m, showSender = true) {
     isGroup(m.chat) && !m.mine && showSender ? el('div', { class: 'sender', text: m.senderName }) : null,
     m.file ? fileCard(m.file, m.chat, m.thumb) : null,
     m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
-      : isGifUrl(m.text) ? el('img', { class: 'gif', src: m.text, alt: 'GIF', loading: 'lazy', onload: keepBottom })
       : m.text ? el('div', { class: 'bubble', text: m.text }) : null,
     el('div', { class: 'meta' },
       el('span', { class: 'time', text: timeFmt.format(m.ts) }),

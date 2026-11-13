@@ -521,19 +521,4 @@ body.modern .chat-head { height: 48px; }
 .lock-gate .note { max-width: 320px; }
 .lock-form { display: flex; gap: 6px; width: min(320px, 100%); margin-top: 6px; }
 
-/* GIFs */
-.gif-btn { width: auto !important; padding: 0 6px !important; font-size: 11px; font-weight: 700; letter-spacing: .5px; }
-.gif-btn.on { color: var(--accent) !important; }
-.gif-panel {
-  position: absolute; right: 10px; bottom: 52px; width: min(420px, calc(100% - 20px)); height: min(440px, calc(100% - 70px));
-  display: flex; flex-direction: column; gap: 8px; padding: 10px; z-index: 15;
-  background: var(--dialog, var(--card)); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
-}
-.gif-top { display: flex; gap: 8px; align-items: center; }
-.gif-grid { flex: 1; overflow-y: auto; columns: 2; column-gap: 6px; }
-.gif-grid button { display: block; width: 100%; padding: 0; margin: 0 0 6px; border: 0; border-radius: 6px; overflow: hidden; background: var(--hover); break-inside: avoid; height: auto; }
-.gif-grid img { display: block; width: 100%; height: auto; }
-.gif-grid button:hover { outline: 2px solid var(--accent); }
-.gif-note { text-align: center; }
-.msg img.gif { display: block; max-width: min(300px, 100%); max-height: 260px; border-radius: 8px; background: var(--hover); }
 .msg .locked-msg { font-style: italic; color: var(--muted); }

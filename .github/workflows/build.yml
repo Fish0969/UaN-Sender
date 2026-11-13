@@ -44,8 +44,6 @@ jobs:
 
       - name: Build UaN
         working-directory: desktop
-        env:
-          UAN_KLIPY_KEY: ${{ secrets.UAN_KLIPY_KEY }}
         run: npx --yes @tauri-apps/cli@2 build --bundles ${{ matrix.bundles }}
 
       - name: Collect files

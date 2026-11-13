@@ -51,9 +51,3 @@ npx wrangler deploy
 Put the database id from `d1 create` into `wrangler.toml` before deploying, then set the address as
 `DEFAULT_MAILBOX` in `desktop/src/node.rs`.
 
-## GIF search (KLIPY)
-
-The app calls KLIPY directly (their rules: requests from the user's app, results in their order, "Search KLIPY" in the box).
-The API key is not in this repository: release builds get it from the `UAN_KLIPY_KEY` GitHub secret at compile
-time; local builds can set `UAN_KLIPY_KEY` when building or running. The key is in testing mode (100 searches
-per hour for everyone together) until production access is requested in the KLIPY Partner Panel.

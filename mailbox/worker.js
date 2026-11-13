@@ -84,64 +84,10 @@ async function blobDel(env, body) {
   return json({ ok: true });
 }
 
-// ---- GIF search for GIPHY (if a GIPHY_KEY secret is set). KLIPY is searched by the app itself,
-// as KLIPY requires. GET /gif?p=giphy&q=<search, empty = trending>&page=<1..>
-// -> { ok, items: [{ id, url (to send), preview (small), w, h }], more }
-const GIF_PER_PAGE = 24;
-
-async function gifSearch(env, url) {
-  const p = 'giphy';
-  const q = (url.searchParams.get('q') || '').trim().slice(0, 80);
-  const page = Math.max(1, Math.min(50, Number(url.searchParams.get('page')) || 1));
-  const cache = caches.default;
-  const cacheKey = new Request(`https://gif-cache/${p}/${page}/${encodeURIComponent(q.toLowerCase())}`);
-  const hit = await cache.match(cacheKey);
-  if (hit) return hit;
-  let items = [];
-  let more = false;
-  if (p === 'giphy') {
-    if (!env.GIPHY_KEY) return fail('GIPHY isn’t set up yet.', 503);
-    const api = new URL(q ? 'https://api.giphy.com/v1/gifs/search' : 'https://api.giphy.com/v1/gifs/trending');
-    api.searchParams.set('api_key', env.GIPHY_KEY);
-    if (q) api.searchParams.set('q', q);
-    api.searchParams.set('limit', String(GIF_PER_PAGE));
-    api.searchParams.set('offset', String((page - 1) * GIF_PER_PAGE));
-    api.searchParams.set('rating', 'pg-13');
-    const r = await fetch(api);
-    if (!r.ok) return fail(`GIPHY error ${r.status}`, 502);
-    const d = await r.json();
-    items = (d.data || []).map((g) => ({
-      id: g.id,
-      url: g.images?.downsized?.url || g.images?.original?.url,
-      preview: g.images?.fixed_width?.url || g.images?.downsized?.url,
-      w: Number(g.images?.fixed_width?.width) || 200,
-      h: Number(g.images?.fixed_width?.height) || 150,
-    })).filter((g) => g.url);
-    more = (d.pagination?.total_count || 0) > page * GIF_PER_PAGE;
-  }
-  const res = new Response(JSON.stringify({ ok: true, items, more }), {
-    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=600', 'access-control-allow-origin': '*' },
-  });
-  await cache.put(cacheKey, res.clone());
-  return res;
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/') return json({ ok: true, service: 'uan-mailbox' });
-    if (request.method === 'GET' && url.pathname === '/gif') {
-      let res;
-      try {
-        res = await gifSearch(env, url);
-      } catch (e) {
-        res = fail('GIF search failed.', 502);
-      }
-      // The app reads this from its own page, so every answer (errors too) needs this header.
-      const h = new Headers(res.headers);
-      h.set('access-control-allow-origin', '*');
-      return new Response(res.body, { status: res.status, headers: h });
-    }
     if (request.method !== 'POST') return fail('Not found.', 404);
     if (url.pathname === '/blob/put') return blobPut(request, env, url);
 
