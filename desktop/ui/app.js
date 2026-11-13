@@ -176,12 +176,16 @@ async function checkUpdate() {
   btn.onclick = async () => {
     if (!u.url) return toast('No download for this system in that release yet.');
     const size = u.size ? ` (${fmtBytes(u.size)})` : '';
-    if (!(await ask(`Update to UaN ${u.version}${size}? It downloads only what is new and replaces this version. UaN restarts afterwards.`, 'Update'))) return;
+    if (!(await ask(`Update to UaN ${u.version}${size}? It downloads the new version and switches over by itself, nothing to install. UaN restarts in a few seconds.`, 'Update'))) return;
     btn.disabled = true;
     btn.textContent = 'Downloading…';
     try {
       await invoke('install_update', { url: u.url, name: u.name });
     } catch (err) {
+      if (String(err) === 'no-write' && u.installer) {
+        btn.textContent = 'Downloading…';
+        try { await invoke('install_update', { url: u.installer, name: u.installerName }); return; } catch (e2) { err = e2; }
+      }
       btn.disabled = false;
       btn.textContent = 'Update';
       toast(err);

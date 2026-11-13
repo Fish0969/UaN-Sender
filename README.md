@@ -65,7 +65,8 @@ sudo apt install ./UaN_*_amd64.deb
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
   **profile picture** (upload one or pick a ready-made one), **status**, **17 themes** (including a Christmas one with falling snow), and a choice of
   **app icons**.
-- **Small updates.** One click in the app. On Linux, the AppImage only downloads the new program
+- **Small updates.** One click on *Update* in the app: it downloads only the new program (a few MB) and
+  switches over by itself, no installer, no uninstaller, everything stays. On Linux, the AppImage also only downloads the new program
   (a few MB), not the whole 150 MB package.
 
 ## Good to know

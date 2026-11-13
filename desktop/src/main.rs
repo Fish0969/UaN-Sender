@@ -188,16 +188,6 @@ fn newest_delta() -> Option<(PathBuf, (u64, u64, u64))> {
     best
 }
 
-/// Does this program start here (all libraries found)? Runs it with --uan-version.
-#[cfg(target_os = "linux")]
-fn delta_works(path: &std::path::Path, expect: &str) -> bool {
-    std::process::Command::new(path)
-        .arg("--uan-version")
-        .output()
-        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == expect)
-        .unwrap_or(false)
-}
-
 /// Inside the AppImage: hand over to a newer UaN program downloaded by a small update.
 #[cfg(target_os = "linux")]
 fn run_newer_delta() {
@@ -206,7 +196,7 @@ fn run_newer_delta() {
     }
     let Some((path, v)) = newest_delta() else { return };
     let expect = format!("{}.{}.{}", v.0, v.1, v.2);
-    if !delta_works(&path, &expect) {
+    if !program_works(&path, &expect) {
         let _ = std::fs::remove_file(&path);
         return;
     }
@@ -215,20 +205,60 @@ fn run_newer_delta() {
     eprintln!("Couldn't start the updated UaN: {err}");
 }
 
-/// Starts UaN again a moment after this copy has quit (so the new one isn't handed back to this one).
+/// Starts UaN again after an update, with the same arguments (but showing the window: you just clicked
+/// Update). The new copy waits a moment (--after-update) so this one has quit by then.
 fn relaunch_later(program: &std::path::Path) {
-    #[cfg(unix)]
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).filter(|a| a != "--hidden" && a != "--after-update").collect();
+    let _ = std::process::Command::new(program).args(&args).arg("--after-update").spawn();
+}
+
+/// Does the program at `path` start, and is it version `expect`? Runs it with --uan-version.
+fn program_works(path: &std::path::Path, expect: &str) -> bool {
+    let mut cmd = std::process::Command::new(path);
+    cmd.arg("--uan-version");
+    #[cfg(windows)]
     {
-        let _ = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("sleep 1.5; exec \"$0\"")
-            .arg(program)
-            .spawn();
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // no console window
     }
-    #[cfg(not(unix))]
-    {
-        let _ = std::process::Command::new(program).spawn();
+    cmd.output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == expect)
+        .unwrap_or(false)
+}
+
+/// Windows: replaces the running program with the new one, in place. Windows lets a running program be
+/// renamed (not overwritten), so: uan.exe -> uan.exe.old, new -> uan.exe. No installer, no uninstaller;
+/// settings, friends and messages stay where they are. The old file is deleted at the next start.
+#[cfg(windows)]
+fn replace_self(program: &[u8], version: &str) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe.parent().ok_or("No program folder.")?;
+    let new = dir.join("uan-update.tmp");
+    let old = exe.with_extension("exe.old");
+    std::fs::write(&new, program).map_err(|_| "no-write".to_string())?;
+    if !program_works(&new, version) {
+        let _ = std::fs::remove_file(&new);
+        return Err("The downloaded update doesn't start. Nothing was changed.".into());
     }
+    let _ = std::fs::remove_file(&old);
+    std::fs::rename(&exe, &old).map_err(|e| {
+        let _ = std::fs::remove_file(&new);
+        format!("Couldn't replace UaN: {e}")
+    })?;
+    if let Err(e) = std::fs::rename(&new, &exe) {
+        let _ = std::fs::rename(&old, &exe); // put the old one back
+        return Err(format!("Couldn't replace UaN: {e}"));
+    }
+    // Keep "Installed apps" in Windows Settings showing the right version (not for local test builds).
+    if cfg!(feature = "test-profiles") {
+        return Ok(());
+    }
+    use std::os::windows::process::CommandExt;
+    let _ = std::process::Command::new("reg")
+        .args(["add", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\UaN", "/v", "DisplayVersion", "/d", version, "/f"])
+        .creation_flags(0x0800_0000)
+        .status();
+    Ok(())
 }
 
 /// Which download fits this install: Windows installer, AppImage, or .deb.
@@ -244,7 +274,10 @@ fn update_kind() -> &'static str {
 
 /// Looks for a newer release on GitHub. Returns null when up to date.
 #[tauri::command]
-async fn check_update(app: AppHandle) -> CmdResult<Value> {
+async fn check_update(app: AppHandle, profile: State<'_, Profile>) -> CmdResult<Value> {
+    if profile.name.is_some() {
+        return Ok(Value::Null); // side-by-side test identities never replace the real UaN
+    }
     let client = reqwest::Client::builder().user_agent("UaN-updater").timeout(std::time::Duration::from_secs(20)).build().map_err(|e| e.to_string())?;
     let rel: Value = client.get(RELEASES_API).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
     let tag = rel["tag_name"].as_str().unwrap_or_default().to_string();
@@ -259,11 +292,15 @@ async fn check_update(app: AppHandle) -> CmdResult<Value> {
     };
     let find = |pred: &dyn Fn(&str) -> bool| rel["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str().map(pred).unwrap_or(false))).cloned();
     let mut asset = find(&|n: &str| n.ends_with(suffix));
-    // The AppImage only needs the new program file, not the whole 150 MB package.
-    if update_kind() == "appimage" {
-        if let Some(small) = find(&|n: &str| n == "uan-linux-x86_64.gz") {
-            asset = Some(small);
-        }
+    let installer = asset.clone();
+    // Only the new program file is needed (a few MB), not a whole installer or package.
+    let small = match update_kind() {
+        "appimage" => find(&|n: &str| n == "uan-linux-x86_64.gz"),
+        "windows" => find(&|n: &str| n == "uan-windows-x86_64.exe.gz"),
+        _ => None,
+    };
+    if small.is_some() {
+        asset = small;
     }
     Ok(json!({
         "version": tag.trim_start_matches('v'),
@@ -271,21 +308,45 @@ async fn check_update(app: AppHandle) -> CmdResult<Value> {
         "url": asset.as_ref().map(|a| a["browser_download_url"].clone()),
         "name": asset.as_ref().map(|a| a["name"].clone()),
         "size": asset.as_ref().map(|a| a["size"].clone()),
+        "installer": installer.as_ref().map(|a| a["browser_download_url"].clone()),
+        "installerName": installer.as_ref().map(|a| a["name"].clone()),
     }))
 }
 
 /// Downloads the new version and replaces this one (the installer/package manager removes the old version).
 #[tauri::command]
 async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<()> {
-    if !url.starts_with("https://github.com/Fish0969/UaN-Sender/releases/download/") {
+    // Local test builds can also update from a file (file:///…/v1.2.3/name), to test this without a release.
+    let local = cfg!(feature = "test-profiles") && url.starts_with("file:///");
+    if !url.starts_with("https://github.com/Fish0969/UaN-Sender/releases/download/") && !local {
         return Err("Unexpected download address.".into());
     }
-    let client = reqwest::Client::builder().user_agent("UaN-updater").build().map_err(|e| e.to_string())?;
-    let bytes = client.get(&url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
+    let bytes: Vec<u8> = if local {
+        std::fs::read(url.trim_start_matches("file:///")).map_err(|e| e.to_string())?
+    } else {
+        let client = reqwest::Client::builder().user_agent("UaN-updater").build().map_err(|e| e.to_string())?;
+        client.get(&url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?.to_vec()
+    };
+    let version = url.rsplit('/').nth(1).unwrap_or_default().trim_start_matches('v').to_string();
     let safe: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c)).collect();
     let tmp = std::env::temp_dir().join(if safe.is_empty() { "uan-update".to_string() } else { safe.clone() });
     std::fs::write(&tmp, &bytes).map_err(|e| format!("Couldn't save the update: {e}"))?;
     match update_kind() {
+        #[cfg(windows)]
+        "windows" if safe == "uan-windows-x86_64.exe.gz" => {
+            use std::io::Read;
+            let mut program = Vec::new();
+            flate2::read::GzDecoder::new(&bytes[..]).read_to_end(&mut program).map_err(|e| format!("The update is damaged: {e}"))?;
+            match replace_self(&program, &version) {
+                Ok(()) => {
+                    relaunch_later(&std::env::current_exe().map_err(|e| e.to_string())?);
+                    app.exit(0);
+                }
+                // The program folder isn't writable (installed for all users): use the installer.
+                Err(e) if e == "no-write" => return Err("no-write".into()),
+                Err(e) => return Err(e),
+            }
+        }
         "windows" => {
             // The installer replaces the installed version; we quit so it can.
             std::process::Command::new(&tmp).spawn().map_err(|e| format!("Couldn't start the installer: {e}"))?;
@@ -296,7 +357,6 @@ async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<
             {
                 use std::io::Read;
                 use std::os::unix::fs::PermissionsExt;
-                let version = url.rsplit('/').nth(1).unwrap_or_default().trim_start_matches('v').to_string();
                 let mut program = Vec::new();
                 flate2::read::GzDecoder::new(&bytes[..]).read_to_end(&mut program).map_err(|e| format!("The update is damaged: {e}"))?;
                 let dir = delta_dir();
@@ -304,7 +364,7 @@ async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<
                 let tmp_bin = dir.join(format!("uan-{version}.tmp"));
                 std::fs::write(&tmp_bin, &program).map_err(|e| format!("Couldn't save the update: {e}"))?;
                 let _ = std::fs::set_permissions(&tmp_bin, std::fs::Permissions::from_mode(0o755));
-                if !delta_works(&tmp_bin, &version) {
+                if !program_works(&tmp_bin, &version) {
                     let _ = std::fs::remove_file(&tmp_bin);
                     return Err("This update needs the full download. Get the new AppImage from the website.".into());
                 }
@@ -607,8 +667,15 @@ fn main() {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if std::env::args().any(|a| a == "--after-update") {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
     #[cfg(target_os = "linux")]
     run_newer_delta();
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(exe.with_extension("exe.old"));
+        let _ = std::fs::remove_file(exe.with_file_name("uan-update.tmp"));
+    }
     // On some Linux graphics setups (NVIDIA, virtual machines, some laptops) WebKitGTK's GPU paths
     // leave the window blank/grey. The fallback renderer works everywhere, so use it unless the user
     // set these themselves. Must happen before any threads start.
