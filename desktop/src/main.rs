@@ -130,6 +130,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "autodlGb": node.autodl().1,
         "typing": node.privacy().0,
         "receipts": node.privacy().1,
+        "mode": node.my_mode(),
         "customIcon": profile.dir.join("appicon.rgba").exists(),
     })
 }
@@ -640,8 +641,108 @@ fn search(node: State<'_, Arc<Node>>, query: String, kind: String, from: String,
 }
 
 #[tauri::command]
-fn send_text(node: State<'_, Arc<Node>>, chats: Vec<String>, text: String) -> CmdResult<()> {
-    node.send(&chats, Some(text), None)
+fn send_text(node: State<'_, Arc<Node>>, chats: Vec<String>, text: String, reply: Option<String>) -> CmdResult<()> {
+    node.send_reply(&chats, Some(text), None, reply)
+}
+
+#[tauri::command]
+fn edit_message(node: State<'_, Arc<Node>>, id: String, text: String) -> CmdResult<()> {
+    node.edit_message(&id, &text)
+}
+
+#[tauri::command]
+fn pin_message(node: State<'_, Arc<Node>>, chat: String, id: String, pinned: bool) -> CmdResult<()> {
+    node.pin_message(&chat, &id, pinned)
+}
+
+#[tauri::command]
+fn pins(node: State<'_, Arc<Node>>, chat: String) -> Vec<String> {
+    node.pins(&chat)
+}
+
+#[tauri::command]
+fn set_mute(node: State<'_, Arc<Node>>, chat: String, on: bool) {
+    node.set_mute(&chat, on)
+}
+
+#[tauri::command]
+fn mutes(node: State<'_, Arc<Node>>) -> Vec<String> {
+    node.mutes()
+}
+
+#[tauri::command]
+fn set_mode(node: State<'_, Arc<Node>>, mode: String) {
+    node.set_mode(&mode)
+}
+
+/// Saves a password-protected backup of your identity and messages to a file you choose.
+#[tauri::command]
+async fn export_backup(app: AppHandle, node: State<'_, Arc<Node>>, password: String) -> CmdResult<bool> {
+    let data = node.export_backup(&password)?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Save your UaN backup")
+        .set_file_name("UaN backup.uanbackup")
+        .add_filter("UaN backup", &["uanbackup"])
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(path) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else { return Ok(false) };
+    std::fs::write(&path, data).map_err(|e| format!("Couldn't save the backup: {e}"))?;
+    Ok(true)
+}
+
+/// Restores a backup: checks the password, then restarts UaN with it.
+#[tauri::command]
+async fn import_backup(app: AppHandle, node: State<'_, Arc<Node>>, password: String) -> CmdResult<bool> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose your UaN backup")
+        .add_filter("UaN backup", &["uanbackup"])
+        .pick_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(path) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else { return Ok(false) };
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read the backup: {e}"))?;
+    node.import_backup(&bytes, &password)?;
+    app.restart();
+}
+
+/// Test helper (local test builds only): restore from a file path without the dialog.
+#[cfg(feature = "test-profiles")]
+#[tauri::command]
+fn import_backup_path(node: State<'_, Arc<Node>>, path: String, password: String) -> CmdResult<()> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    node.import_backup(&bytes, &password)
+}
+
+#[cfg(feature = "test-profiles")]
+#[tauri::command]
+fn export_backup_path(node: State<'_, Arc<Node>>, path: String, password: String) -> CmdResult<()> {
+    let data = node.export_backup(&password)?;
+    std::fs::write(&path, data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn pick_folder_and_send(app: AppHandle, node: State<'_, Arc<Node>>, chats: Vec<String>) -> CmdResult<usize> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().set_title("Choose a folder to send").pick_folder(move |f| {
+        let _ = tx.send(f);
+    });
+    let Some(dir) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else { return Ok(0) };
+    node.share_files(vec![dir], &chats, None)
+}
+
+#[tauri::command]
+fn party_queue(node: State<'_, Arc<Node>>, id: String, file: FileMeta) -> CmdResult<()> {
+    node.party_queue(&id, file)
+}
+
+#[tauri::command]
+fn party_next(node: State<'_, Arc<Node>>, id: String, remove: Option<String>) -> CmdResult<()> {
+    node.party_next(&id, remove)
 }
 
 #[tauri::command]
@@ -895,6 +996,21 @@ fn main() {
             send_text,
             pick_and_send,
             send_paths,
+            edit_message,
+            pin_message,
+            pins,
+            set_mute,
+            mutes,
+            set_mode,
+            export_backup,
+            import_backup,
+            pick_folder_and_send,
+            party_queue,
+            party_next,
+            #[cfg(feature = "test-profiles")]
+            import_backup_path,
+            #[cfg(feature = "test-profiles")]
+            export_backup_path,
             create_group,
             group_action,
             download,

@@ -20,6 +20,10 @@ const S = {
   transfers: [],
   parties: new Map(),
   reads: new Map(), // chat -> { peer id: id of the last message they have seen }
+  mutes: new Set(),
+  pins: new Map(), // chat -> [message id]
+  replyTo: null, // { id, name, text }
+  editing: null, // message id
   view: 'home', // new layout: 'home' (friends) or a group id
   lastChan: {}, // group id -> last opened channel chat
   lastDm: null,
@@ -53,6 +57,10 @@ const ICON = {
   check: '<path d="m5 12 5 5L20 7"/>',
   bigplay: '<path d="M8 5v14l11-7Z"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  reply: '<path d="M10 9 5 13l5 4"/><path d="M5 13h9a5 5 0 0 1 5 5v1"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16Z"/>',
+  pin: '<path d="M9 4h6l-1 6 4 4H6l4-4Z"/><path d="M12 14v6"/>',
+  mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 9 4 6M21 9l-4 6"/>',
   hash: '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/>',
 };
 const iconBtn = (name, title, onclick) => el('button', { class: 'icon', type: 'button', title, onclick }, svg(ICON[name]));
@@ -77,8 +85,8 @@ function hue(s) {
   for (const ch of s) h = (h * 31 + ch.codePointAt(0)) % 360;
   return h;
 }
-function avatar(name, { online = false, group = false, seed, src } = {}) {
-  const a = el('div', { class: 'avatar' + (online ? ' online' : '') + (group ? ' group' : '') + (src ? ' has-img' : '') });
+function avatar(name, { online = false, group = false, seed, src, mode } = {}) {
+  const a = el('div', { class: 'avatar' + (online ? ' online' : '') + (group ? ' group' : '') + (src ? ' has-img' : '') + (mode && mode !== 'online' ? ` mode-${mode}` : '') });
   if (src) a.append(el('img', { src, alt: '' }));
   else a.textContent = (name || '?')[0];
   a.style.setProperty('--h', hue(seed || name || '?'));
@@ -258,9 +266,23 @@ async function runSelfTest(file) {
   report(v.currentTime > 12.5 && thumbInfo.startsWith('preview '), `played and seeked: t=${v.currentTime.toFixed(2)} duration=${v.duration} via ${S.me.mediaBase ? 'http' : 'media scheme'}; ${thumbInfo}; sound bytes reported=${v.webkitAudioDecodedByteCount}`);
 }
 
+const MODE_NAMES = { online: 'Online', away: 'Away', dnd: 'Do not disturb (no notifications)' };
+function modeMenu(e) {
+  e?.stopPropagation?.();
+  const r = $('meAvatar').getBoundingClientRect();
+  const pick = async (mode) => {
+    await invoke('set_mode', { mode }).catch(toast);
+    S.me.mode = mode;
+    renderMe();
+  };
+  showMenu(r.left, r.bottom + 4, ['online', 'away', 'dnd'].map((m) => ({ label: (S.me.mode === m ? '\u2022 ' : '') + MODE_NAMES[m], run: () => pick(m) })));
+}
+
 function renderMe() {
   $('meName').textContent = S.me.name;
-  setAvatar($('meAvatar'), S.me.name, { seed: S.me.id, src: S.me.profile?.avatar });
+  setAvatar($('meAvatar'), S.me.name, { seed: S.me.id, src: S.me.profile?.avatar, online: true, mode: S.me.mode });
+  $('meAvatar').title = MODE_NAMES[S.me.mode] || 'Online';
+  $('meAvatar').onclick = modeMenu;
   $('meStatus').textContent = S.me.profile?.status || '';
   $('meProfile').classList.toggle('hidden', !S.me.profileName);
   $('meProfile').textContent = S.me.profileName ? `Test profile: ${S.me.profileName}` : '';
@@ -306,8 +328,8 @@ listen('unsent', ({ payload }) => removeMessage(payload.id, payload.chat));
 listen('contacts', () => loadContacts());
 listen('presence', ({ payload }) => {
   const f = friendById(payload.id);
-  if (f) f.online = payload.online;
-  for (const g of S.groups) for (const m of g.members) if (m.id === payload.id) m.online = payload.online;
+  if (f) { f.online = payload.online; if (payload.mode) f.mode = payload.mode; }
+  for (const g of S.groups) for (const m of g.members) if (m.id === payload.id) { m.online = payload.online; if (payload.mode) m.mode = payload.mode; }
   renderLists();
   renderChatHead();
 });
@@ -320,6 +342,7 @@ listen('transfers', ({ payload }) => {
 async function loadContacts() {
   const c = await invoke('contacts');
   Object.assign(S, c);
+  try { S.mutes = new Set(await invoke('mutes')); } catch {}
   if (S.active && !chatInfo(S.active)) {
     const g = groupOf(S.active);
     if (g) openChat(`g:${g.id}`);
@@ -342,6 +365,7 @@ function renderLists() {
     return el('li', { class: 'friend' + (groupIdOf(S.active) === g.id ? ' active' : ''), onclick: () => openGroup(g.id), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
       avatar(g.name, { group: true, seed: g.id }),
       el('span', { class: 'grow ellipsis', text: g.name }),
+      S.mutes.has(`g:${g.id}`) ? svg(ICON.mute) : null,
       n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null);
   }));
   $('noGroups').classList.toggle('hidden', S.groups.length > 0);
@@ -350,8 +374,9 @@ function renderLists() {
     class: 'friend' + (S.active === f.id ? ' active' : ''), onclick: () => openChat(f.id),
     oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, friendMenu(f)); },
     title: f.status || '',
-  }, avatar(f.name, { online: f.online, seed: f.id, src: f.avatar }),
+  }, avatar(f.name, { online: f.online, seed: f.id, src: f.avatar, mode: f.mode }),
   el('div', { class: 'grow' }, el('div', { class: 'ellipsis', text: f.name }), f.status ? el('div', { class: 'sub ellipsis', text: f.status }) : null),
+  S.mutes.has(f.id) ? svg(ICON.mute) : null,
   badge(f.id))));
   $('noFriends').classList.toggle('hidden', S.friends.length > 0);
 
@@ -456,6 +481,7 @@ function channelMenu(g, ch) {
   const owner = g.owner === S.me.id;
   return [
     { label: 'Open', run: () => openChat(ch.chat) },
+    ch.id ? muteItem(ch.chat) : null,
     ch.locked && ch.unlocked ? { label: 'Lock again on this PC', run: async () => { await invoke('forget_channel', { chat: ch.chat }); await loadContacts(); if (S.active === ch.chat) openChat(ch.chat); } } : null,
     { label: 'Clear messages for me', run: () => clearChat(ch.chat, false) },
     owner ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(ch.chat, true) } : null,
@@ -559,6 +585,7 @@ $('addForm').addEventListener('submit', async (e) => {
 
 // ---------- Chat ----------
 async function openChat(chat, focusId) {
+  if (S.active !== chat) cancelReply();
   S.active = chat;
   S.unread.delete(chat);
   if (isGroup(chat)) {
@@ -592,6 +619,7 @@ async function openChat(chat, focusId) {
   if (focusId && !list.some((m) => m.id === focusId)) list = await invoke('messages', { chat, limit: 20000 });
   S.msgs.set(chat, list);
   try { S.reads.set(chat, await invoke('reads', { chat })); } catch {}
+  try { if (S.active === chat) renderPins(await invoke('pins', { chat })); } catch {}
   if (S.active !== chat) return;
   renderMessages();
   renderTyping();
@@ -652,18 +680,187 @@ function renderMessages() {
   box.scrollTop = box.scrollHeight;
 }
 
+// **bold**, *italic*, ~~strike~~, `code`, and @mentions; everything else stays plain text.
+function formatText(text) {
+  const frag = document.createDocumentFragment();
+  const re = /(\*\*[^*\n]+?\*\*|\*[^*\s][^*\n]*?\*|~~[^~\n]+?~~|`[^`\n]+?`|@[\p{L}\p{N}_.-]+)/gu;
+  let last = 0;
+  for (const mt of text.matchAll(re)) {
+    if (mt.index > last) frag.append(text.slice(last, mt.index));
+    const t = mt[0];
+    if (t.startsWith('**')) frag.append(el('b', { text: t.slice(2, -2) }));
+    else if (t.startsWith('~~')) frag.append(el('s', { text: t.slice(2, -2) }));
+    else if (t.startsWith('`')) frag.append(el('code', { text: t.slice(1, -1) }));
+    else if (t.startsWith('*')) frag.append(el('i', { text: t.slice(1, -1) }));
+    else frag.append(el('span', { class: 'mention', text: t }));
+    last = mt.index + t.length;
+  }
+  if (last < text.length) frag.append(text.slice(last));
+  return frag;
+}
+function mentionsMe(text) {
+  if (!text || !S.me?.name) return false;
+  const me = '@' + S.me.name.toLowerCase();
+  const t = text.toLowerCase();
+  let i = t.indexOf(me);
+  while (i >= 0) {
+    const next = t[i + me.length];
+    if (!next || !/[\p{L}\p{N}]/u.test(next)) return true;
+    i = t.indexOf(me, i + 1);
+  }
+  return false;
+}
+
 function messageNode(m, showSender = true) {
-  const node = el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs'), 'data-id': m.id },
+  const quote = m.reply ? el('button', { type: 'button', class: 'quote', title: 'Show the message', onclick: () => jumpTo(m.reply.id) },
+    el('b', { text: m.reply.name }), m.reply.text || '') : null;
+  const bubble = m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
+    : m.text ? el('div', { class: 'bubble' }, formatText(m.text)) : null;
+  const acts = m.locked ? [] : [
+    el('button', { type: 'button', class: 'msg-act', title: 'Reply', onclick: () => startReply(m) }, svg(ICON.reply)),
+    m.mine && m.text ? el('button', { type: 'button', class: 'msg-act', title: 'Edit', onclick: () => startEdit(m) }, svg(ICON.edit)) : null,
+    el('button', { type: 'button', class: 'msg-act', title: m.pinned ? 'Unpin' : 'Pin to the top of the chat', onclick: () => togglePin(m) }, svg(ICON.pin)),
+  ];
+  const node = el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs') + (!m.mine && isGroup(m.chat) && mentionsMe(m.text) ? ' mentions-me' : ''), 'data-id': m.id },
     isGroup(m.chat) && !m.mine && showSender ? el('div', { class: 'sender', text: m.senderName }) : null,
+    quote,
     m.file ? fileCard(m.file, m.chat, m.thumb) : null,
-    m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
-      : m.text ? el('div', { class: 'bubble', text: m.text }) : null,
+    bubble,
     el('div', { class: 'meta' },
       el('span', { class: 'time', text: timeFmt.format(m.ts) }),
+      m.edited ? el('span', { class: 'edited', text: 'edited' }) : null,
+      m.pinned ? el('span', { class: 'pin-mark', title: 'Pinned' }, svg(ICON.pin)) : null,
+      acts,
       el('button', { type: 'button', class: 'msg-del', title: 'Delete message', onclick: () => deleteMessage(m) }, svg(ICON.x))),
     seenRow(m));
   return node;
 }
+
+function jumpTo(id) {
+  const node = document.querySelector(`#msgs .msg[data-id="${id}"]`);
+  if (!node) return toast('That message is no longer here.');
+  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  node.classList.add('flash');
+  setTimeout(() => node.classList.remove('flash'), 2000);
+}
+
+function startReply(m) {
+  S.editing = null;
+  S.replyTo = { id: m.id, name: m.senderName, text: m.text || (m.file ? `File: ${m.file.name}` : '') };
+  $('replyTitle').textContent = `Replying to ${m.mine ? 'yourself' : m.senderName}`;
+  $('replyText').textContent = S.replyTo.text;
+  $('replyBar').classList.remove('hidden');
+  $('msgInput').focus();
+}
+function startEdit(m) {
+  S.replyTo = null;
+  S.editing = m.id;
+  $('replyTitle').textContent = 'Editing your message';
+  $('replyText').textContent = 'Enter saves, Esc cancels';
+  $('replyBar').classList.remove('hidden');
+  $('msgInput').value = m.text;
+  $('msgInput').focus();
+}
+function cancelReply() {
+  if (S.editing) $('msgInput').value = '';
+  S.replyTo = null;
+  S.editing = null;
+  $('replyBar').classList.add('hidden');
+}
+$('replyCancel').addEventListener('click', cancelReply);
+$('msgInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && (S.replyTo || S.editing)) { e.preventDefault(); cancelReply(); }
+});
+
+async function togglePin(m) {
+  try {
+    await invoke('pin_message', { chat: m.chat, id: m.id, pinned: !m.pinned });
+  } catch (e) { toast(e); }
+}
+function updateMessage(chat, id, fn) {
+  const m = (S.msgs.get(chat) || []).find((x) => x.id === id);
+  if (!m) return;
+  fn(m);
+  if (chat === S.active) {
+    const old = document.querySelector(`#msgs .msg[data-id="${id}"]`);
+    if (old) old.replaceWith(messageNode(m, !!old.querySelector('.sender')));
+  }
+}
+listen('edited', ({ payload }) => {
+  updateMessage(payload.chat, payload.id, (m) => {
+    m.text = payload.text;
+    m.edited = true;
+    if (payload.locked) m.locked = true;
+  });
+});
+listen('pins', async ({ payload }) => {
+  updateMessage(payload.chat, payload.id, (m) => { m.pinned = payload.pinned; });
+  if (payload.chat === S.active) renderPins(await invoke('pins', { chat: S.active }).catch(() => []));
+});
+function renderPins(list) {
+  S.pins.set(S.active, list);
+  $('pinsBtn').classList.toggle('hidden', !list.length);
+  $('pinsCount').textContent = list.length ? String(list.length) : '';
+}
+$('pinsBtn').addEventListener('click', async () => {
+  const ids = S.pins.get(S.active) || [];
+  const all = await invoke('messages', { chat: S.active, limit: 20000 });
+  const byId = new Map(all.map((m) => [m.id, m]));
+  $('pinsList').replaceChildren(...ids.map((id) => byId.get(id)).filter(Boolean).map((m) => el('button', { type: 'button', class: 'pin-item', onclick: () => { $('pinsDlg').close(); jumpTo(m.id); } },
+    el('span', { class: 'sub', text: `${m.senderName} · ${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` }),
+    m.text ? el('span', {}, formatText(m.text)) : el('span', { text: m.file ? `File: ${m.file.name}` : '' }))));
+  if (!$('pinsList').children.length) $('pinsList').append(el('div', { class: 'note', text: 'Pinned messages that are no longer in this chat are not shown.' }));
+  $('pinsDlg').showModal();
+});
+
+// ---------- @mentions: suggestions while typing in a group ----------
+let mentionSel = 0;
+function mentionCandidates() {
+  const input = $('msgInput');
+  const g = groupOf(S.active);
+  if (!g) return null;
+  const upto = input.value.slice(0, input.selectionStart);
+  const mt = upto.match(/(^|\s)@([\p{L}\p{N}_.-]*)$/u);
+  if (!mt) return null;
+  const q = mt[2].toLowerCase();
+  const list = g.members.filter((x) => x.id !== S.me.id && x.name.toLowerCase().startsWith(q)).slice(0, 8);
+  return list.length ? { list, start: upto.length - mt[2].length - 1 } : null;
+}
+function renderMentions() {
+  const c = mentionCandidates();
+  $('mentionPop').classList.toggle('hidden', !c);
+  if (!c) return;
+  mentionSel = Math.min(mentionSel, c.list.length - 1);
+  $('mentionPop').replaceChildren(...c.list.map((x, i) => el('button', { type: 'button', class: i === mentionSel ? 'on' : '', onmousedown: (e) => { e.preventDefault(); insertMention(x.name); } },
+    avatar(x.name, { seed: x.id, src: x.avatar }), el('span', { text: x.name }))));
+}
+function insertMention(name) {
+  const c = mentionCandidates();
+  if (!c) return;
+  const input = $('msgInput');
+  const after = input.value.slice(input.selectionStart);
+  input.value = input.value.slice(0, c.start) + '@' + name + ' ' + after;
+  const pos = c.start + name.length + 2;
+  input.setSelectionRange(pos, pos);
+  $('mentionPop').classList.add('hidden');
+}
+$('msgInput').addEventListener('input', () => { mentionSel = 0; renderMentions(); });
+$('msgInput').addEventListener('keydown', (e) => {
+  if ($('mentionPop').classList.contains('hidden')) return;
+  const c = mentionCandidates();
+  if (!c) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    mentionSel = (mentionSel + (e.key === 'ArrowDown' ? 1 : c.list.length - 1)) % c.list.length;
+    renderMentions();
+  } else if (e.key === 'Tab' || e.key === 'Enter') {
+    e.preventDefault();
+    insertMention(c.list[mentionSel].name);
+  } else if (e.key === 'Escape') {
+    $('mentionPop').classList.add('hidden');
+  }
+});
+$('msgInput').addEventListener('blur', () => setTimeout(() => $('mentionPop').classList.add('hidden'), 150));
 
 // Like in Messenger: small pictures under the last message each person has seen.
 function seenRow(m) {
@@ -923,6 +1120,11 @@ listen('thumb', ({ payload }) => {
 
 function onMessage(m) {
   ensureThumb(m);
+  const party = openPartyId && S.parties.get(openPartyId);
+  if (party && m.chat === partyChatOf(party)) {
+    $('partyMsgs').append(partyLine(m));
+    $('partyMsgs').scrollTop = $('partyMsgs').scrollHeight;
+  }
   if (S.typing.get(m.chat)?.delete(m.sender) && m.chat === S.active) renderTyping();
   const list = S.msgs.get(m.chat);
   const isNew = list && !list.some((x) => x.id === m.id);
@@ -957,9 +1159,12 @@ $('composer').addEventListener('submit', async (e) => {
   const text = input.value.trim();
   if (!text || !S.active) return;
   input.value = '';
+  const editing = S.editing, reply = S.replyTo;
+  cancelReply();
   try {
     typingSent = 0;
-    await invoke('send_text', { chats: [S.active], text });
+    if (editing) await invoke('edit_message', { id: editing, text });
+    else await invoke('send_text', { chats: [S.active], text, reply: reply?.id || null });
   } catch (err) {
     input.value = text;
     toast(err);
@@ -967,7 +1172,12 @@ $('composer').addEventListener('submit', async (e) => {
 });
 
 $('attachBtn').addEventListener('click', () => {
-  if (S.active) invoke('pick_and_send', { chats: [S.active], text: '' }).catch(toast);
+  if (!S.active) return;
+  const r = $('attachBtn').getBoundingClientRect();
+  showMenu(r.left, r.top - 70, [
+    { label: 'Send files…', run: () => invoke('pick_and_send', { chats: [S.active], text: '' }).catch(toast) },
+    { label: 'Send a folder…', run: () => invoke('pick_folder_and_send', { chats: [S.active] }).then((n) => n && toast(`${n} files sent.`)).catch(toast) },
+  ]);
 });
 
 listen('tauri://drag-enter', () => { if (S.active) $('drop').classList.remove('hidden'); });
@@ -1588,10 +1798,21 @@ document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxMen
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMenu(); });
 window.addEventListener('blur', hideMenu);
 
+function muteItem(chat) {
+  const on = S.mutes.has(chat);
+  return { label: on ? 'Unmute notifications' : 'Mute notifications', run: async () => {
+    await invoke('set_mute', { chat, on: !on }).catch(toast);
+    if (on) S.mutes.delete(chat); else S.mutes.add(chat);
+    renderLists();
+    toast(on ? 'Notifications are on again.' : 'Muted. You still get a notification if someone @mentions you or answers you.');
+  } };
+}
+
 function groupMenu(g) {
   const owner = g.owner === S.me.id;
   return [
     { label: 'Add people…', run: () => openPick('add', g) },
+    muteItem(`g:${g.id}`),
     { label: 'Members and details', run: () => openGroupInfo(g.id) },
     '-',
     { label: 'Clear messages for me', run: () => clearChat(`g:${g.id}`, false) },
@@ -1602,6 +1823,7 @@ function groupMenu(g) {
 function friendMenu(f) {
   return [
     { label: 'Open chat', run: () => openChat(f.id) },
+    muteItem(f.id),
     '-',
     { label: 'Clear messages for me', run: () => clearChat(f.id, false) },
     { label: 'Remove friend', danger: true, run: async () => {
@@ -1771,6 +1993,47 @@ $('settingsBtn').addEventListener('click', async () => {
   $('settingsDlg').showModal();
 });
 $('sCancel').addEventListener('click', () => $('settingsDlg').close());
+
+function askPassword({ title, note, ok, twice }) {
+  return new Promise((resolve) => {
+    $('pwTitle').textContent = title;
+    $('pwNote').textContent = note;
+    $('pwOk').textContent = ok;
+    $('pwInput').value = '';
+    $('pwInput2').value = '';
+    $('pwInput2').classList.toggle('hidden', !twice);
+    $('pwErr').textContent = '';
+    const d = $('pwDlg');
+    const done = (v) => { d.close(); resolve(v); };
+    $('pwCancel').onclick = () => done(null);
+    $('pwForm').onsubmit = (e) => {
+      e.preventDefault();
+      const p = $('pwInput').value;
+      if (p.trim().length < 4) return void ($('pwErr').textContent = 'Use a password of at least 4 characters.');
+      if (twice && p !== $('pwInput2').value) return void ($('pwErr').textContent = 'The two passwords are different.');
+      done(p);
+    };
+    d.addEventListener('close', () => resolve(null), { once: true });
+    d.showModal();
+    setTimeout(() => $('pwInput').focus(), 30);
+  });
+}
+$('sBackup').addEventListener('click', async () => {
+  const password = await askPassword({ title: 'Save a backup', ok: 'Save…', twice: true,
+    note: 'Choose a password for the backup file. You need it to restore it, and nobody can use the file without it. Keep it somewhere safe.' });
+  if (!password) return;
+  try {
+    if (await invoke('export_backup', { password })) toast('Backup saved. Keep the file and the password safe.');
+  } catch (e) { toast(e); }
+});
+$('sRestore').addEventListener('click', async () => {
+  if (!(await ask('Restoring a backup replaces the friend code, friends, groups and messages on this PC with the ones in the backup. UaN restarts afterwards.', 'Choose backup…'))) return;
+  const password = await askPassword({ title: 'Restore from backup', ok: 'Choose file…', note: 'The password you chose when you saved the backup.' });
+  if (!password) return;
+  try {
+    await invoke('import_backup', { password });
+  } catch (e) { toast(e); }
+});
 $('sShowCode').addEventListener('click', () => {
   const hidden = $('sCode').classList.toggle('hidden');
   $('sShowCode').textContent = hidden ? 'Show friend code' : 'Hide friend code';
@@ -1970,9 +2233,67 @@ const expecting = (k) => performance.now() < expect[k];
 let partyMode = 'app'; // 'app' = built-in player, 'vlc' = VLC kept in sync
 const noAutoVlc = new Set(); // parties where you went back from VLC yourself
 
+let partyFileId = null;
+function partyChatOf(p) { return `g:${p.group}`; }
+function partyLine(m) {
+  return el('div', { class: 'pm-line', 'data-id': m.id }, el('b', { text: m.mine ? 'You' : m.senderName }),
+    m.locked ? 'Locked message' : m.text ? formatText(m.text) : m.file ? `sent ${m.file.name}` : '');
+}
+async function loadPartyChat(p) {
+  const list = await invoke('messages', { chat: partyChatOf(p), limit: 100 }).catch(() => []);
+  $('partyMsgs').replaceChildren(...list.map(partyLine));
+  $('partyMsgs').scrollTop = $('partyMsgs').scrollHeight;
+}
+$('partySideBtn').addEventListener('click', () => {
+  const hidden = $('partySide').classList.toggle('hidden');
+  try { localStorage.setItem('uan.partySide', hidden ? '0' : '1'); } catch {}
+});
+document.querySelectorAll('.party-tabs button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.party-tabs button').forEach((x) => x.classList.toggle('on', x === b));
+  $('partyChatTab').classList.toggle('hidden', b.dataset.tab !== 'chat');
+  $('partyQueueTab').classList.toggle('hidden', b.dataset.tab !== 'queue');
+}));
+$('partyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const p = S.parties.get(openPartyId);
+  const text = $('partyInput').value.trim();
+  if (!p || !text) return;
+  $('partyInput').value = '';
+  try { await invoke('send_text', { chats: [partyChatOf(p)], text }); } catch (err) { $('partyInput').value = text; toast(err); }
+});
+function renderQueue(p) {
+  const leader = p.leader === S.me.id;
+  const q = p.queue || [];
+  $('partyQueue').replaceChildren(
+    el('div', { class: 'pq-item' }, el('span', { class: 'grow ellipsis', text: p.file.name }), el('span', { class: 'pq-now', text: 'now' })),
+    ...q.map((f, i) => el('div', { class: 'pq-item' },
+      el('span', { class: 'grow ellipsis', text: `${i + 1}. ${f.name}` }),
+      leader && i === 0 ? el('button', { type: 'button', class: 'small', text: 'Play now', onclick: () => invoke('party_next', { id: p.id, remove: null }).catch(toast) }) : null,
+      leader ? el('button', { type: 'button', class: 'small', text: 'Remove', onclick: () => invoke('party_next', { id: p.id, remove: f.id }).catch(toast) }) : null)),
+    q.length ? '' : el('div', { class: 'note', text: 'Nothing queued. Add films, and the next one starts by itself when this one ends.' }));
+}
+$('partyAdd').addEventListener('click', async () => {
+  const p = S.parties.get(openPartyId);
+  if (!p) return;
+  const list = await invoke('messages', { chat: partyChatOf(p), limit: 5000 }).catch(() => []);
+  const seen = new Set();
+  const films = list.filter((m) => m.file && /^video\//i.test(m.file.mime)).map((m) => m.file).reverse()
+    .filter((f) => !seen.has(f.id) && seen.add(f.id) && f.id !== p.file.id && !(p.queue || []).some((x) => x.id === f.id));
+  $('queueList').replaceChildren(...films.map((f) => el('button', { type: 'button', class: 'pin-item', onclick: async () => {
+    $('queueDlg').close();
+    try { await invoke('party_queue', { id: p.id, file: f }); toast(`Added “${f.name}” to the playlist.`); } catch (e) { toast(e); }
+  } }, el('span', { text: f.name }), el('span', { class: 'sub', text: fmtBytes(f.size) }))));
+  if (!films.length) $('queueList').append(el('div', { class: 'note', text: 'No other films in this group yet. Send one to the group first.' }));
+  $('queueDlg').showModal();
+});
+
 function openParty(id, mode = partyMode) {
   const p = S.parties.get(id);
   if (!p) return;
+  partyFileId = p.file.id;
+  try { $('partySide').classList.toggle('hidden', localStorage.getItem('uan.partySide') !== '1'); } catch {}
+  loadPartyChat(p);
+  renderQueue(p);
   partyPlayer?.destroy();
   openPartyId = id;
   autoPaused = false;
@@ -2020,6 +2341,10 @@ function openParty(id, mode = partyMode) {
     });
     watchSound(v, p.file, () => toVlc('sound'));
   }
+  v.addEventListener('ended', () => {
+    const cur = S.parties.get(id);
+    if (cur && cur.leader === S.me.id && (cur.queue || []).length) invoke('party_next', { id, remove: null }).catch(() => {});
+  });
   v.addEventListener('play', () => { if (expecting('play')) { expect.play = 0; return; } userControl(); });
   v.addEventListener('pause', () => { if (expecting('pause')) { expect.pause = 0; return; } if (!v.ended) userControl(); });
   v.addEventListener('seeked', () => { if (expecting('seek')) { expect.seek = 0; return; } userControl(); });
@@ -2200,7 +2525,15 @@ listen('party', ({ payload: p }) => {
   } else {
     const isNew = !S.parties.has(p.id);
     S.parties.set(p.id, p);
-    if (openPartyId === p.id) renderParty(p);
+    if (openPartyId === p.id) {
+      if (partyFileId && p.file.id !== partyFileId) {
+        toast(`Next film: ${p.file.name}`);
+        openParty(p.id);
+      } else {
+        renderParty(p);
+        renderQueue(p);
+      }
+    }
     if (isNew && p.leader !== S.me.id) toast(`You were invited to watch “${p.file.name}” together. Open the group to join.`);
   }
   renderInviteBar();

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS thumbs (file_id TEXT PRIMARY KEY, data TEXT NOT NULL)
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT '', avatar TEXT, pv INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY, peer TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS pins (chat TEXT NOT NULL, msg_id TEXT NOT NULL, by TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, msg_id));
 CREATE TABLE IF NOT EXISTS reads (chat TEXT NOT NULL, who TEXT NOT NULL, msg_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, who));
 ";
 
@@ -112,6 +113,8 @@ pub struct HistMsg {
     pub channel: Option<String>,
     #[serde(default)]
     pub sealed: Option<String>,
+    #[serde(default)]
+    pub reply: Option<ReplyRef>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -202,6 +205,17 @@ pub struct WireMsg {
     /// Locked channels: text and file, encrypted with the channel's key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sealed: Option<String>,
+    /// The message this one answers (in locked channels it is inside `sealed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<ReplyRef>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ReplyRef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub text: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -216,6 +230,9 @@ pub enum Req {
         /// What the sender's UaN understands (see PROTO). Older versions send nothing (0).
         #[serde(default)]
         proto: u32,
+        /// online | away | dnd
+        #[serde(default)]
+        mode: String,
     },
     Profile,
     FriendRequest { name: String },
@@ -237,6 +254,25 @@ pub enum Req {
         #[serde(default)]
         channel: Option<String>,
     },
+    /// The sender changed one of their messages.
+    Edit {
+        msg_id: String,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        sealed: Option<String>,
+    },
+    /// Someone pinned (or unpinned) a message in a chat you share.
+    Pin {
+        #[serde(default)]
+        group: Option<String>,
+        #[serde(default)]
+        channel: Option<String>,
+        msg_id: String,
+        pinned: bool,
+    },
+    /// A member asks the watch party's host to add a film to the playlist.
+    PartyQueue { party_id: String, file: FileMeta },
     /// A member asks the group's creator to add a channel.
     ChannelAdd { group_id: String, channel: Channel },
     /// "… is typing" (never stored; only sent while both are online).
@@ -307,6 +343,9 @@ pub struct Party {
     pub state: String, // loading | playing | paused | ended
     pub position: f64,
     pub version: i64,
+    /// Films to play next, in order (the host plays the next one when a film ends).
+    #[serde(default)]
+    pub queue: Vec<FileMeta>,
 }
 
 #[allow(dead_code)]
@@ -572,6 +611,8 @@ pub struct Node {
     conns: Mutex<HashMap<EndpointId, Connection>>,
     seen: Mutex<HashMap<String, Instant>>,
     flushing: Mutex<HashSet<String>>,
+    /// Each peer's presence mode (online | away | dnd).
+    modes: Mutex<HashMap<String, String>>,
     /// Protocol version of each peer, learned from pings.
     protos: Mutex<HashMap<String, u32>>,
     /// The last "seen" mark each peer got from us, per chat (so it is sent once, and again after they were offline).
@@ -594,6 +635,14 @@ pub struct Node {
 impl Node {
     pub async fn start(app: AppHandle, dir: PathBuf) -> Result<Arc<Node>, String> {
         std::fs::create_dir_all(&dir).map_err(e2s)?;
+        // A restored backup waits next to the live files until the next start.
+        if dir.join("identity.key.import").exists() && dir.join("uan.db.import").exists() {
+            for f in ["uan.db-wal", "uan.db-shm"] {
+                let _ = std::fs::remove_file(dir.join(f));
+            }
+            let _ = std::fs::rename(dir.join("uan.db.import"), dir.join("uan.db"));
+            let _ = std::fs::rename(dir.join("identity.key.import"), dir.join("identity.key"));
+        }
         let key_path = dir.join("identity.key");
         let secret = match std::fs::read(&key_path) {
             Ok(b) if b.len() == 32 => SecretKey::from_bytes(&b.try_into().unwrap()),
@@ -609,6 +658,8 @@ impl Node {
         let _ = db.execute("ALTER TABLE downloads ADD COLUMN chat TEXT", []); // older databases
         let _ = db.execute("ALTER TABLE groups ADD COLUMN channels TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN sealed TEXT", []);
+        let _ = db.execute("ALTER TABLE messages ADD COLUMN reply TEXT", []);
+        let _ = db.execute("ALTER TABLE messages ADD COLUMN edited INTEGER", []);
 
         // Bigger flow-control windows than the defaults (sized for ~100 Mbit/s at 100 ms), so films
         // also go fast between far-away PCs with high latency.
@@ -649,6 +700,7 @@ impl Node {
             seen: Mutex::new(HashMap::new()),
             flushing: Mutex::new(HashSet::new()),
             protos: Mutex::new(HashMap::new()),
+            modes: Mutex::new(HashMap::new()),
             reads_sent: Mutex::new(HashMap::new()),
             transfers: Mutex::new(transfers),
             running: Mutex::new(HashMap::new()),
@@ -723,7 +775,7 @@ impl Node {
     }
 
     fn ping_req(&self) -> Req {
-        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO }
+        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO, mode: self.my_mode() }
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
@@ -1001,7 +1053,7 @@ impl Node {
     }
 
     fn mailbox_ok(req: &Req) -> bool {
-        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. })
+        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. })
     }
 
     async fn mailbox_post(&self, path: &str, body: Value) -> Result<Value, String> {
@@ -1081,6 +1133,9 @@ impl Node {
     }
 
     fn notify(&self, title: &str, body: &str) {
+        if self.my_mode() == "dnd" {
+            return; // Do not disturb
+        }
         if !self.window_focused() && std::env::var_os("UAN_INVISIBLE").is_none() {
             let _ = self.app.notification().builder().title(title).body(body).show();
         }
@@ -1370,6 +1425,7 @@ impl Node {
                                 }
                                 me.note_profile(&p, v["status"].as_str().unwrap_or(""), v["pv"].as_i64().unwrap_or(0));
                                 me.note_proto(&p, v["proto"].as_u64().unwrap_or(0) as u32);
+                                me.note_mode(&p, v["mode"].as_str().unwrap_or(""));
                             }
                             Err(_) => {
                                 if was && !me.is_online(&p) {
@@ -1423,11 +1479,12 @@ impl Node {
     fn on_request(self: &Arc<Self>, peer: &str, req: Req) -> Result<Value, String> {
         let ok = json!({ "ok": true, "proto": PROTO });
         match req {
-            Req::Ping { name, status, pv, proto } => {
+            Req::Ping { name, status, pv, proto, mode } => {
                 self.update_name(peer, &name);
                 self.note_profile(peer, &status, pv);
                 self.note_proto(peer, proto);
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": self.kv("status").unwrap_or_default(), "pv": self.my_pv(), "proto": PROTO }))
+                self.note_mode(peer, &mode);
+                Ok(json!({ "ok": true, "name": self.my_name(), "status": self.kv("status").unwrap_or_default(), "pv": self.my_pv(), "proto": PROTO, "mode": self.my_mode() }))
             }
             Req::Profile => {
                 if !self.known_peers().iter().any(|p| p == peer) {
@@ -1475,6 +1532,9 @@ impl Node {
                     }
                 }
                 let text = msg.text.as_ref().map(|t| t.chars().take(5000).collect::<String>());
+                if msg.reply.as_ref().is_some_and(|r| r.id.len() > 64) {
+                    return Err("Invalid message.".into());
+                }
                 if msg.sealed.as_ref().is_some_and(|s| s.len() > 200_000) || msg.channel.as_ref().is_some_and(|c| c.len() > 64 || c.contains('#')) {
                     return Err("Invalid message.".into());
                 }
@@ -1493,7 +1553,8 @@ impl Node {
                     }
                 };
                 let name: String = msg.name.chars().take(32).collect();
-                let inserted = self.store_message(&msg.id, &chat, peer, &name, text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref());
+                let reply = msg.reply.as_ref().map(|r| ReplyRef { id: r.id.chars().take(64).collect(), name: r.name.chars().take(32).collect(), text: r.text.chars().take(200).collect() });
+                let inserted = self.store_message(&msg.id, &chat, peer, &name, text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref(), reply.as_ref());
                 if inserted {
                     self.update_name(peer, &name);
                     if let Some(f) = &msg.file {
@@ -1511,7 +1572,11 @@ impl Node {
                         Some(g) => format!("{} · {}", name, self.group_name(g)),
                         None => name.clone(),
                     };
-                    self.notify(&title, &body);
+                    // Muted chats stay quiet, unless you are @mentioned (or someone answers you).
+                    let mentioned = text.as_deref().is_some_and(|t| self.mentions_me(t)) || msg.reply.as_ref().is_some_and(|r| self.is_my_message(&r.id));
+                    if !self.is_muted(&chat) || mentioned {
+                        self.notify(if mentioned && msg.group.is_some() { &title } else { &title }, &body);
+                    }
                 }
                 Ok(ok)
             }
@@ -1541,6 +1606,40 @@ impl Node {
                 }
                 Ok(ok)
             }
+            Req::Edit { msg_id, text, sealed } => {
+                if text.as_ref().is_some_and(|t| t.chars().count() > 5000) || sealed.as_ref().is_some_and(|s| s.len() > 200_000) {
+                    return Err("Invalid edit.".into());
+                }
+                let chat: Option<String> = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .query_row("SELECT chat FROM messages WHERE id = ?1 AND sender = ?2", [&msg_id, peer], |r| r.get(0))
+                    .optional()
+                    .ok()
+                    .flatten();
+                if let Some(chat) = chat {
+                    self.apply_edit(&chat, &msg_id, text.as_deref(), sealed.as_deref());
+                }
+                Ok(ok)
+            }
+            Req::Pin { group, channel, msg_id, pinned } => {
+                let chat = self.chat_of(peer, group.as_deref())?;
+                let chat = match (&group, &channel) {
+                    (Some(g), Some(c)) => chat_id(g, Some(c)),
+                    _ => chat,
+                };
+                self.apply_pin(&chat, &msg_id, peer, pinned);
+                Ok(ok)
+            }
+            Req::PartyQueue { party_id, file } => {
+                let ok_member = self.parties.lock().unwrap().get(&party_id).is_some_and(|p| p.leader == self.me_s && p.members.iter().any(|m| m.id == peer));
+                if !ok_member || file.size > MAX_FILE_SIZE {
+                    return Err("Not allowed.".into());
+                }
+                self.queue_local(&party_id, file);
+                Ok(ok)
+            }
             Req::Unsend { msg_id } => {
                 // Only the person who sent a message can delete it for everyone.
                 self.remove_message(&msg_id, Some(peer));
@@ -1568,9 +1667,10 @@ impl Node {
                         let text = m.text.as_ref().map(|t| t.chars().take(5000).collect::<String>());
                         let name: String = m.name.chars().take(32).collect();
                         let file_json = m.file.as_ref().map(|f| serde_json::to_string(f).unwrap());
+                        let reply_json = m.reply.as_ref().map(|r| serde_json::to_string(r).unwrap());
                         let _ = db.execute(
-                            "INSERT OR IGNORE INTO messages (seq, id, chat, sender, sender_name, text, file, ts, sealed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                            params![base + i as i64, m.id, chat_id(&group_id, m.channel.as_deref()), m.sender, name, text, file_json, m.ts, m.sealed],
+                            "INSERT OR IGNORE INTO messages (seq, id, chat, sender, sender_name, text, file, ts, sealed, reply) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                            params![base + i as i64, m.id, chat_id(&group_id, m.channel.as_deref()), m.sender, name, text, file_json, m.ts, m.sealed, reply_json],
                         );
                         if m.sealed.as_ref().is_some_and(|s| s.len() > 200_000) || m.channel.as_ref().is_some_and(|c| c.len() > 64 || c.contains('#')) {
                             continue;
@@ -1673,11 +1773,26 @@ impl Node {
                 if !newer {
                     return Ok(ok);
                 }
+                let old_file = self.parties.lock().unwrap().get(&party.id).map(|p| p.file.id.clone());
                 if party.state == "ended" {
                     self.parties.lock().unwrap().remove(&party.id);
                     self.stop_stream(&party.file.id);
                 } else {
                     self.parties.lock().unwrap().insert(party.id.clone(), party.clone());
+                    // Next film of the playlist: load it the same way (stream, or download first).
+                    if old_file.as_ref().is_some_and(|f| *f != party.file.id) && party.members.iter().any(|m| m.id == self.me_s && m.joined && !m.left) {
+                        if let Some(f) = &old_file {
+                            self.stop_stream(f);
+                        }
+                        let full = self.full_parties.lock().unwrap().contains(&party.id);
+                        let chat = format!("g:{}", party.group);
+                        if full {
+                            let _ = self.download_into(party.file.clone(), chat, true);
+                        } else {
+                            let _ = self.start_stream(party.file.clone(), chat);
+                        }
+                        self.party_report(&party.id, None, false);
+                    }
                 }
                 let _ = self.app.emit("party", &party);
                 if is_new && party.state != "ended" {
@@ -1747,19 +1862,20 @@ impl Node {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn store_message(&self, id: &str, chat: &str, sender: &str, name: &str, text: Option<&str>, file: Option<&FileMeta>, ts: i64, sealed: Option<&str>) -> bool {
+    fn store_message(&self, id: &str, chat: &str, sender: &str, name: &str, text: Option<&str>, file: Option<&FileMeta>, ts: i64, sealed: Option<&str>, reply: Option<&ReplyRef>) -> bool {
         let file_json = file.map(|f| serde_json::to_string(f).unwrap());
+        let reply_json = reply.map(|r| serde_json::to_string(r).unwrap());
         let n = self
             .db
             .lock()
             .unwrap()
             .execute(
-                "INSERT OR IGNORE INTO messages (id, chat, sender, sender_name, text, file, ts, sealed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![id, chat, sender, name, text, file_json, ts, sealed],
+                "INSERT OR IGNORE INTO messages (id, chat, sender, sender_name, text, file, ts, sealed, reply) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![id, chat, sender, name, text, file_json, ts, sealed, reply_json],
             )
             .unwrap_or(0);
         if n > 0 {
-            let mut m = json!({ "id": id, "chat": chat, "sender": sender, "senderName": name, "text": text, "file": file, "ts": ts, "mine": sender == self.me_s });
+            let mut m = json!({ "id": id, "chat": chat, "sender": sender, "senderName": name, "text": text, "file": file, "ts": ts, "mine": sender == self.me_s, "reply": reply });
             if let Some(sl) = sealed {
                 self.open_sealed(chat, sl, &mut m);
             }
@@ -1775,6 +1891,9 @@ impl Node {
             Some(inner) => {
                 m["text"] = inner["text"].clone();
                 m["file"] = inner["file"].clone();
+                if !inner["reply"].is_null() {
+                    m["reply"] = inner["reply"].clone();
+                }
             }
             None => m["locked"] = json!(true),
         }
@@ -1982,6 +2101,7 @@ impl Node {
     }
 
     pub fn contacts(&self) -> Value {
+        let my_mode = self.my_mode(); // (reads the database, so before it is locked below)
         let db = self.db.lock().unwrap();
         let mut stmt = db
             .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
@@ -1993,7 +2113,7 @@ impl Node {
             .collect();
         let (mut friends, mut incoming, mut outgoing) = (vec![], vec![], vec![]);
         for (id, name, status, last, avatar, mood) in rows {
-            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default() });
+            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default() });
             match status.as_str() {
                 "friend" => friends.push(item),
                 "incoming" => incoming.push(item),
@@ -2029,7 +2149,7 @@ impl Node {
                 .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?)))
                 .unwrap()
                 .filter_map(Result::ok)
-                .map(|(mid, mname, avatar, mood)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "avatar": avatar, "status": mood.unwrap_or_default() }))
+                .map(|(mid, mname, avatar, mood)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default() }))
                 .collect();
             groups.push(json!({ "id": id, "name": name, "owner": owner, "members": members, "lastAt": last, "channels": channels }));
         }
@@ -2041,7 +2161,7 @@ impl Node {
     pub fn messages(&self, chat: &str, limit: usize) -> Vec<Value> {
         let db = self.db.lock().unwrap();
         let mut stmt = db
-            .prepare("SELECT id, chat, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id')), sealed FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT ?2")
+            .prepare("SELECT id, chat, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id')), sealed, reply, edited, EXISTS (SELECT 1 FROM pins WHERE pins.chat = messages.chat AND pins.msg_id = messages.id) FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT ?2")
             .unwrap();
         let mut rows: Vec<(Value, Option<String>)> = stmt
             .query_map(params![chat, limit.clamp(1, 20000) as i64], |r| {
@@ -2057,6 +2177,9 @@ impl Node {
                     "ts": r.get::<_, i64>(6)?,
                     "thumb": r.get::<_, Option<String>>(7)?.and_then(|t| serde_json::from_str::<Value>(&t).ok()),
                     "mine": sender == self.me_s,
+                    "reply": r.get::<_, Option<String>>(9)?.and_then(|t| serde_json::from_str::<Value>(&t).ok()),
+                    "edited": r.get::<_, Option<i64>>(10)?.unwrap_or(0) == 1,
+                    "pinned": r.get::<_, bool>(11)?,
                 }), r.get::<_, Option<String>>(8)?))
             })
             .unwrap()
@@ -2161,6 +2284,210 @@ impl Node {
     pub fn forget_channel(&self, chat: &str) {
         let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = ?1", [format!("chkey:{chat}")]);
         self.emit("contacts", Value::Null);
+    }
+
+    // ----- Presence mode: online / away / do not disturb -----
+
+    pub fn my_mode(&self) -> String {
+        self.kv("mode").filter(|m| m == "away" || m == "dnd").unwrap_or_else(|| "online".into())
+    }
+
+    pub fn set_mode(self: &Arc<Self>, mode: &str) {
+        let mode = if mode == "away" || mode == "dnd" { mode } else { "online" };
+        self.set_kv("mode", mode);
+        let req = self.ping_req();
+        for p in self.known_peers() {
+            if self.is_online(&p) {
+                let (me, req) = (self.clone(), req.clone());
+                tauri::async_runtime::spawn(async move {
+                    let _ = me.request(&p, &req).await;
+                });
+            }
+        }
+    }
+
+    fn note_mode(&self, peer: &str, mode: &str) {
+        let mode = if mode == "away" || mode == "dnd" { mode } else { "online" };
+        let before = self.modes.lock().unwrap().insert(peer.to_string(), mode.to_string());
+        if before.as_deref() != Some(mode) {
+            self.emit("presence", json!({ "id": peer, "online": self.is_online(peer), "mode": mode }));
+        }
+    }
+
+    pub fn mode_of(&self, peer: &str) -> String {
+        self.modes.lock().unwrap().get(peer).cloned().unwrap_or_else(|| "online".into())
+    }
+
+    // ----- Mute, @mentions -----
+
+    pub fn is_muted(&self, chat: &str) -> bool {
+        // Muting a group mutes its channels too.
+        self.kv(&format!("mute:{chat}")).is_some()
+            || split_chat(chat).is_some_and(|(g, c)| c.is_some() && self.kv(&format!("mute:g:{g}")).is_some())
+    }
+
+    pub fn set_mute(&self, chat: &str, on: bool) {
+        if on {
+            self.set_kv(&format!("mute:{chat}"), "1");
+        } else {
+            let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = ?1", [format!("mute:{chat}")]);
+        }
+    }
+
+    pub fn mutes(&self) -> Vec<String> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("SELECT substr(k, 6) FROM kv WHERE k LIKE 'mute:%'").unwrap();
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+        rows.filter_map(Result::ok).collect()
+    }
+
+    /// "@Name" anywhere in the text (not part of a longer word).
+    fn mentions_me(&self, text: &str) -> bool {
+        let me = format!("@{}", self.my_name().to_lowercase());
+        let t = text.to_lowercase();
+        let mut from = 0;
+        while let Some(i) = t[from..].find(&me) {
+            let end = from + i + me.len();
+            if t[end..].chars().next().is_none_or(|c| !c.is_alphanumeric()) {
+                return true;
+            }
+            from = end;
+        }
+        false
+    }
+
+    fn is_my_message(&self, id: &str) -> bool {
+        self.db.lock().unwrap().query_row("SELECT 1 FROM messages WHERE id = ?1 AND sender = ?2", [id, &self.me_s], |_| Ok(())).optional().ok().flatten().is_some()
+    }
+
+    // ----- Editing -----
+
+    fn channel_key_of(&self, chat: &str) -> Option<[u8; 32]> {
+        self.kv(&format!("chkey:{chat}")).and_then(|k| HEXLOWER.decode(k.as_bytes()).ok()).and_then(|k| <[u8; 32]>::try_from(k).ok())
+    }
+
+    fn apply_edit(&self, chat: &str, id: &str, text: Option<&str>, sealed: Option<&str>) {
+        let _ = self.db.lock().unwrap().execute(
+            "UPDATE messages SET text = ?2, sealed = COALESCE(?3, sealed), edited = 1 WHERE id = ?1",
+            params![id, text, sealed],
+        );
+        let mut m = json!({ "id": id, "chat": chat, "text": text, "edited": true });
+        if let Some(sl) = sealed {
+            self.open_sealed(chat, sl, &mut m);
+        }
+        self.emit("edited", m);
+    }
+
+    /// Changes the text of one of your messages, here and for everyone in the chat.
+    pub fn edit_message(self: &Arc<Self>, id: &str, text: &str) -> Result<(), String> {
+        let text: String = text.trim().chars().take(5000).collect();
+        if text.is_empty() {
+            return Err("Write something, or delete the message instead.".into());
+        }
+        let row: Option<(String, String, Option<String>)> = self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT chat, sender, sealed FROM messages WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()
+            .map_err(e2s)?;
+        let Some((chat, sender, old_sealed)) = row else { return Err("That message is gone.".into()) };
+        if sender != self.me_s {
+            return Err("You can only edit your own messages.".into());
+        }
+        let (new_text, new_sealed) = match old_sealed {
+            Some(old) => {
+                let key = self.channel_key_of(&chat).ok_or("Unlock this channel with its password first.")?;
+                let mut inner: Value = open_with(&key, &old).and_then(|p| serde_json::from_slice(&p).ok()).unwrap_or(json!({}));
+                inner["text"] = json!(text);
+                (None, Some(seal_with(&key, &serde_json::to_vec(&inner).map_err(e2s)?)?))
+            }
+            None => (Some(text), None),
+        };
+        self.apply_edit(&chat, id, new_text.as_deref(), new_sealed.as_deref());
+        if let Ok((_, targets)) = self.chat_targets(&chat) {
+            let req = Req::Edit { msg_id: id.to_string(), text: new_text, sealed: new_sealed };
+            for t in targets {
+                self.deliver(&t, &req);
+            }
+        }
+        Ok(())
+    }
+
+    // ----- Pins -----
+
+    fn apply_pin(&self, chat: &str, id: &str, by: &str, pinned: bool) {
+        {
+            let db = self.db.lock().unwrap();
+            if pinned {
+                let _ = db.execute("INSERT OR REPLACE INTO pins (chat, msg_id, by, ts) VALUES (?1, ?2, ?3, ?4)", params![chat, id, by, now()]);
+            } else {
+                let _ = db.execute("DELETE FROM pins WHERE chat = ?1 AND msg_id = ?2", [chat, id]);
+            }
+        }
+        self.emit("pins", json!({ "chat": chat, "id": id, "pinned": pinned }));
+    }
+
+    /// Pins a message to the top of its chat, for everyone in it.
+    pub fn pin_message(self: &Arc<Self>, chat: &str, id: &str, pinned: bool) -> Result<(), String> {
+        let (group, targets) = self.chat_targets(chat)?;
+        let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
+        self.apply_pin(chat, id, &self.me_s.clone(), pinned);
+        let req = Req::Pin { group, channel, msg_id: id.to_string(), pinned };
+        for t in targets {
+            self.deliver(&t, &req);
+        }
+        Ok(())
+    }
+
+    pub fn pins(&self, chat: &str) -> Vec<String> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("SELECT msg_id FROM pins WHERE chat = ?1 ORDER BY ts DESC").unwrap();
+        let rows = stmt.query_map([chat], |r| r.get::<_, String>(0)).unwrap();
+        rows.filter_map(Result::ok).collect()
+    }
+
+    // ----- Backup: your identity and messages in one password-protected file -----
+
+    /// Makes the backup (encrypted with `password`).
+    pub fn export_backup(&self, password: &str) -> Result<Vec<u8>, String> {
+        if password.trim().chars().count() < 4 {
+            return Err("Use a password of at least 4 characters.".into());
+        }
+        let tmp = self.dir.join("backup.tmp.db");
+        let _ = std::fs::remove_file(&tmp);
+        self.db.lock().unwrap().execute("VACUUM INTO ?1", [tmp.to_string_lossy()]).map_err(e2s)?;
+        let db = std::fs::read(&tmp).map_err(e2s)?;
+        let _ = std::fs::remove_file(&tmp);
+        let identity = std::fs::read(self.dir.join("identity.key")).map_err(e2s)?;
+        let salt = new_id();
+        let key = channel_key("backup", &salt, password.trim());
+        let inner = serde_json::to_vec(&json!({ "identity": BASE64.encode(&identity), "db": BASE64.encode(&db) })).map_err(e2s)?;
+        let out = json!({ "uan_backup": 1, "salt": salt, "check": key_check(&key), "data": seal_with(&key, &inner)? });
+        serde_json::to_vec(&out).map_err(e2s)
+    }
+
+    /// Checks a backup and puts it in place for the next start. Returns the backed-up name.
+    pub fn import_backup(&self, bytes: &[u8], password: &str) -> Result<(), String> {
+        let v: Value = serde_json::from_slice(bytes).map_err(|_| "That isn't a UaN backup file.".to_string())?;
+        if v["uan_backup"].as_i64() != Some(1) {
+            return Err("That isn't a UaN backup file.".into());
+        }
+        let key = channel_key("backup", v["salt"].as_str().unwrap_or_default(), password.trim());
+        if v["check"].as_str() != Some(key_check(&key).as_str()) {
+            return Err("Wrong password.".into());
+        }
+        let inner: Value = open_with(&key, v["data"].as_str().unwrap_or_default())
+            .and_then(|p| serde_json::from_slice(&p).ok())
+            .ok_or("The backup file is damaged.")?;
+        let identity = BASE64.decode(inner["identity"].as_str().unwrap_or_default().as_bytes()).map_err(e2s)?;
+        let db = BASE64.decode(inner["db"].as_str().unwrap_or_default().as_bytes()).map_err(e2s)?;
+        if identity.len() != 32 || !db.starts_with(b"SQLite format 3") {
+            return Err("The backup file is damaged.".into());
+        }
+        std::fs::write(self.dir.join("uan.db.import"), db).map_err(e2s)?;
+        std::fs::write(self.dir.join("identity.key.import"), identity).map_err(e2s)?;
+        Ok(())
     }
 
     /// The chat a request from `peer` belongs to: their direct chat, or a group both of us are in.
@@ -2345,7 +2672,7 @@ impl Node {
             let mut stmt = db
                 .prepare(
                     "SELECT id, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id'))
-                     , chat, sealed FROM messages WHERE chat = ?1 OR chat LIKE ?1 || '#%' ORDER BY seq DESC LIMIT 300",
+                     , chat, sealed, reply FROM messages WHERE chat = ?1 OR chat LIKE ?1 || '#%' ORDER BY seq DESC LIMIT 300",
                 )
                 .unwrap();
             let rows = stmt
@@ -2360,6 +2687,7 @@ impl Node {
                         thumb: r.get(6)?,
                         channel: split_chat(&r.get::<_, String>(7)?).and_then(|(_, c)| c).map(str::to_string),
                         sealed: r.get(8)?,
+                        reply: r.get::<_, Option<String>>(9)?.and_then(|t| serde_json::from_str(&t).ok()),
                     })
                 })
                 .unwrap();
@@ -2465,6 +2793,10 @@ impl Node {
     }
 
     pub fn send(self: &Arc<Self>, chats: &[String], text: Option<String>, file: Option<FileMeta>) -> Result<(), String> {
+        self.send_reply(chats, text, file, None)
+    }
+
+    pub fn send_reply(self: &Arc<Self>, chats: &[String], text: Option<String>, file: Option<FileMeta>, reply_to: Option<String>) -> Result<(), String> {
         let text = text.map(|t| t.trim().chars().take(5000).collect::<String>()).filter(|t| !t.is_empty());
         if text.is_none() && file.is_none() {
             return Err("Nothing to send.".into());
@@ -2473,7 +2805,13 @@ impl Node {
         for chat in chats {
             let (group, targets) = self.chat_targets(chat)?;
             let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
-            let mut msg = WireMsg { id: new_id(), group: group.clone(), name: name.clone(), text: text.clone(), file: file.clone(), ts: now(), channel: channel.clone(), sealed: None };
+            // The message being answered: who wrote it and the start of it (shown above the reply).
+            let reply = reply_to.as_ref().and_then(|rid| {
+                let m = self.messages(chat, 20000).into_iter().find(|m| m["id"].as_str() == Some(rid))?;
+                let text = m["text"].as_str().map(str::to_string).or_else(|| m["file"]["name"].as_str().map(|n| format!("File: {n}"))).unwrap_or_default();
+                Some(ReplyRef { id: rid.clone(), name: m["senderName"].as_str().unwrap_or_default().to_string(), text: text.chars().take(200).collect() })
+            });
+            let mut msg = WireMsg { id: new_id(), group: group.clone(), name: name.clone(), text: text.clone(), file: file.clone(), ts: now(), channel: channel.clone(), sealed: None, reply: reply.clone() };
             // Locked channel: text and file are encrypted with the channel's key.
             if let (Some(g), Some(c)) = (&group, &channel) {
                 let locked = self.load_group(g).and_then(|gr| gr.channels.into_iter().find(|x| x.id == *c)).and_then(|x| x.check).is_some();
@@ -2483,17 +2821,18 @@ impl Node {
                         .and_then(|k| HEXLOWER.decode(k.as_bytes()).ok())
                         .and_then(|k| <[u8; 32]>::try_from(k).ok())
                         .ok_or("Unlock this channel with its password first.")?;
-                    let plain = serde_json::to_vec(&json!({ "text": msg.text, "file": msg.file })).map_err(e2s)?;
+                    let plain = serde_json::to_vec(&json!({ "text": msg.text, "file": msg.file, "reply": msg.reply })).map_err(e2s)?;
                     msg.sealed = Some(seal_with(&key, &plain)?);
                     msg.text = None;
                     msg.file = None;
+                    msg.reply = None;
                 }
             }
             if let Some(f) = &file {
                 let base = group.as_ref().map(|g| format!("g:{g}")).unwrap_or_else(|| chat.clone());
                 let _ = self.db.lock().unwrap().execute("INSERT OR IGNORE INTO file_access (file_id, who) VALUES (?1, ?2)", [&f.id, &base]);
             }
-            self.store_message(&msg.id, chat, &self.me_s, &name, msg.text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref());
+            self.store_message(&msg.id, chat, &self.me_s, &name, msg.text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref(), msg.reply.as_ref());
             let req = Req::Msg { msg };
             for t in targets {
                 self.deliver(&t, &req);
@@ -2531,7 +2870,29 @@ impl Node {
             };
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
             if meta.is_dir() {
-                errors.push(format!("{name}: folders can't be sent, only files."));
+                // A folder: every file in it (and in its subfolders) is sent, named "Folder/sub/file".
+                let mut found = Vec::new();
+                collect_files(&path, &name, &mut found, 0);
+                if found.is_empty() {
+                    errors.push(format!("{name}: the folder is empty."));
+                }
+                if found.len() > 1000 {
+                    errors.push(format!("{name}: too many files (over 1000). Zip it, or send part of it."));
+                    continue;
+                }
+                for (p, rel, len) in found {
+                    if len > MAX_FILE_SIZE {
+                        errors.push(format!("{rel}: too big, the limit is 4 TB."));
+                        continue;
+                    }
+                    let file = FileMeta { id: new_id(), name: rel, size: len, mime: guess_mime(&p).to_string(), owner: self.me_s.clone() };
+                    let _ = self.db.lock().unwrap().execute(
+                        "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![file.id, p.to_string_lossy(), file.name, file.size as i64, file.mime, now()],
+                    );
+                    self.send(chats, note.take(), Some(file))?;
+                    sent += 1;
+                }
                 continue;
             }
             if meta.len() > MAX_FILE_SIZE {
@@ -3332,6 +3693,77 @@ impl Node {
         }
     }
 
+    fn queue_local(self: &Arc<Self>, id: &str, file: FileMeta) {
+        let updated = {
+            let mut parties = self.parties.lock().unwrap();
+            let Some(p) = parties.get_mut(id) else { return };
+            if p.queue.len() >= 50 || p.file.id == file.id || p.queue.iter().any(|f| f.id == file.id) {
+                return;
+            }
+            p.queue.push(file);
+            p.version += 1;
+            p.clone()
+        };
+        self.broadcast_party(&updated);
+    }
+
+    /// Adds a film to the party's playlist (the host keeps it; others ask the host).
+    pub fn party_queue(self: &Arc<Self>, id: &str, file: FileMeta) -> Result<(), String> {
+        let party = self.parties.lock().unwrap().get(id).cloned().ok_or("That watch party has ended.")?;
+        if party.leader == self.me_s {
+            self.queue_local(id, file);
+        } else {
+            let me = self.clone();
+            let req = Req::PartyQueue { party_id: id.to_string(), file };
+            tauri::async_runtime::spawn(async move {
+                let _ = me.request(&party.leader, &req).await;
+            });
+        }
+        Ok(())
+    }
+
+    /// The host moves the party on to the next film of the playlist (or removes one with `remove`).
+    pub fn party_next(self: &Arc<Self>, id: &str, remove: Option<String>) -> Result<(), String> {
+        let updated = {
+            let mut parties = self.parties.lock().unwrap();
+            let p = parties.get_mut(id).ok_or("That watch party has ended.")?;
+            if p.leader != self.me_s {
+                return Err("Only the host can do that.".into());
+            }
+            if let Some(r) = remove {
+                p.queue.retain(|f| f.id != r);
+            } else {
+                if p.queue.is_empty() {
+                    return Ok(());
+                }
+                p.file = p.queue.remove(0);
+                p.state = "loading".into();
+                p.position = 0.0;
+                for m in p.members.iter_mut() {
+                    m.have = 0;
+                    m.ready = false;
+                    m.buffering = false;
+                }
+                if p.members.iter().any(|m| m.id == p.file.owner && m.joined && !m.left) {
+                    p.seeder = p.file.owner.clone();
+                }
+            }
+            p.version += 1;
+            p.clone()
+        };
+        // The host loads the next film too.
+        let full = self.full_parties.lock().unwrap().contains(id);
+        let chat = format!("g:{}", updated.group);
+        if full {
+            let _ = self.download_into(updated.file.clone(), chat, true);
+        } else {
+            let _ = self.start_stream(updated.file.clone(), chat);
+        }
+        self.broadcast_party(&updated);
+        self.party_report(id, None, false);
+        Ok(())
+    }
+
     pub fn create_party(self: &Arc<Self>, group: &str, file: FileMeta, invite: Vec<String>, seeder: String) -> Result<String, String> {
         let g = self.load_group(group).ok_or("That group no longer exists.")?;
         let (have, ready) = self.buffer_state(&file);
@@ -3355,6 +3787,7 @@ impl Node {
             state: "loading".into(),
             position: 0.0,
             version: 1,
+            queue: vec![],
         };
         self.parties.lock().unwrap().insert(party.id.clone(), party.clone());
         self.broadcast_party(&party);
@@ -3865,4 +4298,30 @@ pub fn has_audio_track(data: &[u8]) -> bool {
     }
     // AVI: a stream header of type "auds".
     find_all(b"strh").into_iter().any(|i| data.get(i + 8..i + 12) == Some(b"auds"))
+}
+
+/// All files in `dir` and its subfolders: (path, "Folder/sub/name", size). Stops after 1001 files.
+fn collect_files(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String, u64)>, depth: usize) {
+    if depth > 20 || out.len() > 1000 {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = rd.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let Ok(meta) = e.metadata() else { continue };
+        let r = format!("{rel}/{name}");
+        if meta.is_dir() {
+            collect_files(&e.path(), &r, out, depth + 1);
+        } else if meta.is_file() {
+            out.push((e.path(), r, meta.len()));
+            if out.len() > 1000 {
+                return;
+            }
+        }
+    }
 }

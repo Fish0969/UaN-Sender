@@ -41,6 +41,7 @@ sudo apt install ./UaN_*_amd64.deb
 - **Watch together.** In a group, every video has a *Watch together* button. The PC with the fastest
   connection shares the film, it streams for everyone, starts when everyone has enough loaded, and
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
+  A chat and a **playlist** sit next to the film (the next film starts by itself).
   Everyone chooses for themselves: just stream it, or **download the whole film first** (smoothest;
   the party waits for you, and a copy is kept in `Downloads/UaN`).
 - **Open in VLC.** If a film's format or sound can't play inside UaN (picture but no sound, e.g. AC3/DTS
@@ -54,6 +55,13 @@ sudo apt install ./UaN_*_amd64.deb
 - **Groups.** Click a group's name (or right-click it in the list) for members, adding people and more.
   Anyone in the group can add their friends; new members see the earlier messages too. Clear a chat's
   messages for yourself, or (the group's creator) for everyone.
+- **Messages.** Reply to a message (it is quoted above your answer), edit your own, pin important ones to
+  the top of the chat, and write **bold**, *italic*, ~~strike~~ or `code`. In groups, @Name mentions someone.
+- **Quiet when you want.** Mute a chat, group or channel (an @mention or an answer to you still comes through).
+  Click your picture to be Online, Away or Do not disturb (no notifications at all).
+- **Folders.** Send a whole folder: every file in it arrives with its folder path.
+- **Backup.** Settings → Backup saves your friend code, friends, groups and messages in one password-protected
+  file, to move UaN to a new PC or restore it after reinstalling.
 - **Typing and seen.** "… is typing", and small profile pictures under the last message each person has
   seen, like in Messenger. Both can be turned off in Settings.
 - **Previews.** Photos and videos show a preview picture (and the video's length) in the chat, even

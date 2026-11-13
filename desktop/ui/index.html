@@ -96,6 +96,7 @@
               <div id="chatStatus" class="sub ellipsis"></div>
             </div>
           </button>
+          <button class="icon pins-btn hidden" id="pinsBtn" title="Pinned messages"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4Z"/><path d="M12 14v6"/></svg><span id="pinsCount"></span></button>
           <button class="icon" id="galleryBtn" title="Photos, videos and files in this chat">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           </button>
@@ -114,6 +115,11 @@
         </div>
         <div id="msgs" class="msgs"></div>
         <div id="typingBar" class="typing hidden"><span class="dots"><i></i><i></i><i></i></span><span id="typingText"></span></div>
+        <div id="replyBar" class="reply-bar hidden">
+          <div class="grow"><div class="strong" id="replyTitle"></div><div class="sub ellipsis" id="replyText"></div></div>
+          <button type="button" class="icon" id="replyCancel" title="Cancel"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div id="mentionPop" class="mention-pop hidden"></div>
         <form id="composer" class="composer">
           <button type="button" class="icon" id="attachBtn" title="Send files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
@@ -147,6 +153,7 @@
     <div class="viewer-bar">
       <span class="party-dot"></span>
       <span id="partyTitle" class="grow ellipsis strong"></span>
+      <button id="partySideBtn" class="small" type="button">Chat and playlist</button>
       <button id="partyFull" class="small" type="button"></button>
       <button id="partyVlc" class="small" type="button" title="Watch in VLC instead; stays in sync with everyone">Watch in VLC</button>
       <button id="partyStart" class="small hidden" type="button">Start now</button>
@@ -154,9 +161,22 @@
       <button id="partyLeave" class="small" type="button">Leave</button>
     </div>
     <div id="partyMembers" class="party-members"></div>
-    <div class="viewer-body" id="partyBody">
-      <div id="partyStage" class="stage"></div>
-      <div id="partyWait" class="party-wait"></div>
+    <div class="party-main">
+      <div class="viewer-body" id="partyBody">
+        <div id="partyStage" class="stage"></div>
+        <div id="partyWait" class="party-wait"></div>
+      </div>
+      <aside id="partySide" class="party-side hidden">
+        <div class="seg party-tabs"><button type="button" data-tab="chat" class="on">Chat</button><button type="button" data-tab="queue">Playlist</button></div>
+        <div id="partyChatTab" class="party-tab">
+          <div id="partyMsgs" class="party-msgs"></div>
+          <form id="partyForm" class="party-form"><input id="partyInput" placeholder="Message" autocomplete="off" maxlength="5000"><button class="accent">Send</button></form>
+        </div>
+        <div id="partyQueueTab" class="party-tab hidden">
+          <div id="partyQueue" class="party-queue"></div>
+          <button type="button" id="partyAdd" class="small">Add a film…</button>
+        </div>
+      </aside>
     </div>
   </div>
 
@@ -269,6 +289,11 @@
         <div class="note" id="sMailboxNote">When a friend is offline, your messages wait here (encrypted) so you can turn your PC off. Files still come from the sender's PC.</div>
       </div>
       <div class="group">
+        <div class="group-title">Backup</div>
+        <div class="row-btns"><button type="button" id="sBackup">Save a backup…</button><button type="button" id="sRestore">Restore from backup…</button></div>
+        <div class="note">A backup keeps your friend code, friends, groups and messages in one password-protected file. With it you can move UaN to a new PC, or get everything back after reinstalling Windows.</div>
+      </div>
+      <div class="group">
         <div class="group-title">Your friend code</div>
         <div class="code-box hidden" id="sCode"></div>
         <button type="button" class="link" id="sShowCode">Show friend code</button>
@@ -348,6 +373,32 @@
         <button type="button" id="chanCancel">Cancel</button>
         <button class="accent">Create</button>
       </div>
+    </form>
+  </dialog>
+  <dialog id="pwDlg">
+    <form id="pwForm" method="dialog">
+      <h2 id="pwTitle"></h2>
+      <p id="pwNote" class="note"></p>
+      <input id="pwInput" type="password" placeholder="Password" autocomplete="off">
+      <input id="pwInput2" type="password" placeholder="Password again" autocomplete="off" class="hidden">
+      <div id="pwErr" class="error"></div>
+      <div class="actions">
+        <span class="grow"></span>
+        <button type="button" id="pwCancel">Cancel</button>
+        <button class="accent" id="pwOk">OK</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="pinsDlg" class="wide-dlg">
+    <form method="dialog">
+      <div class="search-row"><strong class="grow">Pinned messages</strong><button class="icon" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div id="pinsList" class="pins-list"></div>
+    </form>
+  </dialog>
+  <dialog id="queueDlg" class="wide-dlg">
+    <form method="dialog">
+      <div class="search-row"><strong class="grow">Add a film to the playlist</strong><button class="icon" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div id="queueList" class="pins-list"></div>
     </form>
   </dialog>
   <dialog id="askDlg">
