@@ -450,3 +450,9 @@ input.gb { width: 64px; height: 24px; margin: 0 2px; padding: 0 4px; }
 .tiles.icons canvas, .tiles.avatars canvas { width: 100%; height: 100%; display: block; }
 .tiles.avatars button { width: 36px; height: 36px; border-radius: 50%; }
 #settingsDlg { width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; }
+
+/* Christmas theme: snowfall behind the panels (they are see-through in this theme). */
+canvas.snow { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 0; }
+.main, .login { position: relative; z-index: 1; }
+
+html[data-snow] .composer, html[data-snow] .chat-head { background: var(--side); }

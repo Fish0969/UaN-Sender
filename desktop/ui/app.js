@@ -2042,6 +2042,7 @@ const THEMES = [
   { id: 'aurora', name: 'Aurora', base: 'dark', image: 'linear-gradient(135deg, #1b1040 0%, #3a2a8c 50%, #0f7a6c 100%)', bg: '#2a1e68', ...GLASS_DARK, dialog: '#241a58', accent: '#9ef0c0', mine: '#5a48c8' },
   { id: 'neon', name: 'Neon', base: 'dark', image: 'linear-gradient(135deg, #0d0221 0%, #3a0ca3 60%, #b5179e 100%)', bg: '#22085e', ...GLASS_DARK, dialog: '#1e0a52', accent: '#4cc9f0', mine: '#7209b7' },
   { id: 'crimson', name: 'Crimson', base: 'dark', image: 'linear-gradient(135deg, #1a0508 0%, #4a0d18 55%, #7a1524 100%)', bg: '#3a0a12', ...GLASS_DARK, dialog: '#330a11', accent: '#ff9a9a', mine: '#9c1f30' },
+  { id: 'christmas', name: 'Christmas', base: 'dark', snow: true, image: 'radial-gradient(ellipse at 50% 120%, #1f5e3a 0%, rgba(31, 94, 58, 0) 60%), linear-gradient(160deg, #3b0a12 0%, #6b0f1d 45%, #0f3d26 100%)', bg: '#4a0e18', ...GLASS_DARK, side: '#2e070d', card: '#43121b', theirs: 'rgba(30, 6, 10, .78)', dialog: '#3d0d16', accent: '#f2c14e', mine: '#b3202f' },
   { id: 'sakura', name: 'Sakura', base: 'light', image: 'linear-gradient(135deg, #ffe3ec 0%, #ffd0e0 50%, #e9d5ff 100%)', bg: '#ffdbe8', ...GLASS_LIGHT, dialog: '#fff3f7', accent: '#c2255c', mine: '#c2255c' },
   { id: 'mint', name: 'Mint', base: 'light', image: 'linear-gradient(135deg, #e3fff3 0%, #c9f2ff 100%)', bg: '#d8f8f8', ...GLASS_LIGHT, dialog: '#f2fffb', accent: '#0b7a5c', mine: '#0b7a5c' },
   { id: 'lavender', name: 'Lavender', base: 'light', image: 'linear-gradient(135deg, #efe7ff 0%, #dfe7ff 100%)', bg: '#e8e6ff', ...GLASS_LIGHT, dialog: '#f7f4ff', accent: '#6741d9', mine: '#6741d9' },
@@ -2079,6 +2080,43 @@ function applyTheme() {
   root.style.setProperty('--on-accent', dark ? '#000' : '#fff');
   root.style.setProperty('--mine', own && t.mine ? t.mine : (dark ? `color-mix(in srgb, ${color} 45%, #1c1c1c)` : color));
   root.style.setProperty('--on-mine', '#fff');
+  setSnow(!!t.snow);
+}
+
+// Gentle snowfall behind the app (Christmas theme). Light on the CPU: few flakes, ~30 frames a second,
+// and it stops while the window is hidden.
+let snow = null;
+function setSnow(on) {
+  if (on) document.documentElement.dataset.snow = '';
+  else delete document.documentElement.dataset.snow;
+  if (!on) {
+    if (snow) { cancelAnimationFrame(snow.raf); snow.canvas.remove(); snow = null; }
+    return;
+  }
+  if (snow) return;
+  const canvas = el('canvas', { class: 'snow', 'aria-hidden': 'true' });
+  document.body.prepend(canvas);
+  const flakes = Array.from({ length: 55 }, () => ({ x: Math.random(), y: Math.random(), r: 0.8 + Math.random() * 2.2, s: 0.15 + Math.random() * 0.35, d: Math.random() * Math.PI * 2 }));
+  let last = 0;
+  const frame = (t) => {
+    snow.raf = requestAnimationFrame(frame);
+    if (document.hidden || t - last < 33) return;
+    const dt = Math.min(100, t - last) / 16;
+    last = t;
+    const w = (canvas.width = innerWidth), h = (canvas.height = innerHeight);
+    const c = canvas.getContext('2d');
+    c.clearRect(0, 0, w, h);
+    c.fillStyle = 'rgba(255, 255, 255, .5)';
+    for (const f of flakes) {
+      f.y += (f.s * dt) / h * 3;
+      f.d += 0.01 * dt;
+      if (f.y > 1.02) { f.y = -0.02; f.x = Math.random(); }
+      c.beginPath();
+      c.arc(f.x * w + Math.sin(f.d) * 12, f.y * h, f.r, 0, Math.PI * 2);
+      c.fill();
+    }
+  };
+  snow = { canvas, raf: requestAnimationFrame(frame) };
 }
 function setTheme(id) {
   theme.mode = themeById(id).id;

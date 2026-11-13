@@ -63,7 +63,7 @@ sudo apt install ./UaN_*_amd64.deb
   the background to `Downloads/UaN`, so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
-  **profile picture** (upload one or pick a ready-made one), **status**, **16 themes**, and a choice of
+  **profile picture** (upload one or pick a ready-made one), **status**, **17 themes** (including a Christmas one with falling snow), and a choice of
   **app icons**.
 - **Small updates.** One click in the app. On Linux, the AppImage only downloads the new program
   (a few MB), not the whole 150 MB package.
