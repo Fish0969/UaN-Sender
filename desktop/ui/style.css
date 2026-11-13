@@ -456,3 +456,84 @@ canvas.snow { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-ev
 .main, .login { position: relative; z-index: 1; }
 
 html[data-snow] .composer, html[data-snow] .chat-head { background: var(--side); }
+
+/* ================= 1.6: new layout (rail + channels), GIFs, locked channels ================= */
+.rail, .side-group-head, #chanSec { display: none; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; height: 26px; background: transparent; color: var(--muted); }
+.seg button.on { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+
+/* New layout: a rail of groups on the left, channels or friends next to it, your profile at the bottom. */
+body.modern .main { grid-template-columns: 66px 236px 1fr; }
+body.modern .rail {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; min-height: 0; overflow-y: auto;
+  background: color-mix(in srgb, var(--side) 78%, #000);
+}
+.rail-groups { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.rail-btn {
+  width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; flex: none; position: relative;
+  display: grid; place-items: center; background: var(--card); color: var(--text); font-weight: 600; font-size: 15px;
+  transition: border-radius .15s, background .15s;
+}
+.rail-btn:hover, .rail-btn.active { border-radius: 14px; }
+.rail-btn.group { background: hsl(var(--h) 45% 46%); color: #fff; }
+.rail-btn.home img { width: 28px; height: 28px; }
+.rail-btn.home.active, .rail-btn.home:hover { background: var(--accent); }
+.rail-btn.add { color: var(--ok); }
+.rail-btn.add:hover { background: var(--ok); color: #fff; }
+.rail-btn::before {
+  content: ""; position: absolute; left: -11px; width: 4px; border-radius: 0 3px 3px 0; background: var(--text);
+  height: 0; top: 50%; transform: translateY(-50%); transition: height .15s;
+}
+.rail-btn.unread::before { height: 8px; }
+.rail-btn:hover::before { height: 18px; }
+.rail-btn.active::before { height: 34px; }
+.rail-btn .badge { position: absolute; right: -4px; bottom: -3px; border: 2px solid color-mix(in srgb, var(--side) 78%, #000); }
+.rail-sep { width: 30px; height: 2px; border-radius: 1px; background: var(--border); flex: none; }
+
+body.modern .side { border-right: 0; }
+body.modern .side .me { order: 99; margin-top: auto; padding: 8px 6px 8px 10px; background: color-mix(in srgb, var(--side) 88%, #000); }
+body.modern .side .side-btn { order: 98; }
+body.modern #groupsCap, body.modern #groupList, body.modern #noGroups { display: none; }
+body.modern .side.group-view .side-group-head { display: flex; }
+body.modern .side.group-view #chanSec { display: block; }
+body.modern .side.group-view .code-row, body.modern .side.group-view #codeText, body.modern .side.group-view #addForm,
+body.modern .side.group-view #addMsg, body.modern .side.group-view #reqSec, body.modern .side.group-view #friendsCap,
+body.modern .side.group-view #friendList, body.modern .side.group-view #noFriends, body.modern .side.group-view #outSec,
+body.modern .side.group-view #updateBar { display: none !important; }
+.side-group-head { height: 48px; align-items: center; padding: 0 8px; border-bottom: 1px solid var(--border); }
+.side-group-name { width: 100%; height: 36px; border: 0; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 6px; font-weight: 600; font-size: 14px; }
+.side-group-name:hover { background: var(--hover); }
+.list.chans li { height: 32px; color: var(--muted); }
+.list.chans li.active, .list.chans li:hover { color: var(--text); }
+.list.chans li.unread { color: var(--text); font-weight: 600; }
+.list.chans li svg { width: 15px; height: 15px; }
+.list.members-side li { height: 32px; }
+
+body.modern .chat-head { height: 48px; }
+.chan-tabs { display: flex; gap: 2px; padding: 4px 10px; border-bottom: 1px solid var(--border); overflow-x: auto; flex: none; }
+.chan-tabs button { height: 26px; border: 0; background: transparent; color: var(--muted); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.chan-tabs button.on { background: var(--active); color: var(--text); font-weight: 600; }
+.chan-tabs button svg { width: 13px; height: 13px; }
+
+.lock-gate { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.lock-gate > svg { width: 40px; height: 40px; color: var(--muted); }
+.lock-gate .note { max-width: 320px; }
+.lock-form { display: flex; gap: 6px; width: min(320px, 100%); margin-top: 6px; }
+
+/* GIFs */
+.gif-btn { width: auto !important; padding: 0 6px !important; font-size: 11px; font-weight: 700; letter-spacing: .5px; }
+.gif-btn.on { color: var(--accent) !important; }
+.gif-panel {
+  position: absolute; right: 10px; bottom: 52px; width: min(420px, calc(100% - 20px)); height: min(440px, calc(100% - 70px));
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; z-index: 15;
+  background: var(--dialog, var(--card)); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+}
+.gif-top { display: flex; gap: 8px; align-items: center; }
+.gif-grid { flex: 1; overflow-y: auto; columns: 2; column-gap: 6px; }
+.gif-grid button { display: block; width: 100%; padding: 0; margin: 0 0 6px; border: 0; border-radius: 6px; overflow: hidden; background: var(--hover); break-inside: avoid; height: auto; }
+.gif-grid img { display: block; width: 100%; height: auto; }
+.gif-grid button:hover { outline: 2px solid var(--accent); }
+.gif-note { text-align: center; }
+.msg img.gif { display: block; max-width: min(300px, 100%); max-height: 260px; border-radius: 8px; background: var(--hover); }
+.msg .locked-msg { font-style: italic; color: var(--muted); }

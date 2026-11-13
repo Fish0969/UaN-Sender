@@ -20,6 +20,9 @@ const S = {
   transfers: [],
   parties: new Map(),
   reads: new Map(), // chat -> { peer id: id of the last message they have seen }
+  view: 'home', // new layout: 'home' (friends) or a group id
+  lastChan: {}, // group id -> last opened channel chat
+  lastDm: null,
   typing: new Map(), // chat -> Map(peer id -> { name, until })
 };
 
@@ -49,6 +52,8 @@ const ICON = {
   open: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
   check: '<path d="m5 12 5 5L20 7"/>',
   bigplay: '<path d="M8 5v14l11-7Z"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  hash: '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/>',
 };
 const iconBtn = (name, title, onclick) => el('button', { class: 'icon', type: 'button', title, onclick }, svg(ICON[name]));
 
@@ -105,11 +110,21 @@ function ask(text, ok = 'OK') {
 const friendById = (id) => S.friends.find((f) => f.id === id);
 const groupById = (id) => S.groups.find((g) => g.id === id);
 const isGroup = (chat) => chat?.startsWith('g:');
+const groupIdOf = (chat) => (isGroup(chat) ? chat.slice(2).split('#')[0] : null);
+const groupOf = (chat) => groupById(groupIdOf(chat));
+const channelOf = (chat) => {
+  const g = groupOf(chat);
+  const cid = chat?.split('#')[1];
+  return g && cid ? (g.channels || []).find((c) => c.id === cid) || { id: cid, name: 'channel', chat } : null;
+};
 
 function chatInfo(chat) {
   if (isGroup(chat)) {
-    const g = groupById(chat.slice(2));
-    return g && { name: g.name, group: g };
+    const g = groupOf(chat);
+    if (!g) return null;
+    const ch = channelOf(chat);
+    if (chat.includes('#') && !(g.channels || []).some((c) => c.chat === chat)) return null; // deleted channel
+    return { name: g.name, group: g, channel: ch, channelName: ch ? ch.name : 'general' };
   }
   const f = friendById(chat);
   return f && { name: f.name, friend: f };
@@ -305,7 +320,11 @@ listen('transfers', ({ payload }) => {
 async function loadContacts() {
   const c = await invoke('contacts');
   Object.assign(S, c);
-  if (S.active && !chatInfo(S.active)) closeChat();
+  if (S.active && !chatInfo(S.active)) {
+    const g = groupOf(S.active);
+    if (g) openChat(`g:${g.id}`);
+    else closeChat();
+  }
   renderLists();
   renderChatHead();
 }
@@ -319,10 +338,11 @@ function renderLists() {
 
   $('groupList').replaceChildren(...[...S.groups].sort(byRecent).map((g) => {
     const chat = `g:${g.id}`;
-    return el('li', { class: 'friend' + (S.active === chat ? ' active' : ''), onclick: () => openChat(chat), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
+    const n = unreadIn(g.id);
+    return el('li', { class: 'friend' + (groupIdOf(S.active) === g.id ? ' active' : ''), onclick: () => openGroup(g.id), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
       avatar(g.name, { group: true, seed: g.id }),
       el('span', { class: 'grow ellipsis', text: g.name }),
-      badge(chat));
+      n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null);
   }));
   $('noGroups').classList.toggle('hidden', S.groups.length > 0);
 
@@ -351,7 +371,232 @@ function renderLists() {
 
   const total = [...S.unread.values()].reduce((a, b) => a + b, 0);
   document.title = total ? `(${total}) UaN` : 'UaN';
+  renderRail();
+  renderChannels();
 }
+
+// ---------- New layout: rail of groups, channels ----------
+const unreadIn = (gid) => [...S.unread.entries()].filter(([k]) => groupIdOf(k) === gid).reduce((a, [, n]) => a + n, 0);
+
+function renderRail() {
+  const home = S.view === 'home' || !groupById(S.view);
+  if (!home && S.view && !groupById(S.view)) S.view = 'home';
+  $('railHome').classList.toggle('active', home);
+  const dmUnread = [...S.unread.entries()].filter(([k]) => !isGroup(k)).reduce((a, [, n]) => a + n, 0);
+  $('railHome').classList.toggle('unread', dmUnread > 0);
+  $('railGroups').replaceChildren(...[...S.groups].sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0) || a.name.localeCompare(b.name)).map((g) => {
+    const n = unreadIn(g.id);
+    const b = el('button', { type: 'button', class: 'rail-btn group' + (S.view === g.id ? ' active' : '') + (n ? ' unread' : ''), title: g.name,
+      onclick: () => openGroup(g.id),
+      oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
+    (g.name || '?').slice(0, 2), n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null);
+    b.style.setProperty('--h', hue(g.id));
+    return b;
+  }));
+  $('side').classList.toggle('group-view', !home);
+  $('side').classList.toggle('home-view', home);
+}
+
+function openGroup(gid) {
+  const g = groupById(gid);
+  if (!g) return;
+  S.view = gid;
+  const last = S.lastChan[gid];
+  openChat(last && chatInfo(last) ? last : `g:${gid}`);
+}
+$('railHome').addEventListener('click', () => {
+  S.view = 'home';
+  if (S.lastDm && friendById(S.lastDm)) openChat(S.lastDm);
+  else { closeChat(); renderLists(); }
+});
+$('railAdd').addEventListener('click', () => openPick('group'));
+
+function channelsOf(g) {
+  return [{ id: '', name: 'general', chat: `g:${g.id}` }, ...(g.channels || [])];
+}
+function channelItem(g, ch, tag) {
+  const unread = S.unread.get(ch.chat) || 0;
+  const icon = ch.locked ? (ch.unlocked ? ICON.lock : ICON.lock) : ICON.hash;
+  const menu = (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, channelMenu(g, ch)); };
+  if (tag === 'tab') {
+    return el('button', { type: 'button', class: S.active === ch.chat ? 'on' : '', onclick: () => openChat(ch.chat), oncontextmenu: menu, title: ch.locked ? 'Locked with a password' : '' },
+      svg(icon), ch.name, unread ? el('span', { class: 'badge', text: String(unread) }) : null);
+  }
+  return el('li', { class: 'friend' + (S.active === ch.chat ? ' active' : '') + (unread ? ' unread' : ''), onclick: () => openChat(ch.chat), oncontextmenu: menu, title: ch.locked ? 'Locked with a password' : '' },
+    svg(icon), el('span', { class: 'grow ellipsis', text: ch.name }), unread ? el('span', { class: 'badge', text: String(unread) }) : null);
+}
+function renderChannels() {
+  // New layout: the side column shows the open group's channels and members.
+  const g = groupById(S.view);
+  if (g) {
+    $('sideGroupText').textContent = g.name;
+    $('chanList').replaceChildren(...channelsOf(g).map((ch) => channelItem(g, ch)));
+    $('memberList').replaceChildren(...g.members.map((m) => el('li', {},
+      avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar }),
+      el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name }))));
+  }
+  // Legacy layout: tabs above the messages.
+  const ag = groupOf(S.active);
+  const tabs = !document.body.classList.contains('modern') && ag;
+  $('chanTabs').classList.toggle('hidden', !tabs);
+  if (tabs) {
+    $('chanTabs').replaceChildren(...channelsOf(ag).map((ch) => channelItem(ag, ch, 'tab')),
+      el('button', { type: 'button', title: 'Create a channel', onclick: () => openChanDlg(ag) }, svg('<path d="M12 5v14M5 12h14"/>')));
+  }
+}
+$('sideGroupName').addEventListener('click', () => {
+  const g = groupById(S.view);
+  if (!g) return;
+  const r = $('sideGroupName').getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, groupMenu(g));
+});
+$('addChanBtn').addEventListener('click', () => { const g = groupById(S.view); if (g) openChanDlg(g); });
+
+function channelMenu(g, ch) {
+  const owner = g.owner === S.me.id;
+  return [
+    { label: 'Open', run: () => openChat(ch.chat) },
+    ch.locked && ch.unlocked ? { label: 'Lock again on this PC', run: async () => { await invoke('forget_channel', { chat: ch.chat }); await loadContacts(); if (S.active === ch.chat) openChat(ch.chat); } } : null,
+    { label: 'Clear messages for me', run: () => clearChat(ch.chat, false) },
+    owner ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(ch.chat, true) } : null,
+    owner && ch.id ? '-' : null,
+    owner && ch.id ? { label: 'Rename channel…', run: async () => {
+      const name = prompt('New name for the channel', ch.name);
+      if (name && name.trim()) invoke('channel_action', { group: g.id, channel: ch.id, action: 'rename', name }).then(loadContacts).catch(toast);
+    } } : null,
+    owner && ch.id ? { label: 'Delete channel', danger: true, run: async () => {
+      if (await ask(`Delete # ${ch.name} for everyone?`, 'Delete')) {
+        await invoke('channel_action', { group: g.id, channel: ch.id, action: 'delete', name: '' }).catch(toast);
+        await loadContacts();
+        if (S.active === ch.chat) openChat(`g:${g.id}`);
+      }
+    } } : null,
+  ];
+}
+
+let chanDlgGroup = null;
+function openChanDlg(g) {
+  chanDlgGroup = g;
+  $('chanName').value = '';
+  $('chanPw').value = '';
+  $('chanLock').checked = false;
+  $('chanPw').classList.add('hidden');
+  $('chanErr').textContent = '';
+  $('chanNote').textContent = g.owner === S.me.id ? 'Everyone in the group can see and use it.' : 'It appears for everyone as soon as the group creator’s PC is online.';
+  $('chanDlg').showModal();
+  setTimeout(() => $('chanName').focus(), 30);
+}
+$('chanLock').addEventListener('change', () => {
+  $('chanPw').classList.toggle('hidden', !$('chanLock').checked);
+  if ($('chanLock').checked) {
+    $('chanNote').textContent = 'Only people who know the password can read or write in it: messages are encrypted with it. Tell it to the others yourself.';
+    $('chanPw').focus();
+  }
+});
+$('chanCancel').addEventListener('click', () => $('chanDlg').close());
+$('chanForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pw = $('chanLock').checked ? $('chanPw').value : null;
+  if ($('chanLock').checked && pw.trim().length < 3) return void ($('chanErr').textContent = 'Use a password of at least 3 characters.');
+  try {
+    const chat = await invoke('create_channel', { group: chanDlgGroup.id, name: $('chanName').value, password: pw });
+    $('chanDlg').close();
+    await loadContacts();
+    if (chatInfo(chat)) openChat(chat);
+  } catch (err) { $('chanErr').textContent = err; }
+});
+$('lockForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const chat = S.active;
+  try {
+    await invoke('unlock_channel', { chat, password: $('lockPw').value });
+    await loadContacts();
+    openChat(chat);
+  } catch (err) { $('lockErr').textContent = err; }
+});
+
+// ---------- Layout: new or legacy ----------
+function currentLayout() {
+  try { return localStorage.getItem('uan.layout') || 'modern'; } catch { return 'modern'; }
+}
+function applyLayout() {
+  document.body.classList.toggle('modern', currentLayout() === 'modern');
+  document.querySelectorAll('#sLayout button').forEach((b) => b.classList.toggle('on', b.dataset.layout === currentLayout()));
+  if (S.me) renderLists();
+}
+document.querySelectorAll('#sLayout button').forEach((b) => b.addEventListener('click', () => {
+  try { localStorage.setItem('uan.layout', b.dataset.layout); } catch {}
+  applyLayout();
+}));
+applyLayout();
+
+// ---------- GIFs (GIPHY or KLIPY, searched through the UaN mailbox server) ----------
+const GIF_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(giphy\.com|klipy\.com)\/\S+$/i;
+function isGifUrl(t) { return typeof t === 'string' && t.length < 600 && GIF_HOSTS.test(t.trim()) && !/\s/.test(t.trim()); }
+const gif = { p: (() => { try { return localStorage.getItem('uan.gifp') || 'giphy'; } catch { return 'giphy'; } })(), q: '', page: 1, more: false, loading: false, seq: 0 };
+function gifBase() {
+  return (S.me?.mailbox || 'https://uan-mailbox.uan-mailbox.workers.dev').replace(/\/$/, '');
+}
+function hideGifs() {
+  $('gifPanel')?.classList.add('hidden');
+  $('gifBtn')?.classList.remove('on');
+}
+async function loadGifs(reset) {
+  if (reset) { gif.page = 1; $('gifGrid').replaceChildren(); $('gifGrid').scrollTop = 0; }
+  const seq = ++gif.seq;
+  gif.loading = true;
+  $('gifNote').textContent = 'Loading…';
+  try {
+    const r = await fetch(`${gifBase()}/gif?p=${gif.p}&q=${encodeURIComponent(gif.q)}&page=${gif.page}`);
+    const d = await r.json();
+    if (seq !== gif.seq) return;
+    if (!d.ok) throw new Error(d.error || 'GIF search failed.');
+    gif.more = d.more;
+    $('gifGrid').append(...d.items.map((it) => el('button', { type: 'button', title: 'Send', onclick: () => sendGif(it.url) },
+      el('img', { src: it.preview, alt: '', loading: 'lazy', width: it.w, height: it.h }))));
+    $('gifNote').textContent = d.items.length || gif.page > 1 ? (gif.p === 'giphy' ? 'Powered by GIPHY' : 'Powered by KLIPY') : 'No GIFs found.';
+  } catch (e) {
+    if (seq === gif.seq) $('gifNote').textContent = String(e.message || e);
+  } finally {
+    if (seq === gif.seq) gif.loading = false;
+  }
+}
+async function sendGif(url) {
+  if (!S.active) return;
+  hideGifs();
+  try { await invoke('send_text', { chats: [S.active], text: url }); } catch (e) { toast(e); }
+}
+function renderGifProv() {
+  document.querySelectorAll('#gifProv button').forEach((b) => b.classList.toggle('on', b.dataset.p === gif.p));
+}
+$('gifBtn').addEventListener('click', () => {
+  const open = $('gifPanel').classList.toggle('hidden');
+  $('gifBtn').classList.toggle('on', !open);
+  if (!open) {
+    renderGifProv();
+    if (!$('gifGrid').children.length) loadGifs(true);
+    setTimeout(() => $('gifSearch').focus(), 30);
+  }
+});
+document.querySelectorAll('#gifProv button').forEach((b) => b.addEventListener('click', () => {
+  gif.p = b.dataset.p;
+  try { localStorage.setItem('uan.gifp', gif.p); } catch {}
+  renderGifProv();
+  loadGifs(true);
+}));
+let gifTimer;
+$('gifSearch').addEventListener('input', () => {
+  clearTimeout(gifTimer);
+  gifTimer = setTimeout(() => { gif.q = $('gifSearch').value.trim(); loadGifs(true); }, 350);
+});
+$('gifGrid').addEventListener('scroll', () => {
+  const g = $('gifGrid');
+  if (gif.more && !gif.loading && g.scrollTop + g.clientHeight > g.scrollHeight - 200) { gif.page++; loadGifs(false); }
+});
+document.addEventListener('mousedown', (e) => {
+  if (!$('gifPanel').classList.contains('hidden') && !e.target.closest('#gifPanel, #gifBtn')) hideGifs();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideGifs(); });
 
 async function friendAction(id, action) {
   try {
@@ -381,8 +626,31 @@ $('addForm').addEventListener('submit', async (e) => {
 async function openChat(chat, focusId) {
   S.active = chat;
   S.unread.delete(chat);
+  hideGifs();
+  if (isGroup(chat)) {
+    S.view = groupIdOf(chat);
+    S.lastChan[S.view] = chat;
+  } else {
+    S.view = 'home';
+    S.lastDm = chat;
+  }
   $('empty').classList.add('hidden');
   $('chat').classList.remove('hidden');
+  const ch = channelOf(chat);
+  const gated = !!(ch && ch.locked && !ch.unlocked);
+  $('lockGate').classList.toggle('hidden', !gated);
+  $('msgs').classList.toggle('hidden', gated);
+  $('composer').classList.toggle('hidden', gated);
+  if (gated) {
+    $('lockTitle').textContent = `# ${ch.name} is locked`;
+    $('lockErr').textContent = '';
+    $('lockPw').value = '';
+    renderChatHead();
+    renderLists();
+    $('typingBar').classList.add('hidden');
+    setTimeout(() => $('lockPw').focus(), 50);
+    return;
+  }
   renderChatHead();
   renderLists();
   renderInviteBar();
@@ -408,6 +676,7 @@ async function openChat(chat, focusId) {
 
 function closeChat() {
   S.active = null;
+  hideGifs();
   $('chat').classList.add('hidden');
   $('empty').classList.remove('hidden');
 }
@@ -415,10 +684,10 @@ function closeChat() {
 function renderChatHead() {
   const info = S.active && chatInfo(S.active);
   if (!info) return;
-  $('chatName').textContent = info.name;
+  $('chatName').textContent = info.group ? `# ${info.channelName}` : info.name;
   if (info.group) {
     const online = info.group.members.filter((m) => m.online && m.id !== S.me.id).length;
-    $('chatStatus').textContent = `${info.group.members.length} members${online ? ` · ${online} online` : ''}`;
+    $('chatStatus').textContent = `${info.name} · ${info.group.members.length} members${online ? ` · ${online} online` : ''}`;
     setAvatar($('chatAvatar'), info.name, { group: true, seed: info.group.id });
   } else {
     const mood = info.friend.status ? ` · ${info.friend.status}` : '';
@@ -454,7 +723,9 @@ function messageNode(m, showSender = true) {
   const node = el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs'), 'data-id': m.id },
     isGroup(m.chat) && !m.mine && showSender ? el('div', { class: 'sender', text: m.senderName }) : null,
     m.file ? fileCard(m.file, m.chat, m.thumb) : null,
-    m.text ? el('div', { class: 'bubble', text: m.text }) : null,
+    m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
+      : isGifUrl(m.text) ? el('img', { class: 'gif', src: m.text, alt: 'GIF', loading: 'lazy', onload: keepBottom })
+      : m.text ? el('div', { class: 'bubble', text: m.text }) : null,
     el('div', { class: 'meta' },
       el('span', { class: 'time', text: timeFmt.format(m.ts) }),
       el('button', { type: 'button', class: 'msg-del', title: 'Delete message', onclick: () => deleteMessage(m) }, svg(ICON.x))),
@@ -467,7 +738,7 @@ function seenRow(m) {
   const reads = S.reads.get(m.chat) || {};
   const who = Object.keys(reads).filter((id) => reads[id] === m.id && id !== S.me.id);
   if (!who.length) return null;
-  const group = isGroup(m.chat) ? groupById(m.chat.slice(2)) : null;
+  const group = isGroup(m.chat) ? groupOf(m.chat) : null;
   const person = (id) => (group ? group.members.find((x) => x.id === id) : friendById(id)) || friendById(id);
   const known = who.map(person).filter(Boolean);
   if (!known.length) return null;
@@ -595,7 +866,7 @@ function fileCard(file, chat, thumb) {
   const btn = el('button', { class: 'small', type: 'button', 'data-file': file.id });
   updateFileButton(btn, file, chat);
   const together = isGroup(chat) && /^video\//i.test(file.mime)
-    ? el('button', { class: 'watch', type: 'button', title: 'Watch this with others in the group, in sync', onclick: () => openPartySetup(file, chat.slice(2)) }, svg(ICON.bigplay), 'Watch together')
+    ? el('button', { class: 'watch', type: 'button', title: 'Watch this with others in the group, in sync', onclick: () => openPartySetup(file, groupIdOf(chat)) }, svg(ICON.bigplay), 'Watch together')
     : null;
   return el('div', { class: 'file' },
     preview,
@@ -725,7 +996,7 @@ function onMessage(m) {
   const isNew = list && !list.some((x) => x.id === m.id);
   if (isNew) list.push(m);
   if (isGroup(m.chat)) {
-    const g = groupById(m.chat.slice(2));
+    const g = groupOf(m.chat);
     if (g) g.lastAt = m.ts;
   } else {
     const f = friendById(m.chat);
@@ -1360,6 +1631,15 @@ $('pickForm').addEventListener('submit', async (e) => {
   } catch (err) { $('pickError').textContent = err; }
 });
 
+// Dialogs close when you click outside them (on the dimmed area around them).
+document.addEventListener('mousedown', (e) => {
+  const d = e.target;
+  if (!(d instanceof HTMLDialogElement) || !d.open) return;
+  const r = d.getBoundingClientRect();
+  const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  if (!inside) d.close();
+});
+
 // ---------- Menus ----------
 function showMenu(x, y, items) {
   const m = $('ctxMenu');
@@ -1733,7 +2013,7 @@ $('partyForm').addEventListener('submit', async (e) => {
 // Invitations show up as a bar in the group chat.
 function renderInviteBar() {
   const bar = $('inviteBar');
-  const p = [...S.parties.values()].find((x) => S.active === `g:${x.group}` && x.state !== 'ended' && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
+  const p = [...S.parties.values()].find((x) => groupIdOf(S.active) === x.group && x.state !== 'ended' && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
   bar.classList.toggle('hidden', !p);
   if (!p) return;
   const host = p.members.find((m) => m.id === p.leader)?.name || 'Someone';
@@ -2051,7 +2331,8 @@ const THEMES = [
   { id: 'mint', name: 'Mint', base: 'light', image: 'linear-gradient(135deg, #e3fff3 0%, #c9f2ff 100%)', bg: '#d8f8f8', ...GLASS_LIGHT, dialog: '#f2fffb', accent: '#0b7a5c', mine: '#0b7a5c' },
   { id: 'lavender', name: 'Lavender', base: 'light', image: 'linear-gradient(135deg, #efe7ff 0%, #dfe7ff 100%)', bg: '#e8e6ff', ...GLASS_LIGHT, dialog: '#f7f4ff', accent: '#6741d9', mine: '#6741d9' },
 ];
-const themeById = (id) => THEMES.find((t) => t.id === id) || THEMES[0];
+const SECRET = { id: 'secret', name: 'Secret', base: 'dark', ...GLASS_DARK, side: 'rgba(20, 12, 6, .82)', card: 'rgba(60, 36, 18, .9)', theirs: 'rgba(25, 15, 8, .8)', dialog: '#2a1a0e', bg: '#2a1a0e', accent: '#e8a25c', mine: '#9a4d1e', secret: true };
+const themeById = (id) => (id === 'secret' ? SECRET : THEMES.find((t) => t.id === id) || THEMES[0]);
 const theme = (() => {
   try {
     const stored = localStorage.getItem('uan.accent');
@@ -2122,6 +2403,36 @@ function setSnow(on) {
   };
   snow = { canvas, raf: requestAnimationFrame(frame) };
 }
+async function unlockSecret() {
+  let pic = await invoke('secret_picture').catch(() => null);
+  if (!pic) {
+    // Not on this PC yet: pick the picture once (it stays on this PC only).
+    const input = el('input', { type: 'file', accept: 'image/*' });
+    pic = await new Promise((resolve) => {
+      input.onchange = async () => {
+        const f = input.files[0];
+        if (!f) return resolve(null);
+        try {
+          const img = await createImageBitmap(f);
+          const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(img.width * k);
+          c.height = Math.round(img.height * k);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          const url = c.toDataURL('image/jpeg', 0.88);
+          await invoke('set_secret_picture', { jpeg: url.split(',')[1] });
+          resolve(url);
+        } catch { resolve(null); }
+      };
+      input.click();
+    });
+    if (!pic) return;
+  }
+  SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${pic}") center / cover no-repeat`;
+  setTheme('secret');
+  toast('Secret theme unlocked.');
+}
+
 function setTheme(id) {
   theme.mode = themeById(id).id;
   theme.accent = -1; // every theme starts with its own colour
@@ -2178,6 +2489,12 @@ function renderThemeTiles() {
 $('sTheme').addEventListener('change', () => setTheme($('sTheme').value));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 applyTheme();
+if (theme.mode === 'secret') {
+  invoke('secret_picture').then((pic) => {
+    if (pic) { SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${pic}") center / cover no-repeat`; applyTheme(); }
+    else setTheme('dark');
+  }).catch(() => {});
+}
 
 // ---------- App icon: a few ready-made ones ----------
 const APP_ICONS = [
@@ -2219,7 +2536,7 @@ function currentIconId() {
 async function setAppIcon(icon) {
   try {
     if (icon.id === 'default') {
-      await invoke('set_app_icon', { rgba: null });
+      await invoke('set_app_icon', { rgba: null, png: null });
     } else {
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 128;
@@ -2227,7 +2544,10 @@ async function setAppIcon(icon) {
       const data = canvas.getContext('2d').getImageData(0, 0, 128, 128).data;
       let bin = '';
       for (let i = 0; i < data.length; i += 0x8000) bin += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
-      await invoke('set_app_icon', { rgba: btoa(bin) });
+      const big = document.createElement('canvas');
+      big.width = big.height = 256;
+      drawAppIcon(big, icon);
+      await invoke('set_app_icon', { rgba: btoa(bin), png: big.toDataURL('image/png').split(',')[1] });
     }
     try { localStorage.setItem('uan.icon', icon.id); } catch {}
     S.me.customIcon = icon.id !== 'default';
@@ -2264,6 +2584,7 @@ const AVATARS = [
   { name: 'Star', from: '#818cf8', to: '#3730a3', draw: (c) => { c.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 13 : 30; const a = -Math.PI / 2 + (i * Math.PI) / 5; c.lineTo(50 + r * Math.cos(a), 52 + r * Math.sin(a)); } c.closePath(); c.fill(); } },
   { name: 'Cat', from: '#fdba74', to: '#c2410c', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 44); c.lineTo(28, 18); c.lineTo(46, 32); c.closePath(); c.fill(); c.beginPath(); c.moveTo(74, 44); c.lineTo(72, 18); c.lineTo(54, 32); c.closePath(); c.fill(); c.beginPath(); c.arc(50, 54, 26, 0, Math.PI * 2); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(40, 50, 4, 0, Math.PI * 2); c.arc(60, 50, 4, 0, Math.PI * 2); c.fill(); c.beginPath(); c.moveTo(46, 60); c.lineTo(54, 60); c.lineTo(50, 65); c.closePath(); c.fill(); } },
   { name: 'Ghost', from: '#64748b', to: '#1e293b', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 82); c.lineTo(26, 46); c.arc(50, 46, 24, Math.PI, 0); c.lineTo(74, 82); c.lineTo(66, 74); c.lineTo(58, 82); c.lineTo(50, 74); c.lineTo(42, 82); c.lineTo(34, 74); c.closePath(); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(41, 46, 4.5, 0, Math.PI * 2); c.arc(59, 46, 4.5, 0, Math.PI * 2); c.fill(); } },
+  { name: 'Mushroom', from: '#d6a36b', to: '#7a4a24', secret: true, draw: (c, bg) => { c.beginPath(); c.moveTo(18, 52); c.bezierCurveTo(18, 22, 82, 22, 82, 52); c.closePath(); c.fill(); c.beginPath(); c.moveTo(40, 52); c.lineTo(60, 52); c.lineTo(63, 80); c.quadraticCurveTo(50, 86, 37, 80); c.closePath(); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(38, 39, 4, 0, Math.PI * 2); c.arc(58, 34, 5, 0, Math.PI * 2); c.arc(68, 46, 3, 0, Math.PI * 2); c.fill(); } },
   { name: 'Game', from: '#f472b6', to: '#7c3aed', draw: (c, bg) => { c.beginPath(); c.roundRect(16, 34, 68, 36, 18); c.fill(); c.fillStyle = bg; c.fillRect(30, 49, 14, 5); c.fillRect(34.5, 44.5, 5, 14); c.beginPath(); c.arc(62, 47, 3.5, 0, Math.PI * 2); c.arc(70, 56, 3.5, 0, Math.PI * 2); c.fill(); } },
 ];
 function drawAvatar(canvas, a) {
@@ -2287,12 +2608,18 @@ function renderAvatarTiles() {
   $('sAvatars').replaceChildren(...AVATARS.map((a) => {
     const canvas = el('canvas', { width: 72, height: 72 });
     drawAvatar(canvas, a);
+    let clicks = [];
     return el('button', { type: 'button', title: a.name, onclick: () => {
       const big = document.createElement('canvas');
       big.width = big.height = 160;
       drawAvatar(big, a);
       pendingAvatar = big.toDataURL('image/jpeg', 0.9);
       renderAvatarPick();
+      if (a.secret) {
+        const now = Date.now();
+        clicks = [...clicks.filter((t) => now - t < 900), now];
+        if (clicks.length >= 3) { clicks = []; unlockSecret(); }
+      }
     } }, canvas);
   }));
 }

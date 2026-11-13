@@ -19,7 +19,16 @@
 
   <!-- Main -->
   <div id="main" class="main hidden">
-    <aside class="side">
+    <nav id="rail" class="rail">
+      <button type="button" id="railHome" class="rail-btn home" title="Friends and direct messages"><img src="icon.png" alt=""></button>
+      <div class="rail-sep"></div>
+      <div id="railGroups" class="rail-groups"></div>
+      <button type="button" id="railAdd" class="rail-btn add" title="Create a group"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    </nav>
+    <aside class="side" id="side">
+      <div id="sideGroupHead" class="side-group-head">
+        <button type="button" id="sideGroupName" class="side-group-name"><span id="sideGroupText" class="ellipsis"></span><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+      </div>
       <div class="me">
         <div class="avatar" id="meAvatar"></div>
         <div class="grow">
@@ -50,10 +59,16 @@
           <div class="cap">Friend requests</div>
           <ul id="reqList" class="list"></ul>
         </div>
-        <div class="cap cap-row">Groups <button class="icon tiny" id="newGroupBtn" title="Create a group"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        <div id="chanSec">
+          <div class="cap cap-row">Channels <button class="icon tiny" id="addChanBtn" title="Create a channel"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+          <ul id="chanList" class="list chans"></ul>
+          <div class="cap">Members</div>
+          <ul id="memberList" class="list members-side"></ul>
+        </div>
+        <div class="cap cap-row" id="groupsCap">Groups <button class="icon tiny" id="newGroupBtn" title="Create a group"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
         <ul id="groupList" class="list"></ul>
         <div id="noGroups" class="note pad">No groups yet.</div>
-        <div class="cap">Friends</div>
+        <div class="cap" id="friendsCap">Friends</div>
         <ul id="friendList" class="list"></ul>
         <div id="noFriends" class="note pad">No friends yet. Send your friend code to someone, or paste theirs above.</div>
         <div id="outSec" class="hidden">
@@ -85,17 +100,37 @@
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           </button>
         </header>
+        <div id="chanTabs" class="chan-tabs hidden"></div>
         <div id="inviteBar" class="invite-bar hidden"></div>
+        <div id="lockGate" class="lock-gate hidden">
+          <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <div class="strong" id="lockTitle">This channel is locked</div>
+          <div class="note">Enter its password to read and write here. Messages in it are encrypted with this password.</div>
+          <form id="lockForm" class="lock-form">
+            <input id="lockPw" type="password" placeholder="Password" autocomplete="off">
+            <button class="accent">Unlock</button>
+          </form>
+          <div id="lockErr" class="error"></div>
+        </div>
         <div id="msgs" class="msgs"></div>
         <div id="typingBar" class="typing hidden"><span class="dots"><i></i><i></i><i></i></span><span id="typingText"></span></div>
         <form id="composer" class="composer">
           <button type="button" class="icon" id="attachBtn" title="Send files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
           </button>
+          <button type="button" class="icon gif-btn" id="gifBtn" title="GIFs">GIF</button>
           <input id="msgInput" placeholder="Message" autocomplete="off" maxlength="5000">
           <button class="accent" id="sendBtn">Send</button>
         </form>
         <div id="drop" class="drop hidden">Drop to send</div>
+        <div id="gifPanel" class="gif-panel hidden">
+          <div class="gif-top">
+            <div class="seg" id="gifProv"><button type="button" data-p="giphy">GIPHY</button><button type="button" data-p="klipy">KLIPY</button></div>
+            <input id="gifSearch" placeholder="Search GIFs" autocomplete="off" spellcheck="false">
+          </div>
+          <div id="gifGrid" class="gif-grid"></div>
+          <div id="gifNote" class="note gif-note"></div>
+        </div>
       </div>
       <div id="transfers" class="transfers hidden">
         <button id="trHead" class="tr-head" type="button"><span id="trTitle">Downloads</span><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
@@ -222,6 +257,8 @@
         <select id="sTheme" class="hidden"></select>
         <div class="tiles themes" id="sThemes"></div>
         <div class="swatches" id="sAccent"></div>
+        <div class="sub-title">Layout</div>
+        <div class="seg" id="sLayout"><button type="button" data-layout="modern">New</button><button type="button" data-layout="legacy">Legacy (classic)</button></div>
         <div class="sub-title">App icon</div>
         <div class="tiles icons" id="sIcons"></div>
         <div class="note">Changes the icon of the window, the taskbar and the tray. The desktop shortcut keeps the original.</div>
@@ -306,6 +343,21 @@
         <button value="no">Cancel</button>
         <button value="me" id="delMe">Delete for me</button>
         <button value="all" class="accent" id="delAll">Delete for everyone</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="chanDlg">
+    <form id="chanForm" method="dialog">
+      <h2>New channel</h2>
+      <label>Name<input id="chanName" maxlength="32" placeholder="e.g. films" spellcheck="false" autocomplete="off"></label>
+      <label class="check"><input type="checkbox" id="chanLock"> Lock with a password</label>
+      <input id="chanPw" type="password" placeholder="Password" class="hidden" autocomplete="off">
+      <div class="note" id="chanNote">Everyone in the group can see and use it.</div>
+      <div id="chanErr" class="error"></div>
+      <div class="actions">
+        <span class="grow"></span>
+        <button type="button" id="chanCancel">Cancel</button>
+        <button class="accent">Create</button>
       </div>
     </form>
   </dialog>

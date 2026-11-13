@@ -108,6 +108,10 @@ pub struct HistMsg {
     pub ts: i64,
     #[serde(default)]
     pub thumb: Option<String>,
+    #[serde(default)]
+    pub channel: Option<String>,
+    #[serde(default)]
+    pub sealed: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -117,6 +121,72 @@ pub struct WireGroup {
     pub owner: String,
     pub version: i64,
     pub members: Vec<Member>,
+    /// Extra channels besides the main one ("general"). Older versions don't know them.
+    #[serde(default)]
+    pub channels: Vec<Channel>,
+}
+
+/// A channel in a group. `check` is set for password-locked channels: their messages are encrypted
+/// with a key made from the password, so only people who know it can read them.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Channel {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub check: Option<String>,
+}
+
+/// "g:<group>" -> (group, None); "g:<group>#<channel>" -> (group, Some(channel)).
+pub fn split_chat(chat: &str) -> Option<(&str, Option<&str>)> {
+    let g = chat.strip_prefix("g:")?;
+    Some(match g.split_once('#') {
+        Some((g, c)) => (g, Some(c)),
+        None => (g, None),
+    })
+}
+
+fn chat_id(group: &str, channel: Option<&str>) -> String {
+    match channel {
+        Some(c) => format!("g:{group}#{c}"),
+        None => format!("g:{group}"),
+    }
+}
+
+/// The key of a locked channel, made from its password (slow on purpose, against guessing).
+fn channel_key(group: &str, channel: &str, password: &str) -> [u8; 32] {
+    let mut h: [u8; 32] = Sha256::digest(format!("uan-channel:{group}#{channel}:{password}").as_bytes()).into();
+    for _ in 0..100_000 {
+        h = Sha256::digest(h).into();
+    }
+    h
+}
+
+fn key_check(key: &[u8; 32]) -> String {
+    let mut d = Sha256::new();
+    d.update(b"uan-check:");
+    d.update(key);
+    HEXLOWER.encode(&d.finalize()[..12])
+}
+
+fn channel_box(key: &[u8; 32]) -> SalsaBox {
+    let sk = crypto_box::SecretKey::from(*key);
+    SalsaBox::new(&sk.public_key(), &sk)
+}
+
+fn seal_with(key: &[u8; 32], plain: &[u8]) -> Result<String, String> {
+    let nonce = SalsaBox::generate_nonce(&mut OsRng);
+    let ct = channel_box(key).encrypt(&nonce, plain).map_err(|_| "Encryption failed.".to_string())?;
+    let mut out = nonce.to_vec();
+    out.extend_from_slice(&ct);
+    Ok(BASE64.encode(&out))
+}
+
+fn open_with(key: &[u8; 32], sealed: &str) -> Option<Vec<u8>> {
+    let raw = BASE64.decode(sealed.as_bytes()).ok()?;
+    if raw.len() < 24 {
+        return None;
+    }
+    channel_box(key).decrypt(crypto_box::Nonce::from_slice(&raw[..24]), &raw[24..]).ok()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -127,6 +197,11 @@ pub struct WireMsg {
     pub text: Option<String>,
     pub file: Option<FileMeta>,
     pub ts: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// Locked channels: text and file, encrypted with the channel's key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -156,16 +231,27 @@ pub enum Req {
     /// A member asks the group's creator to add people.
     GroupInvite { group_id: String, members: Vec<Member> },
     /// The group's creator cleared the group's messages for everyone (those sent until `before`).
-    ClearGroup { group_id: String, before: i64 },
+    ClearGroup {
+        group_id: String,
+        before: i64,
+        #[serde(default)]
+        channel: Option<String>,
+    },
+    /// A member asks the group's creator to add a channel.
+    ChannelAdd { group_id: String, channel: Channel },
     /// "… is typing" (never stored; only sent while both are online).
     Typing {
         #[serde(default)]
         group: Option<String>,
+        #[serde(default)]
+        channel: Option<String>,
     },
     /// The sender has seen the chat up to this message.
     Seen {
         #[serde(default)]
         group: Option<String>,
+        #[serde(default)]
+        channel: Option<String>,
         msg_id: String,
     },
     /// A small preview picture for a photo or video someone sent.
@@ -521,6 +607,8 @@ impl Node {
         db.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())).map_err(e2s)?;
         db.execute_batch(SCHEMA).map_err(e2s)?;
         let _ = db.execute("ALTER TABLE downloads ADD COLUMN chat TEXT", []); // older databases
+        let _ = db.execute("ALTER TABLE groups ADD COLUMN channels TEXT", []);
+        let _ = db.execute("ALTER TABLE messages ADD COLUMN sealed TEXT", []);
 
         // Bigger flow-control windows than the defaults (sized for ~100 Mbit/s at 100 ms), so films
         // also go fast between far-away PCs with high latency.
@@ -728,6 +816,16 @@ impl Node {
                 return Err("Not your file.".into());
             }
             let _ = db.execute("INSERT OR REPLACE INTO thumbs (file_id, data) VALUES (?1, ?2)", [file_id, data]);
+            // Files sent only in locked channels keep their preview here (it would not be encrypted).
+            let open = db
+                .query_row("SELECT 1 FROM messages WHERE json_extract(file, '$.id') = ?1 LIMIT 1", [file_id], |_| Ok(()))
+                .optional()
+                .ok()
+                .flatten()
+                .is_some();
+            if !open {
+                return Ok(());
+            }
             let mut stmt = db.prepare("SELECT who FROM file_access WHERE file_id = ?1").map_err(e2s)?;
             let rows = stmt.query_map([file_id], |r| r.get::<_, String>(0)).map_err(e2s)?;
             rows.filter_map(Result::ok).collect()
@@ -1377,12 +1475,15 @@ impl Node {
                     }
                 }
                 let text = msg.text.as_ref().map(|t| t.chars().take(5000).collect::<String>());
+                if msg.sealed.as_ref().is_some_and(|s| s.len() > 200_000) || msg.channel.as_ref().is_some_and(|c| c.len() > 64 || c.contains('#')) {
+                    return Err("Invalid message.".into());
+                }
                 let chat = match &msg.group {
                     Some(g) => {
                         if !self.is_member(g, peer) || !self.is_member(g, &self.me_s) {
                             return Err("You are not in that group.".into());
                         }
-                        format!("g:{g}")
+                        chat_id(g, msg.channel.as_deref())
                     }
                     None => {
                         if self.contact_status(peer).as_deref() != Some("friend") {
@@ -1392,7 +1493,7 @@ impl Node {
                     }
                 };
                 let name: String = msg.name.chars().take(32).collect();
-                let inserted = self.store_message(&msg.id, &chat, peer, &name, text.as_deref(), msg.file.as_ref(), msg.ts);
+                let inserted = self.store_message(&msg.id, &chat, peer, &name, text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref());
                 if inserted {
                     self.update_name(peer, &name);
                     if let Some(f) = &msg.file {
@@ -1468,9 +1569,12 @@ impl Node {
                         let name: String = m.name.chars().take(32).collect();
                         let file_json = m.file.as_ref().map(|f| serde_json::to_string(f).unwrap());
                         let _ = db.execute(
-                            "INSERT OR IGNORE INTO messages (seq, id, chat, sender, sender_name, text, file, ts) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                            params![base + i as i64, m.id, chat, m.sender, name, text, file_json, m.ts],
+                            "INSERT OR IGNORE INTO messages (seq, id, chat, sender, sender_name, text, file, ts, sealed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            params![base + i as i64, m.id, chat_id(&group_id, m.channel.as_deref()), m.sender, name, text, file_json, m.ts, m.sealed],
                         );
+                        if m.sealed.as_ref().is_some_and(|s| s.len() > 200_000) || m.channel.as_ref().is_some_and(|c| c.len() > 64 || c.contains('#')) {
+                            continue;
+                        }
                         if let (Some(f), Some(t)) = (&m.file, &m.thumb) {
                             if t.len() <= 300_000 && t.starts_with('{') {
                                 let _ = db.execute("INSERT OR IGNORE INTO thumbs (file_id, data) VALUES (?1, ?2)", [&f.id, t]);
@@ -1481,11 +1585,18 @@ impl Node {
                 self.emit("history", json!({ "chat": chat }));
                 Ok(ok)
             }
-            Req::ClearGroup { group_id, before } => {
+            Req::ClearGroup { group_id, before, channel } => {
                 if self.group_owner(&group_id).as_deref() != Some(peer) {
                     return Err("Not allowed.".into());
                 }
-                self.clear_local(&format!("g:{group_id}"), before);
+                self.clear_local(&chat_id(&group_id, channel.as_deref()), before);
+                Ok(ok)
+            }
+            Req::ChannelAdd { group_id, channel } => {
+                if self.group_owner(&group_id).as_deref() != Some(self.me_s.as_str()) || !self.is_member(&group_id, peer) {
+                    return Err("Not allowed.".into());
+                }
+                self.add_channel_local(&group_id, channel)?;
                 Ok(ok)
             }
             Req::GroupInvite { group_id, members } => {
@@ -1501,14 +1612,22 @@ impl Node {
                 self.add_members(&group_id, &fresh);
                 Ok(ok)
             }
-            Req::Typing { group } => {
+            Req::Typing { group, channel } => {
                 let chat = self.chat_of(peer, group.as_deref())?;
+                let chat = match (&group, &channel) {
+                    (Some(g), Some(c)) => chat_id(g, Some(c)),
+                    _ => chat,
+                };
                 let name = self.peer_name(peer);
                 self.emit("typing", json!({ "chat": chat, "who": peer, "name": name }));
                 Ok(ok)
             }
-            Req::Seen { group, msg_id } => {
+            Req::Seen { group, channel, msg_id } => {
                 let chat = self.chat_of(peer, group.as_deref())?;
+                let chat = match (&group, &channel) {
+                    (Some(g), Some(c)) => chat_id(g, Some(c)),
+                    _ => chat,
+                };
                 if msg_id.len() > 64 {
                     return Err("Bad message.".into());
                 }
@@ -1627,24 +1746,38 @@ impl Node {
         self.emit("contacts", Value::Null);
     }
 
-    fn store_message(&self, id: &str, chat: &str, sender: &str, name: &str, text: Option<&str>, file: Option<&FileMeta>, ts: i64) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    fn store_message(&self, id: &str, chat: &str, sender: &str, name: &str, text: Option<&str>, file: Option<&FileMeta>, ts: i64, sealed: Option<&str>) -> bool {
         let file_json = file.map(|f| serde_json::to_string(f).unwrap());
         let n = self
             .db
             .lock()
             .unwrap()
             .execute(
-                "INSERT OR IGNORE INTO messages (id, chat, sender, sender_name, text, file, ts) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![id, chat, sender, name, text, file_json, ts],
+                "INSERT OR IGNORE INTO messages (id, chat, sender, sender_name, text, file, ts, sealed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![id, chat, sender, name, text, file_json, ts, sealed],
             )
             .unwrap_or(0);
         if n > 0 {
-            self.emit(
-                "message",
-                json!({ "id": id, "chat": chat, "sender": sender, "senderName": name, "text": text, "file": file, "ts": ts, "mine": sender == self.me_s }),
-            );
+            let mut m = json!({ "id": id, "chat": chat, "sender": sender, "senderName": name, "text": text, "file": file, "ts": ts, "mine": sender == self.me_s });
+            if let Some(sl) = sealed {
+                self.open_sealed(chat, sl, &mut m);
+            }
+            self.emit("message", m);
         }
         n > 0
+    }
+
+    /// Fills in text/file of a locked-channel message if we know the channel's password, else marks it locked.
+    fn open_sealed(&self, chat: &str, sealed: &str, m: &mut Value) {
+        let key = self.kv(&format!("chkey:{chat}")).and_then(|k| HEXLOWER.decode(k.as_bytes()).ok()).and_then(|k| <[u8; 32]>::try_from(k).ok());
+        match key.and_then(|k| open_with(&k, sealed)).and_then(|p| serde_json::from_slice::<Value>(&p).ok()) {
+            Some(inner) => {
+                m["text"] = inner["text"].clone();
+                m["file"] = inner["file"].clone();
+            }
+            None => m["locked"] = json!(true),
+        }
     }
 
     // ----- Groups -----
@@ -1659,27 +1792,28 @@ impl Node {
 
     fn load_group(&self, g: &str) -> Option<WireGroup> {
         let db = self.db.lock().unwrap();
-        let (name, owner, version): (String, String, i64) = db
-            .query_row("SELECT name, owner, version FROM groups WHERE id = ?1", [g], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        let (name, owner, version, channels): (String, String, i64, Option<String>) = db
+            .query_row("SELECT name, owner, version, channels FROM groups WHERE id = ?1", [g], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .optional()
             .ok()
             .flatten()?;
+        let channels: Vec<Channel> = channels.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
         let mut stmt = db.prepare("SELECT member_id, name FROM group_members WHERE group_id = ?1 ORDER BY name").ok()?;
         let members = stmt
             .query_map([g], |r| Ok(Member { id: r.get(0)?, name: r.get(1)? }))
             .ok()?
             .filter_map(Result::ok)
             .collect();
-        Some(WireGroup { id: g.to_string(), name, owner, version, members })
+        Some(WireGroup { id: g.to_string(), name, owner, version, members, channels })
     }
 
     fn save_group(&self, g: &WireGroup) {
         {
             let db = self.db.lock().unwrap();
             let _ = db.execute(
-                "INSERT INTO groups (id, name, owner, version) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, owner = excluded.owner, version = excluded.version",
-                params![g.id, g.name, g.owner, g.version],
+                "INSERT INTO groups (id, name, owner, version, channels) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, owner = excluded.owner, version = excluded.version, channels = excluded.channels",
+                params![g.id, g.name, g.owner, g.version, serde_json::to_string(&g.channels).unwrap()],
             );
             let _ = db.execute("DELETE FROM group_members WHERE group_id = ?1", [&g.id]);
             for m in &g.members {
@@ -1722,7 +1856,7 @@ impl Node {
             let n = self.friend_name(id).ok_or("You can only add your friends.")?;
             members.push(Member { id: id.clone(), name: n });
         }
-        let group = WireGroup { id: new_id(), name: name.to_string(), owner: self.me_s.clone(), version: 1, members };
+        let group = WireGroup { id: new_id(), name: name.to_string(), owner: self.me_s.clone(), version: 1, members, channels: vec![] };
         self.save_group(&group);
         let req = Req::Group { group: group.clone() };
         for m in &group.members {
@@ -1867,14 +2001,27 @@ impl Node {
                 _ => {}
             }
         }
-        let mut stmt = db.prepare("SELECT id, name, owner, (SELECT MAX(ts) FROM messages WHERE chat = 'g:' || groups.id) FROM groups").unwrap();
-        let groups_raw: Vec<(String, String, String, Option<i64>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        let mut stmt = db
+            .prepare("SELECT id, name, owner, (SELECT MAX(ts) FROM messages WHERE chat = 'g:' || groups.id OR chat LIKE 'g:' || groups.id || '#%'), channels FROM groups")
+            .unwrap();
+        let groups_raw: Vec<(String, String, String, Option<i64>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
         let mut groups = vec![];
-        for (id, name, owner, last) in groups_raw {
+        for (id, name, owner, last, channels) in groups_raw {
+            let channels: Vec<Channel> = channels.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
+            let channels: Vec<Value> = channels
+                .iter()
+                .map(|c| {
+                    let chat = chat_id(&id, Some(&c.id));
+                    // (the database is already locked here, so read the key through it)
+                    let unlocked = c.check.is_some()
+                        && db.query_row("SELECT 1 FROM kv WHERE k = ?1", [format!("chkey:{chat}")], |_| Ok(())).optional().ok().flatten().is_some();
+                    json!({ "id": c.id, "name": c.name, "chat": chat, "locked": c.check.is_some(), "unlocked": unlocked })
+                })
+                .collect();
             let mut ms = db
                 .prepare("SELECT m.member_id, m.name, p.avatar, p.status FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
                 .unwrap();
@@ -1884,7 +2031,7 @@ impl Node {
                 .filter_map(Result::ok)
                 .map(|(mid, mname, avatar, mood)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "avatar": avatar, "status": mood.unwrap_or_default() }))
                 .collect();
-            groups.push(json!({ "id": id, "name": name, "owner": owner, "members": members, "lastAt": last }));
+            groups.push(json!({ "id": id, "name": name, "owner": owner, "members": members, "lastAt": last, "channels": channels }));
         }
         json!({ "friends": friends, "incoming": incoming, "outgoing": outgoing, "groups": groups })
     }
@@ -1894,13 +2041,13 @@ impl Node {
     pub fn messages(&self, chat: &str, limit: usize) -> Vec<Value> {
         let db = self.db.lock().unwrap();
         let mut stmt = db
-            .prepare("SELECT id, chat, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id')) FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT ?2")
+            .prepare("SELECT id, chat, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id')), sealed FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT ?2")
             .unwrap();
-        let mut rows: Vec<Value> = stmt
+        let mut rows: Vec<(Value, Option<String>)> = stmt
             .query_map(params![chat, limit.clamp(1, 20000) as i64], |r| {
                 let sender: String = r.get(2)?;
                 let file: Option<String> = r.get(5)?;
-                Ok(json!({
+                Ok((json!({
                     "id": r.get::<_, String>(0)?,
                     "chat": r.get::<_, String>(1)?,
                     "sender": sender,
@@ -1910,13 +2057,110 @@ impl Node {
                     "ts": r.get::<_, i64>(6)?,
                     "thumb": r.get::<_, Option<String>>(7)?.and_then(|t| serde_json::from_str::<Value>(&t).ok()),
                     "mine": sender == self.me_s,
-                }))
+                }), r.get::<_, Option<String>>(8)?))
             })
             .unwrap()
             .filter_map(Result::ok)
             .collect();
+        drop(stmt);
+        drop(db);
         rows.reverse();
-        rows
+        rows.into_iter()
+            .map(|(mut m, sealed)| {
+                if let Some(sl) = sealed {
+                    self.open_sealed(chat, &sl, &mut m);
+                }
+                m
+            })
+            .collect()
+    }
+
+    /// Adds a channel to a group we created and tells everyone.
+    fn add_channel_local(self: &Arc<Self>, g: &str, channel: Channel) -> Result<(), String> {
+        let mut group = self.load_group(g).ok_or("That group no longer exists.")?;
+        let name: String = channel.name.trim().trim_start_matches('#').chars().take(32).collect();
+        if name.is_empty() || channel.id.is_empty() || channel.id.len() > 40 || channel.id.contains('#') {
+            return Err("Give the channel a name.".into());
+        }
+        if group.channels.len() >= 50 || group.channels.iter().any(|c| c.id == channel.id) {
+            return Ok(());
+        }
+        group.channels.push(Channel { id: channel.id, name, check: channel.check.filter(|c| c.len() <= 64) });
+        self.save_group(&group);
+        self.bump_and_broadcast(g, &[]);
+        Ok(())
+    }
+
+    /// Creates a channel (the group's creator adds it; others ask the creator). With a password, it is locked.
+    pub fn create_channel(self: &Arc<Self>, g: &str, name: &str, password: Option<&str>) -> Result<String, String> {
+        let group = self.load_group(g).ok_or("That group no longer exists.")?;
+        if !group.members.iter().any(|m| m.id == self.me_s) {
+            return Err("You are not in that group.".into());
+        }
+        let name = name.trim().trim_start_matches('#').trim();
+        if name.is_empty() || name.chars().count() > 32 {
+            return Err("Give the channel a name (up to 32 characters).".into());
+        }
+        let id = new_id()[..12].to_string();
+        let mut check = None;
+        if let Some(pw) = password.map(str::trim).filter(|p| !p.is_empty()) {
+            let key = channel_key(g, &id, pw);
+            check = Some(key_check(&key));
+            self.set_kv(&format!("chkey:{}", chat_id(g, Some(&id))), &HEXLOWER.encode(&key));
+        }
+        let channel = Channel { id: id.clone(), name: name.to_string(), check };
+        if group.owner == self.me_s {
+            self.add_channel_local(g, channel)?;
+        } else {
+            self.deliver(&group.owner, &Req::ChannelAdd { group_id: g.to_string(), channel });
+        }
+        Ok(chat_id(g, Some(&id)))
+    }
+
+    /// Renames or deletes a channel (the group's creator only).
+    pub fn channel_action(self: &Arc<Self>, g: &str, channel: &str, action: &str, name: &str) -> Result<(), String> {
+        let mut group = self.load_group(g).ok_or("That group no longer exists.")?;
+        if group.owner != self.me_s {
+            return Err("Only the group's creator can do that.".into());
+        }
+        match action {
+            "rename" => {
+                let name: String = name.trim().trim_start_matches('#').trim().chars().take(32).collect();
+                if name.is_empty() {
+                    return Err("Give the channel a name.".into());
+                }
+                if let Some(c) = group.channels.iter_mut().find(|c| c.id == channel) {
+                    c.name = name;
+                }
+            }
+            "delete" => group.channels.retain(|c| c.id != channel),
+            _ => return Err("Unknown action.".into()),
+        }
+        self.save_group(&group);
+        self.bump_and_broadcast(g, &[]);
+        Ok(())
+    }
+
+    /// Enters a locked channel: checks the password and remembers the key on this PC.
+    pub fn unlock_channel(&self, chat: &str, password: &str) -> Result<(), String> {
+        let (g, c) = split_chat(chat).ok_or("Not a channel.")?;
+        let c = c.ok_or("Not a channel.")?;
+        let group = self.load_group(g).ok_or("That group no longer exists.")?;
+        let ch = group.channels.iter().find(|x| x.id == c).ok_or("That channel no longer exists.")?;
+        let check = ch.check.as_deref().ok_or("This channel isn't locked.")?;
+        let key = channel_key(g, c, password.trim());
+        if key_check(&key) != check {
+            return Err("Wrong password.".into());
+        }
+        self.set_kv(&format!("chkey:{chat}"), &HEXLOWER.encode(&key));
+        self.emit("contacts", Value::Null);
+        Ok(())
+    }
+
+    /// Locks a channel again on this PC (forgets its key).
+    pub fn forget_channel(&self, chat: &str) {
+        let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = ?1", [format!("chkey:{chat}")]);
+        self.emit("contacts", Value::Null);
     }
 
     /// The chat a request from `peer` belongs to: their direct chat, or a group both of us are in.
@@ -1964,12 +2208,12 @@ impl Node {
     pub fn clear_chat(self: &Arc<Self>, chat: &str, everyone: bool) -> Result<(), String> {
         let before = now();
         if everyone {
-            let g = chat.strip_prefix("g:").ok_or("Only groups can be cleared for everyone.")?;
+            let (g, channel) = split_chat(chat).ok_or("Only groups can be cleared for everyone.")?;
             let group = self.load_group(g).ok_or("That group no longer exists.")?;
             if group.owner != self.me_s {
                 return Err("Only the group's creator can clear it for everyone.".into());
             }
-            let req = Req::ClearGroup { group_id: g.to_string(), before };
+            let req = Req::ClearGroup { group_id: g.to_string(), before, channel: channel.map(str::to_string) };
             for m in &group.members {
                 self.deliver(&m.id, &req);
             }
@@ -1994,7 +2238,8 @@ impl Node {
             return;
         }
         let Ok((group, targets)) = self.chat_targets(chat) else { return };
-        let req = Req::Typing { group };
+        let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
+        let req = Req::Typing { group, channel };
         for t in targets {
             if self.is_online(&t) && self.speaks(&t, 2) {
                 let (me, req) = (self.clone(), req.clone());
@@ -2040,7 +2285,10 @@ impl Node {
             rows.filter_map(Result::ok).collect()
         };
         for (chat, msg_id) in mine {
-            let group = chat.strip_prefix("g:").map(str::to_string);
+            let (group, channel) = match split_chat(&chat) {
+                Some((g, c)) => (Some(g.to_string()), c.map(str::to_string)),
+                None => (None, None),
+            };
             let shared = match &group {
                 Some(g) => self.is_member(g, peer) && self.is_member(g, &self.me_s),
                 None => chat == peer,
@@ -2053,7 +2301,7 @@ impl Node {
             self.reads_sent.lock().unwrap().insert(key.clone(), msg_id.clone());
             let (me, peer) = (self.clone(), peer.to_string());
             tauri::async_runtime::spawn(async move {
-                if me.request(&peer, &Req::Seen { group, msg_id: msg_id.clone() }).await.is_err() {
+                if me.request(&peer, &Req::Seen { group, channel, msg_id: msg_id.clone() }).await.is_err() {
                     let mut sent = me.reads_sent.lock().unwrap();
                     if sent.get(&key) == Some(&msg_id) {
                         sent.remove(&key);
@@ -2097,7 +2345,7 @@ impl Node {
             let mut stmt = db
                 .prepare(
                     "SELECT id, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id'))
-                     FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT 300",
+                     , chat, sealed FROM messages WHERE chat = ?1 OR chat LIKE ?1 || '#%' ORDER BY seq DESC LIMIT 300",
                 )
                 .unwrap();
             let rows = stmt
@@ -2110,6 +2358,8 @@ impl Node {
                         file: r.get::<_, Option<String>>(4)?.and_then(|f| serde_json::from_str(&f).ok()),
                         ts: r.get(5)?,
                         thumb: r.get(6)?,
+                        channel: split_chat(&r.get::<_, String>(7)?).and_then(|(_, c)| c).map(str::to_string),
+                        sealed: r.get(8)?,
                     })
                 })
                 .unwrap();
@@ -2200,7 +2450,7 @@ impl Node {
 
     /// Recipients of a chat id: a friend's id, or "g:<group>" for everyone in the group.
     fn chat_targets(&self, chat: &str) -> Result<(Option<String>, Vec<String>), String> {
-        if let Some(g) = chat.strip_prefix("g:") {
+        if let Some((g, _)) = split_chat(chat) {
             let group = self.load_group(g).ok_or("That group no longer exists.")?;
             if !group.members.iter().any(|m| m.id == self.me_s) {
                 return Err("You are not in that group.".into());
@@ -2222,11 +2472,28 @@ impl Node {
         let name = self.my_name();
         for chat in chats {
             let (group, targets) = self.chat_targets(chat)?;
-            let msg = WireMsg { id: new_id(), group, name: name.clone(), text: text.clone(), file: file.clone(), ts: now() };
-            if let Some(f) = &file {
-                let _ = self.db.lock().unwrap().execute("INSERT OR IGNORE INTO file_access (file_id, who) VALUES (?1, ?2)", [&f.id, chat]);
+            let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
+            let mut msg = WireMsg { id: new_id(), group: group.clone(), name: name.clone(), text: text.clone(), file: file.clone(), ts: now(), channel: channel.clone(), sealed: None };
+            // Locked channel: text and file are encrypted with the channel's key.
+            if let (Some(g), Some(c)) = (&group, &channel) {
+                let locked = self.load_group(g).and_then(|gr| gr.channels.into_iter().find(|x| x.id == *c)).and_then(|x| x.check).is_some();
+                if locked {
+                    let key = self
+                        .kv(&format!("chkey:{chat}"))
+                        .and_then(|k| HEXLOWER.decode(k.as_bytes()).ok())
+                        .and_then(|k| <[u8; 32]>::try_from(k).ok())
+                        .ok_or("Unlock this channel with its password first.")?;
+                    let plain = serde_json::to_vec(&json!({ "text": msg.text, "file": msg.file })).map_err(e2s)?;
+                    msg.sealed = Some(seal_with(&key, &plain)?);
+                    msg.text = None;
+                    msg.file = None;
+                }
             }
-            self.store_message(&msg.id, chat, &self.me_s, &name, msg.text.as_deref(), msg.file.as_ref(), msg.ts);
+            if let Some(f) = &file {
+                let base = group.as_ref().map(|g| format!("g:{g}")).unwrap_or_else(|| chat.clone());
+                let _ = self.db.lock().unwrap().execute("INSERT OR IGNORE INTO file_access (file_id, who) VALUES (?1, ?2)", [&f.id, &base]);
+            }
+            self.store_message(&msg.id, chat, &self.me_s, &name, msg.text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref());
             let req = Req::Msg { msg };
             for t in targets {
                 self.deliver(&t, &req);
@@ -2285,7 +2552,7 @@ impl Node {
     // ----- Serving files: our own files, and in groups also what we downloaded (even partly) -----
 
     fn in_group_chat(&self, chat: &str, peer: &str) -> bool {
-        chat.strip_prefix("g:").map(|g| self.is_member(g, peer)).unwrap_or(false)
+        split_chat(chat).map(|(g, _)| self.is_member(g, peer)).unwrap_or(false)
     }
 
     fn source_for(&self, peer: &str, file_id: &str) -> Option<Source> {
@@ -2454,7 +2721,7 @@ impl Node {
             push(seeder.clone(), &mut v);
         }
         push(file.owner.clone(), &mut v);
-        let group = chat.strip_prefix("g:").map(str::to_string).or(party_group.map(|(_, g)| g));
+        let group = split_chat(chat).map(|(g, _)| g.to_string()).or(party_group.map(|(_, g)| g));
         if let Some(g) = group {
             if let Some(group) = self.load_group(&g) {
                 for m in group.members {

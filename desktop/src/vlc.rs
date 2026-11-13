@@ -119,6 +119,10 @@ fn free_port() -> Option<u16> {
 impl Vlc {
     /// Starts VLC on `url`. With `paused`, it waits for watch together to start the film.
     pub fn open(&self, url: &str, title: &str, paused: bool) -> Result<String, String> {
+        // Invisible test runs never open VLC (it would pop up on the screen).
+        if std::env::var_os("UAN_INVISIBLE").is_some() {
+            return Err("VLC is off in test mode.".into());
+        }
         let (program, mut args) = find().ok_or("VLC isn't installed on this computer.")?;
         let port = free_port().ok_or("No free port for VLC.")?;
         let password = uuid::Uuid::new_v4().simple().to_string();

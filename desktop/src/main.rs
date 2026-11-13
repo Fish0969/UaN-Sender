@@ -479,8 +479,9 @@ fn reads(node: State<'_, Arc<Node>>, chat: String) -> Value {
 /// Sets the app icon (window, taskbar and tray) to a picture drawn by the window: base64 of raw RGBA,
 /// 128 x 128. None goes back to the built-in icon.
 #[tauri::command]
-fn set_app_icon(app: AppHandle, profile: State<'_, Profile>, rgba: Option<String>) -> CmdResult<()> {
+fn set_app_icon(app: AppHandle, profile: State<'_, Profile>, rgba: Option<String>, png: Option<String>) -> CmdResult<()> {
     let path = profile.dir.join("appicon.rgba");
+    let ico = profile.dir.join("appicon.ico");
     match rgba {
         Some(b64) => {
             let raw = data_encoding::BASE64.decode(b64.as_bytes()).map_err(|e| e.to_string())?;
@@ -488,13 +489,96 @@ fn set_app_icon(app: AppHandle, profile: State<'_, Profile>, rgba: Option<String
                 return Err("Unexpected icon size.".into());
             }
             std::fs::write(&path, raw).map_err(|e| e.to_string())?;
+            // A 256 px .ico for the shortcuts (desktop, Start menu, pinned on the taskbar).
+            if let Some(png) = png.and_then(|p| data_encoding::BASE64.decode(p.as_bytes()).ok()).filter(|p| p.starts_with(b"\x89PNG")) {
+                let mut f = vec![0u8, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 32, 0];
+                f.extend((png.len() as u32).to_le_bytes());
+                f.extend(22u32.to_le_bytes());
+                f.extend(&png);
+                let _ = std::fs::write(&ico, f);
+            }
         }
         None => {
             let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&ico);
         }
     }
     apply_icon(&app);
+    // The taskbar shows the icon of the shortcut UaN is pinned with, so change the shortcuts too.
+    if profile.name.is_none() {
+        set_shortcut_icons(ico.exists().then_some(ico.as_path()));
+    }
     Ok(())
+}
+
+/// Points UaN's shortcuts (desktop, Start menu, pinned on the taskbar) at `ico`, or back at the program.
+#[cfg(windows)]
+fn set_shortcut_icons(ico: Option<&std::path::Path>) {
+    use std::os::windows::process::CommandExt;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let q = |p: &std::path::Path| p.to_string_lossy().replace('\'', "''");
+    let icon = match ico {
+        Some(i) => format!("{},0", q(i)),
+        None => format!("{},0", q(&exe)),
+    };
+    let script = format!(
+        "$sh = New-Object -ComObject WScript.Shell; $exe = '{exe}'; \
+         foreach ($d in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('Programs'), \"$env:APPDATA\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar\")) {{ \
+           Get-ChildItem -LiteralPath $d -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object {{ \
+             $l = $sh.CreateShortcut($_.FullName); if ($l.TargetPath -ieq $exe) {{ $l.IconLocation = '{icon}'; $l.Save() }} }} }}; \
+         ie4uinit.exe -show",
+        exe = q(&exe),
+    );
+    let _ = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .spawn();
+}
+
+#[cfg(not(windows))]
+fn set_shortcut_icons(_ico: Option<&std::path::Path>) {}
+
+/// The secret theme's picture, kept on this PC only (secret.jpg/.webp/.png in UaN's data folder).
+#[tauri::command]
+fn secret_picture(profile: State<'_, Profile>) -> Option<String> {
+    for (ext, mime) in [("jpg", "image/jpeg"), ("webp", "image/webp"), ("png", "image/png")] {
+        if let Ok(b) = std::fs::read(profile.dir.join(format!("secret.{ext}"))) {
+            return Some(format!("data:{mime};base64,{}", data_encoding::BASE64.encode(&b)));
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn set_secret_picture(profile: State<'_, Profile>, jpeg: String) -> CmdResult<()> {
+    let b = data_encoding::BASE64.decode(jpeg.as_bytes()).map_err(|e| e.to_string())?;
+    if b.len() > 4_000_000 || !b.starts_with(&[0xff, 0xd8]) {
+        return Err("That picture can't be used.".into());
+    }
+    for ext in ["webp", "png"] {
+        let _ = std::fs::remove_file(profile.dir.join(format!("secret.{ext}")));
+    }
+    std::fs::write(profile.dir.join("secret.jpg"), b).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_channel(node: State<'_, Arc<Node>>, group: String, name: String, password: Option<String>) -> CmdResult<String> {
+    node.create_channel(&group, &name, password.as_deref())
+}
+
+#[tauri::command]
+fn channel_action(node: State<'_, Arc<Node>>, group: String, channel: String, action: String, name: String) -> CmdResult<()> {
+    node.channel_action(&group, &channel, &action, &name)
+}
+
+#[tauri::command]
+fn unlock_channel(node: State<'_, Arc<Node>>, chat: String, password: String) -> CmdResult<()> {
+    node.unlock_channel(&chat, &password)
+}
+
+#[tauri::command]
+fn forget_channel(node: State<'_, Arc<Node>>, chat: String) {
+    node.forget_channel(&chat)
 }
 
 #[tauri::command]
@@ -826,6 +910,12 @@ fn main() {
             audio_track,
             delete_message,
             links,
+            secret_picture,
+            create_channel,
+            channel_action,
+            unlock_channel,
+            forget_channel,
+            set_secret_picture,
             set_privacy,
             clear_chat,
             typing,
