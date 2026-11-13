@@ -759,13 +759,19 @@ fn export_backup_path(node: State<'_, Arc<Node>>, path: String, password: String
 }
 
 #[tauri::command]
+#[cfg_attr(mobile, allow(unused_variables))]
 async fn pick_folder_and_send(app: AppHandle, node: State<'_, Arc<Node>>, chats: Vec<String>) -> CmdResult<usize> {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().file().set_title("Choose a folder to send").pick_folder(move |f| {
-        let _ = tx.send(f);
-    });
-    let Some(dir) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else { return Ok(0) };
-    node.share_files(vec![dir], &chats, None)
+    #[cfg(desktop)]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog().file().set_title("Choose a folder to send").pick_folder(move |f| {
+            let _ = tx.send(f);
+        });
+        let Some(dir) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else { return Ok(0) };
+        node.share_files(vec![dir], &chats, None)
+    }
+    #[cfg(mobile)]
+    Err("Folders can be sent from a PC.".into())
 }
 
 #[tauri::command]
