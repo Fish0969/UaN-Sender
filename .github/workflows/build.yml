@@ -245,3 +245,49 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+
+  # Starts the APK in an Android emulator: it must open, take a name, and show the main screen.
+  android-smoke:
+    needs: android
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: UaN-Android
+          path: apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run in the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            adb install -r apk/*.apk
+            adb logcat -c
+            adb shell monkey -p com.uan.desktop -c android.intent.category.LAUNCHER 1
+            sleep 40
+            adb exec-out screencap -p > shot-1-start.png
+            adb shell input text Tester
+            adb shell input keyevent 66
+            sleep 15
+            adb exec-out screencap -p > shot-2-main.png
+            adb shell pidof com.uan.desktop && echo "APP RUNNING" || echo "APP NOT RUNNING"
+            adb logcat -d -t 400 > logcat.txt || true
+            grep -iE "panick|FATAL|RustStdoutStderr|Tauri|uan" logcat.txt | tail -60 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-smoke
+          path: |
+            shot-*.png
+            logcat.txt
