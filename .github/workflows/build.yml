@@ -176,8 +176,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
+      # (GitHub's Ubuntu machines come with the Android SDK; ANDROID_HOME points to it.)
       - uses: nttld/setup-ndk@v1
         id: ndk
         with:
