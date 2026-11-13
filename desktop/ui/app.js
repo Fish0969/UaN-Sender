@@ -533,10 +533,7 @@ applyLayout();
 // ---------- GIFs (GIPHY or KLIPY, searched through the UaN mailbox server) ----------
 const GIF_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(giphy\.com|klipy\.com)\/\S+$/i;
 function isGifUrl(t) { return typeof t === 'string' && t.length < 600 && GIF_HOSTS.test(t.trim()) && !/\s/.test(t.trim()); }
-const gif = { p: (() => { try { return localStorage.getItem('uan.gifp') || 'giphy'; } catch { return 'giphy'; } })(), q: '', page: 1, more: false, loading: false, seq: 0 };
-function gifBase() {
-  return (S.me?.mailbox || 'https://uan-mailbox.uan-mailbox.workers.dev').replace(/\/$/, '');
-}
+const gif = { q: '', page: 1, more: false, loading: false, seq: 0 };
 function hideGifs() {
   $('gifPanel')?.classList.add('hidden');
   $('gifBtn')?.classList.remove('on');
@@ -547,43 +544,34 @@ async function loadGifs(reset) {
   gif.loading = true;
   $('gifNote').textContent = 'Loading…';
   try {
-    const r = await fetch(`${gifBase()}/gif?p=${gif.p}&q=${encodeURIComponent(gif.q)}&page=${gif.page}`);
-    const d = await r.json();
+    const d = await invoke('gif_search', { q: gif.q, page: gif.page });
     if (seq !== gif.seq) return;
-    if (!d.ok) throw new Error(d.error || 'GIF search failed.');
     gif.more = d.more;
-    $('gifGrid').append(...d.items.map((it) => el('button', { type: 'button', title: 'Send', onclick: () => sendGif(it.url) },
+    $('gifGrid').append(...d.items.map((it) => el('button', { type: 'button', title: 'Send', onclick: () => sendGif(it.url, it.slug) },
       el('img', { src: it.preview, alt: '', loading: 'lazy', width: it.w, height: it.h }))));
-    $('gifNote').textContent = d.items.length || gif.page > 1 ? (gif.p === 'giphy' ? 'Powered by GIPHY' : 'Powered by KLIPY') : 'No GIFs found.';
+    $('gifNote').textContent = d.items.length || gif.page > 1 ? 'Powered by KLIPY' : 'No GIFs found.';
   } catch (e) {
     if (seq === gif.seq) $('gifNote').textContent = String(e.message || e);
   } finally {
     if (seq === gif.seq) gif.loading = false;
   }
 }
-async function sendGif(url) {
+async function sendGif(url, slug) {
   if (!S.active) return;
   hideGifs();
-  try { await invoke('send_text', { chats: [S.active], text: url }); } catch (e) { toast(e); }
-}
-function renderGifProv() {
-  document.querySelectorAll('#gifProv button').forEach((b) => b.classList.toggle('on', b.dataset.p === gif.p));
+  try {
+    await invoke('send_text', { chats: [S.active], text: url });
+    if (slug) invoke('gif_shared', { slug }).catch(() => {});
+  } catch (e) { toast(e); }
 }
 $('gifBtn').addEventListener('click', () => {
   const open = $('gifPanel').classList.toggle('hidden');
   $('gifBtn').classList.toggle('on', !open);
   if (!open) {
-    renderGifProv();
     if (!$('gifGrid').children.length) loadGifs(true);
     setTimeout(() => $('gifSearch').focus(), 30);
   }
 });
-document.querySelectorAll('#gifProv button').forEach((b) => b.addEventListener('click', () => {
-  gif.p = b.dataset.p;
-  try { localStorage.setItem('uan.gifp', gif.p); } catch {}
-  renderGifProv();
-  loadGifs(true);
-}));
 let gifTimer;
 $('gifSearch').addEventListener('input', () => {
   clearTimeout(gifTimer);

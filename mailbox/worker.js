@@ -84,21 +84,13 @@ async function blobDel(env, body) {
   return json({ ok: true });
 }
 
-// ---- GIF search (GIPHY or KLIPY). The API keys stay here as secrets, not in the app. ----
-// GET /gif?p=giphy|klipy&q=<search, empty = trending>&page=<1..>
+// ---- GIF search for GIPHY (if a GIPHY_KEY secret is set). KLIPY is searched by the app itself,
+// as KLIPY requires. GET /gif?p=giphy&q=<search, empty = trending>&page=<1..>
 // -> { ok, items: [{ id, url (to send), preview (small), w, h }], more }
 const GIF_PER_PAGE = 24;
 
-function pickKlipy(file) {
-  for (const size of ['md', 'sm', 'hd', 'xs']) {
-    const g = file?.[size]?.gif || file?.[size]?.webp;
-    if (g?.url) return g;
-  }
-  return null;
-}
-
 async function gifSearch(env, url) {
-  const p = url.searchParams.get('p') === 'klipy' ? 'klipy' : 'giphy';
+  const p = 'giphy';
   const q = (url.searchParams.get('q') || '').trim().slice(0, 80);
   const page = Math.max(1, Math.min(50, Number(url.searchParams.get('page')) || 1));
   const cache = caches.default;
@@ -126,23 +118,6 @@ async function gifSearch(env, url) {
       h: Number(g.images?.fixed_width?.height) || 150,
     })).filter((g) => g.url);
     more = (d.pagination?.total_count || 0) > page * GIF_PER_PAGE;
-  } else {
-    if (!env.KLIPY_KEY) return fail('KLIPY isn’t set up yet.', 503);
-    const api = new URL(`https://api.klipy.com/api/v1/${env.KLIPY_KEY}/gifs/${q ? 'search' : 'trending'}`);
-    if (q) api.searchParams.set('q', q);
-    api.searchParams.set('per_page', String(GIF_PER_PAGE));
-    api.searchParams.set('page', String(page));
-    api.searchParams.set('rating', 'pg-13');
-    const r = await fetch(api);
-    if (!r.ok) return fail(`KLIPY error ${r.status}`, 502);
-    const d = await r.json();
-    const list = d?.data?.data || d?.data || [];
-    items = (Array.isArray(list) ? list : []).map((g) => {
-      const big = pickKlipy(g.file);
-      const small = g.file?.sm?.gif || g.file?.xs?.gif || big;
-      return big && { id: String(g.id ?? g.slug), url: big.url, preview: small?.url || big.url, w: Number(small?.width) || 200, h: Number(small?.height) || 150 };
-    }).filter(Boolean);
-    more = !!d?.data?.has_next;
   }
   const res = new Response(JSON.stringify({ ok: true, items, more }), {
     headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=600', 'access-control-allow-origin': '*' },

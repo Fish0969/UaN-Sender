@@ -53,7 +53,7 @@ sudo apt install ./UaN_*_amd64.deb
   profile at the bottom. Prefer the old look? Settings → Layout → Legacy. All themes work with both.
 - **Channels.** Groups can have channels besides *general*. A channel can be locked with a password: its
   messages are encrypted with that password, so only people who know it can read them.
-- **GIFs.** The GIF button in the message bar searches GIPHY or KLIPY (Tenor closed its service in 2026).
+- **GIFs.** The GIF button in the message bar searches KLIPY (the GIF service Discord uses; Tenor closed in 2026).
 - **Groups.** Click a group's name (or right-click it in the list) for members, adding people and more.
   Anyone in the group can add their friends; new members see the earlier messages too. Clear a chat's
   messages for yourself, or (the group's creator) for everyone.

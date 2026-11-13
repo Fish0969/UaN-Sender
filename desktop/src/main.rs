@@ -581,6 +581,83 @@ fn forget_channel(node: State<'_, Arc<Node>>, chat: String) {
     node.forget_channel(&chat)
 }
 
+/// KLIPY's API key: built into release builds from a GitHub secret (never in the source code).
+/// Local builds can set UAN_KLIPY_KEY when running.
+fn klipy_key() -> Option<String> {
+    option_env!("UAN_KLIPY_KEY").map(str::to_string).or_else(|| std::env::var("UAN_KLIPY_KEY").ok()).filter(|k| !k.trim().is_empty())
+}
+
+/// A random id for KLIPY (they use it for "recent" GIFs); not linked to your UaN identity.
+fn klipy_customer(node: &Node) -> String {
+    node.gif_customer_id()
+}
+
+/// GIF search, straight from this app to KLIPY (as KLIPY requires). Empty `q` = trending.
+/// -> { items: [{ id, slug, url (to send), preview, w, h }], more }
+#[tauri::command]
+async fn gif_search(node: State<'_, Arc<Node>>, q: String, page: u32) -> CmdResult<Value> {
+    let key = klipy_key().ok_or("GIF search isn't set up in this build.")?;
+    let q: String = q.trim().chars().take(80).collect();
+    let page = page.clamp(1, 50);
+    let kind = if q.is_empty() { "trending" } else { "search" };
+    let mut url = reqwest::Url::parse(&format!("https://api.klipy.com/api/v1/{key}/gifs/{kind}")).map_err(|e| e.to_string())?;
+    url.query_pairs_mut()
+        .append_pair("page", &page.to_string())
+        .append_pair("per_page", "24")
+        .append_pair("customer_id", &klipy_customer(&node))
+        .append_pair("rating", "pg-13");
+    if !q.is_empty() {
+        url.query_pairs_mut().append_pair("q", &q);
+    }
+    let client = reqwest::Client::builder().user_agent("UaN").timeout(std::time::Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
+    let r = client.get(url).send().await.map_err(|_| "Can't reach KLIPY right now.".to_string())?;
+    if r.status().as_u16() == 429 {
+        return Err("Too many GIF searches right now. Try again in a little while.".into());
+    }
+    if !r.status().is_success() {
+        return Err(format!("KLIPY error {}", r.status().as_u16()));
+    }
+    let d: Value = r.json().await.map_err(|e| e.to_string())?;
+    let pick = |file: &Value, sizes: &[&str]| -> Option<Value> {
+        sizes.iter().find_map(|s| file[*s]["gif"].as_object().filter(|g| g.get("url").and_then(|u| u.as_str()).is_some()).map(|g| Value::Object(g.clone())))
+    };
+    // KLIPY's order is kept as it is (one of their rules).
+    let items: Vec<Value> = d["data"]["data"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|g| g["type"].as_str() != Some("ad"))
+                .filter_map(|g| {
+                    let big = pick(&g["file"], &["md", "hd", "sm"])?;
+                    let small = pick(&g["file"], &["sm", "xs", "md"]).unwrap_or_else(|| big.clone());
+                    Some(json!({
+                        "id": g["id"], "slug": g["slug"],
+                        "url": big["url"], "preview": small["url"],
+                        "w": small["width"].as_u64().unwrap_or(200), "h": small["height"].as_u64().unwrap_or(150),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(json!({ "items": items, "more": d["data"]["has_next"].as_bool().unwrap_or(false) }))
+}
+
+/// Tells KLIPY a GIF was shared (part of their API; helps their ranking).
+#[tauri::command]
+async fn gif_shared(node: State<'_, Arc<Node>>, slug: String) -> CmdResult<()> {
+    let Some(key) = klipy_key() else { return Ok(()) };
+    if slug.is_empty() || slug.len() > 200 || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Ok(());
+    }
+    let client = reqwest::Client::builder().user_agent("UaN").timeout(std::time::Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
+    let _ = client
+        .post(format!("https://api.klipy.com/api/v1/{key}/gifs/share/{slug}"))
+        .json(&json!({ "customer_id": klipy_customer(&node) }))
+        .send()
+        .await;
+    Ok(())
+}
+
 #[tauri::command]
 fn links(node: State<'_, Arc<Node>>) -> Value {
     node.links()
@@ -911,6 +988,8 @@ fn main() {
             delete_message,
             links,
             secret_picture,
+            gif_search,
+            gif_shared,
             create_channel,
             channel_action,
             unlock_channel,
