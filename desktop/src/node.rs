@@ -36,6 +36,9 @@ use tokio_util::sync::CancellationToken;
 
 const ALPN: &[u8] = b"uan/1";
 const MAX_FRAME: usize = 1 << 20;
+/// Version of the peer-to-peer protocol. 2: History, GroupInvite, Typing, Seen. Those are only sent to
+/// peers known to understand them (older versions drop the connection on unknown requests).
+const PROTO: u32 = 2;
 const MEDIA_CHUNK: u64 = 8 * 1024 * 1024;
 const MEDIA_WHOLE_LIMIT: u64 = 32 * 1024 * 1024;
 const ONLINE_WINDOW: Duration = Duration::from_secs(150);
@@ -74,6 +77,7 @@ CREATE TABLE IF NOT EXISTS thumbs (file_id TEXT PRIMARY KEY, data TEXT NOT NULL)
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT '', avatar TEXT, pv INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY, peer TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS reads (chat TEXT NOT NULL, who TEXT NOT NULL, msg_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, who));
 ";
 
 // ---------- Wire format ----------
@@ -91,6 +95,19 @@ pub struct FileMeta {
 pub struct Member {
     pub id: String,
     pub name: String,
+}
+
+/// An earlier group message, sent to someone who was just added to the group.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HistMsg {
+    pub id: String,
+    pub sender: String,
+    pub name: String,
+    pub text: Option<String>,
+    pub file: Option<FileMeta>,
+    pub ts: i64,
+    #[serde(default)]
+    pub thumb: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -121,6 +138,9 @@ pub enum Req {
         status: String,
         #[serde(default)]
         pv: i64,
+        /// What the sender's UaN understands (see PROTO). Older versions send nothing (0).
+        #[serde(default)]
+        proto: u32,
     },
     Profile,
     FriendRequest { name: String },
@@ -131,6 +151,23 @@ pub enum Req {
     GroupLeave { group_id: String },
     /// The sender deleted one of their messages for everyone.
     Unsend { msg_id: String },
+    /// Earlier messages of a group for a newly added member (from the group's creator).
+    History { group_id: String, msgs: Vec<HistMsg> },
+    /// A member asks the group's creator to add people.
+    GroupInvite { group_id: String, members: Vec<Member> },
+    /// The group's creator cleared the group's messages for everyone (those sent until `before`).
+    ClearGroup { group_id: String, before: i64 },
+    /// "… is typing" (never stored; only sent while both are online).
+    Typing {
+        #[serde(default)]
+        group: Option<String>,
+    },
+    /// The sender has seen the chat up to this message.
+    Seen {
+        #[serde(default)]
+        group: Option<String>,
+        msg_id: String,
+    },
     /// A small preview picture for a photo or video someone sent.
     Thumb { file_id: String, data: String },
     FileGet { file_id: String, offset: u64, len: Option<u64> },
@@ -449,6 +486,10 @@ pub struct Node {
     conns: Mutex<HashMap<EndpointId, Connection>>,
     seen: Mutex<HashMap<String, Instant>>,
     flushing: Mutex<HashSet<String>>,
+    /// Protocol version of each peer, learned from pings.
+    protos: Mutex<HashMap<String, u32>>,
+    /// The last "seen" mark each peer got from us, per chat (so it is sent once, and again after they were offline).
+    reads_sent: Mutex<HashMap<(String, String), String>>,
     transfers: Mutex<Vec<Transfer>>,
     running: Mutex<HashMap<String, Running>>,
     partials: Mutex<HashMap<String, Arc<Partial>>>,
@@ -519,6 +560,8 @@ impl Node {
             conns: Mutex::new(HashMap::new()),
             seen: Mutex::new(HashMap::new()),
             flushing: Mutex::new(HashSet::new()),
+            protos: Mutex::new(HashMap::new()),
+            reads_sent: Mutex::new(HashMap::new()),
             transfers: Mutex::new(transfers),
             running: Mutex::new(HashMap::new()),
             partials: Mutex::new(HashMap::new()),
@@ -592,7 +635,7 @@ impl Node {
     }
 
     fn ping_req(&self) -> Req {
-        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv() }
+        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO }
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
@@ -940,7 +983,7 @@ impl Node {
     }
 
     fn notify(&self, title: &str, body: &str) {
-        if !self.window_focused() {
+        if !self.window_focused() && std::env::var_os("UAN_INVISIBLE").is_none() {
             let _ = self.app.notification().builder().title(title).body(body).show();
         }
     }
@@ -960,6 +1003,21 @@ impl Node {
             out.insert(id.to_string(), json!({ "direct": p.is_ip(), "rtt": p.rtt().as_millis() as u64 }));
         }
         Value::Object(out)
+    }
+
+    fn speaks(&self, peer: &str, proto: u32) -> bool {
+        self.protos.lock().unwrap().get(peer).copied().unwrap_or(0) >= proto
+    }
+
+    /// Remembers what a peer's UaN understands; the first time, sends what was waiting for that.
+    fn note_proto(self: &Arc<Self>, peer: &str, proto: u32) {
+        let before = self.protos.lock().unwrap().insert(peer.to_string(), proto);
+        if proto >= 2 {
+            if before != Some(proto) {
+                tauri::async_runtime::spawn(self.clone().flush(peer.to_string()));
+            }
+            self.sync_reads(peer);
+        }
     }
 
     fn is_online(&self, peer: &str) -> bool {
@@ -1024,6 +1082,9 @@ impl Node {
             let failure = match tokio::time::timeout(limit, exchange).await {
                 Ok(Ok(v)) => {
                     self.mark_seen(peer);
+                    if let Some(p) = v["proto"].as_u64() {
+                        self.note_proto(peer, p as u32);
+                    }
                     return if v["ok"].as_bool() == Some(true) {
                         Ok(v)
                     } else {
@@ -1066,8 +1127,14 @@ impl Node {
     }
 
     async fn handle(self: Arc<Self>, peer: String, mut send: SendStream, mut recv: RecvStream) {
-        let Ok(req) = read_frame::<Req>(&mut recv).await else { return };
+        let Ok(raw) = read_frame::<Value>(&mut recv).await else { return };
         self.mark_seen(&peer);
+        let Ok(req) = serde_json::from_value::<Req>(raw) else {
+            // Something a newer UaN sent: say so, so the sender doesn't keep retrying.
+            let _ = write_frame(&mut send, &json!({ "ok": false, "error": "This needs a newer version of UaN." })).await;
+            let _ = send.finish();
+            return;
+        };
         if let Req::FileGet { file_id, offset, len } = req {
             self.serve_file(&peer, &file_id, offset, len, send).await;
             return;
@@ -1114,33 +1181,54 @@ impl Node {
         if !self.flushing.lock().unwrap().insert(peer.clone()) {
             return;
         }
+        let mut after = i64::MIN;
         loop {
-            let row: Option<(i64, String)> = self
+            let row: Option<(i64, String, i64)> = self
                 .db
                 .lock()
                 .unwrap()
-                .query_row("SELECT seq, payload FROM outbox WHERE peer = ?1 ORDER BY seq LIMIT 1", [&peer], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
+                .query_row("SELECT seq, payload, created_at FROM outbox WHERE peer = ?1 AND seq > ?2 ORDER BY seq LIMIT 1", params![peer, after], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })
                 .optional()
                 .unwrap_or(None);
-            let Some((seq, payload)) = row else { break };
+            let Some((seq, payload, created)) = row else { break };
+            after = seq;
             let delivered = match serde_json::from_str::<Req>(&payload) {
-                Ok(req) => match self.request(&peer, &req).await {
+                Ok(req) if Self::mailbox_ok(&req) => match self.request(&peer, &req).await {
                     Err(ReqError::Offline(_)) => {
-                        Self::mailbox_ok(&req) && {
-                            self.blob_send(&peer, &req).await;
-                            self.mailbox_send(&peer, &req).await.is_ok()
+                        self.blob_send(&peer, &req).await;
+                        if self.mailbox_send(&peer, &req).await.is_err() {
+                            break; // keep the order of messages: try again later
                         }
+                        true
                     }
                     _ => true,
                 },
+                // Things only a direct connection can carry (group history, …): wait until the peer is online
+                // with a version that understands them, without holding up the messages behind.
+                Ok(req) => {
+                    if now() - created > 7 * 24 * 3600 * 1000 {
+                        true
+                    } else if !self.speaks(&peer, 2) && {
+                        // Don't know their version yet: ask (the answer tells us).
+                        let _ = self.request(&peer, &self.ping_req()).await;
+                        !self.speaks(&peer, 2)
+                    } {
+                        false
+                    } else {
+                        match self.request(&peer, &req).await {
+                            Err(ReqError::Offline(_)) => false,
+                            Err(ReqError::Refused(e)) if e == "later" => false,
+                            _ => true,
+                        }
+                    }
+                }
                 Err(_) => true,
             };
-            if !delivered {
-                break;
+            if delivered {
+                let _ = self.db.lock().unwrap().execute("DELETE FROM outbox WHERE seq = ?1", [seq]);
             }
-            let _ = self.db.lock().unwrap().execute("DELETE FROM outbox WHERE seq = ?1", [seq]);
         }
         self.flushing.lock().unwrap().remove(&peer);
     }
@@ -1183,6 +1271,7 @@ impl Node {
                                     me.update_name(&p, n);
                                 }
                                 me.note_profile(&p, v["status"].as_str().unwrap_or(""), v["pv"].as_i64().unwrap_or(0));
+                                me.note_proto(&p, v["proto"].as_u64().unwrap_or(0) as u32);
                             }
                             Err(_) => {
                                 if was && !me.is_online(&p) {
@@ -1234,12 +1323,13 @@ impl Node {
     }
 
     fn on_request(self: &Arc<Self>, peer: &str, req: Req) -> Result<Value, String> {
-        let ok = json!({ "ok": true });
+        let ok = json!({ "ok": true, "proto": PROTO });
         match req {
-            Req::Ping { name, status, pv } => {
+            Req::Ping { name, status, pv, proto } => {
                 self.update_name(peer, &name);
                 self.note_profile(peer, &status, pv);
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": self.kv("status").unwrap_or_default(), "pv": self.my_pv() }))
+                self.note_proto(peer, proto);
+                Ok(json!({ "ok": true, "name": self.my_name(), "status": self.kv("status").unwrap_or_default(), "pv": self.my_pv(), "proto": PROTO }))
             }
             Req::Profile => {
                 if !self.known_peers().iter().any(|p| p == peer) {
@@ -1353,6 +1443,80 @@ impl Node {
             Req::Unsend { msg_id } => {
                 // Only the person who sent a message can delete it for everyone.
                 self.remove_message(&msg_id, Some(peer));
+                Ok(ok)
+            }
+            Req::History { group_id, msgs } => {
+                match self.group_owner(&group_id) {
+                    None => return Err("later".into()), // the group itself hasn't arrived yet
+                    Some(o) if o != peer => return Err("Not allowed.".into()),
+                    _ => {}
+                }
+                if !self.is_member(&group_id, &self.me_s) || msgs.len() > 200 {
+                    return Err("Not allowed.".into());
+                }
+                let chat = format!("g:{group_id}");
+                {
+                    // Earlier messages go before everything we already have (chunks arrive newest first).
+                    let db = self.db.lock().unwrap();
+                    let min: i64 = db.query_row("SELECT COALESCE(MIN(seq), 1) FROM messages", [], |r| r.get(0)).unwrap_or(1);
+                    let base = min.min(1) - msgs.len() as i64 - 1;
+                    for (i, m) in msgs.iter().enumerate() {
+                        if m.file.as_ref().is_some_and(|f| f.size > MAX_FILE_SIZE) {
+                            continue;
+                        }
+                        let text = m.text.as_ref().map(|t| t.chars().take(5000).collect::<String>());
+                        let name: String = m.name.chars().take(32).collect();
+                        let file_json = m.file.as_ref().map(|f| serde_json::to_string(f).unwrap());
+                        let _ = db.execute(
+                            "INSERT OR IGNORE INTO messages (seq, id, chat, sender, sender_name, text, file, ts) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            params![base + i as i64, m.id, chat, m.sender, name, text, file_json, m.ts],
+                        );
+                        if let (Some(f), Some(t)) = (&m.file, &m.thumb) {
+                            if t.len() <= 300_000 && t.starts_with('{') {
+                                let _ = db.execute("INSERT OR IGNORE INTO thumbs (file_id, data) VALUES (?1, ?2)", [&f.id, t]);
+                            }
+                        }
+                    }
+                }
+                self.emit("history", json!({ "chat": chat }));
+                Ok(ok)
+            }
+            Req::ClearGroup { group_id, before } => {
+                if self.group_owner(&group_id).as_deref() != Some(peer) {
+                    return Err("Not allowed.".into());
+                }
+                self.clear_local(&format!("g:{group_id}"), before);
+                Ok(ok)
+            }
+            Req::GroupInvite { group_id, members } => {
+                if self.group_owner(&group_id).as_deref() != Some(self.me_s.as_str()) || !self.is_member(&group_id, peer) {
+                    return Err("Not allowed.".into());
+                }
+                let current = self.load_group(&group_id).map(|g| g.members).unwrap_or_default();
+                let fresh: Vec<Member> = members
+                    .into_iter()
+                    .filter(|m| parse_id(&m.id).is_ok() && !current.iter().any(|c| c.id == m.id))
+                    .take(100usize.saturating_sub(current.len()))
+                    .collect();
+                self.add_members(&group_id, &fresh);
+                Ok(ok)
+            }
+            Req::Typing { group } => {
+                let chat = self.chat_of(peer, group.as_deref())?;
+                let name = self.peer_name(peer);
+                self.emit("typing", json!({ "chat": chat, "who": peer, "name": name }));
+                Ok(ok)
+            }
+            Req::Seen { group, msg_id } => {
+                let chat = self.chat_of(peer, group.as_deref())?;
+                if msg_id.len() > 64 {
+                    return Err("Bad message.".into());
+                }
+                let _ = self.db.lock().unwrap().execute(
+                    "INSERT OR REPLACE INTO reads (chat, who, msg_id, ts) VALUES (?1, ?2, ?3, ?4)",
+                    params![chat, peer, msg_id, now()],
+                );
+                self.emit("seen", json!({ "chat": chat, "who": peer, "msgId": msg_id }));
                 Ok(ok)
             }
             Req::GroupLeave { group_id } => {
@@ -1571,19 +1735,22 @@ impl Node {
         let group = self.load_group(g).ok_or("That group no longer exists.")?;
         let owner = group.owner == self.me_s;
         match action {
-            "add" | "remove" | "rename" | "delete" if !owner => Err("Only the group's creator can do that.".into()),
+            "remove" | "rename" | "delete" if !owner => Err("Only the group's creator can do that.".into()),
             "add" => {
-                let db_names: Vec<(String, String)> = ids
+                let fresh: Vec<Member> = ids
                     .iter()
-                    .filter_map(|id| self.friend_name(id).map(|n| (id.clone(), n)))
+                    .filter(|id| !group.members.iter().any(|m| m.id == **id))
+                    .filter_map(|id| self.friend_name(id).map(|n| Member { id: id.clone(), name: n }))
                     .collect();
-                {
-                    let db = self.db.lock().unwrap();
-                    for (id, n) in &db_names {
-                        let _ = db.execute("INSERT OR REPLACE INTO group_members (group_id, member_id, name) VALUES (?1, ?2, ?3)", params![g, id, n]);
-                    }
+                if fresh.is_empty() {
+                    return Ok(());
                 }
-                self.bump_and_broadcast(g, &[]);
+                if owner {
+                    self.add_members(g, &fresh);
+                } else {
+                    // The creator's PC keeps the member list: it adds them as soon as it is online.
+                    self.deliver(&group.owner, &Req::GroupInvite { group_id: g.to_string(), members: fresh });
+                }
                 Ok(())
             }
             "remove" => {
@@ -1750,6 +1917,220 @@ impl Node {
             .collect();
         rows.reverse();
         rows
+    }
+
+    /// The chat a request from `peer` belongs to: their direct chat, or a group both of us are in.
+    fn chat_of(&self, peer: &str, group: Option<&str>) -> Result<String, String> {
+        match group {
+            Some(g) => {
+                if !self.is_member(g, peer) || !self.is_member(g, &self.me_s) {
+                    return Err("You are not in that group.".into());
+                }
+                Ok(format!("g:{g}"))
+            }
+            None => {
+                if self.contact_status(peer).as_deref() != Some("friend") {
+                    return Err("You are not friends.".into());
+                }
+                Ok(peer.to_string())
+            }
+        }
+    }
+
+    fn peer_name(&self, peer: &str) -> String {
+        let db = self.db.lock().unwrap();
+        db.query_row(
+            "SELECT name FROM contacts WHERE id = ?1 UNION SELECT name FROM group_members WHERE member_id = ?1 LIMIT 1",
+            [peer],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    }
+
+    /// Deletes the messages of a chat on this PC (up to `before`, a time in ms).
+    fn clear_local(&self, chat: &str, before: i64) {
+        {
+            let db = self.db.lock().unwrap();
+            let _ = db.execute("DELETE FROM messages WHERE chat = ?1 AND ts <= ?2", params![chat, before]);
+            let _ = db.execute("DELETE FROM reads WHERE chat = ?1", [chat]);
+        }
+        self.emit("cleared", json!({ "chat": chat }));
+    }
+
+    /// Clears a chat's messages: for you, or (the group's creator) for everyone in the group.
+    pub fn clear_chat(self: &Arc<Self>, chat: &str, everyone: bool) -> Result<(), String> {
+        let before = now();
+        if everyone {
+            let g = chat.strip_prefix("g:").ok_or("Only groups can be cleared for everyone.")?;
+            let group = self.load_group(g).ok_or("That group no longer exists.")?;
+            if group.owner != self.me_s {
+                return Err("Only the group's creator can clear it for everyone.".into());
+            }
+            let req = Req::ClearGroup { group_id: g.to_string(), before };
+            for m in &group.members {
+                self.deliver(&m.id, &req);
+            }
+        }
+        self.clear_local(chat, before);
+        Ok(())
+    }
+
+    /// (show others when I'm typing, tell others when I've seen their messages)
+    pub fn privacy(&self) -> (bool, bool) {
+        (self.kv("typing_on").map(|v| v != "0").unwrap_or(true), self.kv("receipts_on").map(|v| v != "0").unwrap_or(true))
+    }
+
+    pub fn set_privacy(&self, typing: bool, receipts: bool) {
+        self.set_kv("typing_on", if typing { "1" } else { "0" });
+        self.set_kv("receipts_on", if receipts { "1" } else { "0" });
+    }
+
+    /// Tells the people in a chat that you are typing (if you allow it). Nothing is stored or queued.
+    pub fn typing(self: &Arc<Self>, chat: &str) {
+        if !self.privacy().0 {
+            return;
+        }
+        let Ok((group, targets)) = self.chat_targets(chat) else { return };
+        let req = Req::Typing { group };
+        for t in targets {
+            if self.is_online(&t) && self.speaks(&t, 2) {
+                let (me, req) = (self.clone(), req.clone());
+                tauri::async_runtime::spawn(async move {
+                    let _ = me.request(&t, &req).await;
+                });
+            }
+        }
+    }
+
+    /// You have seen `chat` up to `msg_id`: tell the others (if you allow it).
+    pub fn read_upto(self: &Arc<Self>, chat: &str, msg_id: &str) {
+        if !self.privacy().1 {
+            return;
+        }
+        let Ok((_, targets)) = self.chat_targets(chat) else { return };
+        let changed = self
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO reads (chat, who, msg_id, ts) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (chat, who) DO UPDATE SET msg_id = excluded.msg_id, ts = excluded.ts WHERE msg_id <> excluded.msg_id",
+                params![chat, self.me_s, msg_id, now()],
+            )
+            .unwrap_or(0);
+        if changed > 0 {
+            for t in targets {
+                self.sync_reads(&t);
+            }
+        }
+    }
+
+    /// Sends `peer` our latest "seen" marks for the chats we share, unless they already have them.
+    fn sync_reads(self: &Arc<Self>, peer: &str) {
+        if !self.privacy().1 || !self.speaks(peer, 2) || !self.is_online(peer) {
+            return;
+        }
+        let mine: Vec<(String, String)> = {
+            let db = self.db.lock().unwrap();
+            let mut stmt = db.prepare("SELECT chat, msg_id FROM reads WHERE who = ?1").unwrap();
+            let rows = stmt.query_map([&self.me_s], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.filter_map(Result::ok).collect()
+        };
+        for (chat, msg_id) in mine {
+            let group = chat.strip_prefix("g:").map(str::to_string);
+            let shared = match &group {
+                Some(g) => self.is_member(g, peer) && self.is_member(g, &self.me_s),
+                None => chat == peer,
+            };
+            let key = (peer.to_string(), chat.clone());
+            if !shared || self.reads_sent.lock().unwrap().get(&key) == Some(&msg_id) {
+                continue;
+            }
+            // Marked as sent right away, so quick repeats don't send it twice; forgotten again if it fails.
+            self.reads_sent.lock().unwrap().insert(key.clone(), msg_id.clone());
+            let (me, peer) = (self.clone(), peer.to_string());
+            tauri::async_runtime::spawn(async move {
+                if me.request(&peer, &Req::Seen { group, msg_id: msg_id.clone() }).await.is_err() {
+                    let mut sent = me.reads_sent.lock().unwrap();
+                    if sent.get(&key) == Some(&msg_id) {
+                        sent.remove(&key);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Who has seen `chat` up to which message: { peer id: message id }.
+    pub fn reads(&self, chat: &str) -> Value {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("SELECT who, msg_id FROM reads WHERE chat = ?1 AND who <> ?2").unwrap();
+        let rows = stmt.query_map([chat, &self.me_s], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).unwrap();
+        Value::Object(rows.filter_map(Result::ok).map(|(k, v)| (k, Value::String(v))).collect())
+    }
+
+    /// Adds people to a group we created, tells everyone, and sends the newcomers the earlier messages.
+    fn add_members(self: &Arc<Self>, g: &str, members: &[Member]) {
+        if members.is_empty() {
+            return;
+        }
+        {
+            let db = self.db.lock().unwrap();
+            for m in members {
+                let name: String = m.name.trim().chars().take(32).collect();
+                let _ = db.execute("INSERT OR REPLACE INTO group_members (group_id, member_id, name) VALUES (?1, ?2, ?3)", params![g, m.id, name]);
+            }
+        }
+        self.bump_and_broadcast(g, &[]);
+        for m in members {
+            self.send_history(g, &m.id);
+        }
+    }
+
+    /// Queues the group's earlier messages (latest 300, with previews) for a new member, newest chunk first.
+    fn send_history(self: &Arc<Self>, g: &str, to: &str) {
+        let chat = format!("g:{g}");
+        let mut all: Vec<HistMsg> = {
+            let db = self.db.lock().unwrap();
+            let mut stmt = db
+                .prepare(
+                    "SELECT id, sender, sender_name, text, file, ts, (SELECT data FROM thumbs WHERE thumbs.file_id = json_extract(messages.file, '$.id'))
+                     FROM messages WHERE chat = ?1 ORDER BY seq DESC LIMIT 300",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map([&chat], |r| {
+                    Ok(HistMsg {
+                        id: r.get(0)?,
+                        sender: r.get(1)?,
+                        name: r.get(2)?,
+                        text: r.get(3)?,
+                        file: r.get::<_, Option<String>>(4)?.and_then(|f| serde_json::from_str(&f).ok()),
+                        ts: r.get(5)?,
+                        thumb: r.get(6)?,
+                    })
+                })
+                .unwrap();
+            rows.filter_map(Result::ok).collect()
+        };
+        // `all` is newest first. Cut it into chunks that fit a frame; inside a chunk, oldest first.
+        while !all.is_empty() {
+            let mut size = 0usize;
+            let mut n = 0usize;
+            for m in &all {
+                let add = 300 + m.text.as_ref().map(|t| t.len()).unwrap_or(0) + m.thumb.as_ref().map(|t| t.len()).unwrap_or(0);
+                if n > 0 && (size + add > 500_000 || n >= 40) {
+                    break;
+                }
+                size += add;
+                n += 1;
+            }
+            let mut chunk: Vec<HistMsg> = all.drain(..n).collect();
+            chunk.reverse();
+            self.deliver(to, &Req::History { group_id: g.to_string(), msgs: chunk });
+        }
     }
 
     /// Deletes a message here. With `sender`, only if that person sent it. Returns (chat, sender, file).

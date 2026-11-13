@@ -19,6 +19,8 @@ const S = {
   unread: new Map(),
   transfers: [],
   parties: new Map(),
+  reads: new Map(), // chat -> { peer id: id of the last message they have seen }
+  typing: new Map(), // chat -> Map(peer id -> { name, until })
 };
 
 // ---------- Helpers ----------
@@ -173,7 +175,8 @@ async function checkUpdate() {
   const btn = el('button', { type: 'button', text: 'Update' });
   btn.onclick = async () => {
     if (!u.url) return toast('No download for this system in that release yet.');
-    if (!(await ask(`Update to UaN ${u.version}? It downloads the new version and replaces this one. UaN restarts afterwards.`, 'Update'))) return;
+    const size = u.size ? ` (${fmtBytes(u.size)})` : '';
+    if (!(await ask(`Update to UaN ${u.version}${size}? It downloads only what is new and replaces this version. UaN restarts afterwards.`, 'Update'))) return;
     btn.disabled = true;
     btn.textContent = 'Downloading…';
     try {
@@ -250,7 +253,7 @@ $('copyCode').addEventListener('click', async () => {
   const b = $('copyCode');
   try {
     await navigator.clipboard.writeText(S.me.code);
-    b.textContent = 'Copied ✓';
+    b.textContent = 'Copied';
   } catch {
     b.textContent = 'Couldn’t copy';
   }
@@ -312,7 +315,7 @@ function renderLists() {
 
   $('groupList').replaceChildren(...[...S.groups].sort(byRecent).map((g) => {
     const chat = `g:${g.id}`;
-    return el('li', { class: 'friend' + (S.active === chat ? ' active' : ''), onclick: () => openChat(chat) },
+    return el('li', { class: 'friend' + (S.active === chat ? ' active' : ''), onclick: () => openChat(chat), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
       avatar(g.name, { group: true, seed: g.id }),
       el('span', { class: 'grow ellipsis', text: g.name }),
       badge(chat));
@@ -321,6 +324,7 @@ function renderLists() {
 
   $('friendList').replaceChildren(...[...S.friends].sort(byRecent).map((f) => el('li', {
     class: 'friend' + (S.active === f.id ? ' active' : ''), onclick: () => openChat(f.id),
+    oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, friendMenu(f)); },
     title: f.status || '',
   }, avatar(f.name, { online: f.online, seed: f.id, src: f.avatar }),
   el('div', { class: 'grow' }, el('div', { class: 'ellipsis', text: f.name }), f.status ? el('div', { class: 'sub ellipsis', text: f.status }) : null),
@@ -381,8 +385,11 @@ async function openChat(chat, focusId) {
   let list = await invoke('messages', { chat, limit: 300 });
   if (focusId && !list.some((m) => m.id === focusId)) list = await invoke('messages', { chat, limit: 20000 });
   S.msgs.set(chat, list);
+  try { S.reads.set(chat, await invoke('reads', { chat })); } catch {}
   if (S.active !== chat) return;
   renderMessages();
+  renderTyping();
+  markRead();
   if (focusId) {
     const node = document.querySelector(`.msg[data-id="${focusId}"]`);
     if (node) {
@@ -446,9 +453,91 @@ function messageNode(m, showSender = true) {
     m.text ? el('div', { class: 'bubble', text: m.text }) : null,
     el('div', { class: 'meta' },
       el('span', { class: 'time', text: timeFmt.format(m.ts) }),
-      el('button', { type: 'button', class: 'msg-del', title: 'Delete message', onclick: () => deleteMessage(m) }, svg(ICON.x))));
+      el('button', { type: 'button', class: 'msg-del', title: 'Delete message', onclick: () => deleteMessage(m) }, svg(ICON.x))),
+    seenRow(m));
   return node;
 }
+
+// Like in Messenger: small pictures under the last message each person has seen.
+function seenRow(m) {
+  const reads = S.reads.get(m.chat) || {};
+  const who = Object.keys(reads).filter((id) => reads[id] === m.id && id !== S.me.id);
+  if (!who.length) return null;
+  const group = isGroup(m.chat) ? groupById(m.chat.slice(2)) : null;
+  const person = (id) => (group ? group.members.find((x) => x.id === id) : friendById(id)) || friendById(id);
+  const known = who.map(person).filter(Boolean);
+  if (!known.length) return null;
+  const row = el('div', { class: 'seen-row', title: `Seen by ${known.map((p) => p.name).join(', ')}` },
+    known.slice(0, 8).map((p) => avatar(p.name, { seed: p.id, src: p.avatar })));
+  if (known.length > 8) row.append(el('span', { class: 'more', text: `+${known.length - 8}` }));
+  return row;
+}
+
+function renderSeen() {
+  const box = $('msgs');
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  box.querySelectorAll('.seen-row').forEach((n) => n.remove());
+  for (const m of S.msgs.get(S.active) || []) {
+    const row = seenRow(m);
+    if (row) box.querySelector(`.msg[data-id="${m.id}"]`)?.append(row);
+  }
+  if (near) box.scrollTop = box.scrollHeight;
+}
+
+// Tell the others we have seen the chat (only while the window is really in front of you).
+const readSent = new Map();
+function markRead() {
+  const chat = S.active;
+  if (!chat || !S.me?.receipts || !document.hasFocus() || document.hidden || $('chat').classList.contains('hidden')) return;
+  const list = S.msgs.get(chat) || [];
+  const last = list[list.length - 1];
+  if (!last || readSent.get(chat) === last.id) return;
+  readSent.set(chat, last.id);
+  invoke('read_upto', { chat, id: last.id }).catch(() => {});
+}
+window.addEventListener('focus', markRead);
+document.addEventListener('visibilitychange', markRead);
+
+listen('seen', ({ payload }) => {
+  const r = S.reads.get(payload.chat) || {};
+  r[payload.who] = payload.msgId;
+  S.reads.set(payload.chat, r);
+  if (payload.chat === S.active) renderSeen();
+});
+
+// Earlier messages arrived (you were added to a group): show them.
+listen('history', async ({ payload }) => {
+  if (payload.chat !== S.active) return;
+  const list = await invoke('messages', { chat: payload.chat, limit: 300 });
+  S.msgs.set(payload.chat, list);
+  if (S.active === payload.chat) renderMessages();
+});
+
+// ---------- "… is typing" ----------
+function renderTyping() {
+  const now = Date.now();
+  const m = S.typing.get(S.active);
+  const names = m ? [...m.values()].filter((t) => t.until > now).map((t) => t.name || 'Someone') : [];
+  $('typingBar').classList.toggle('hidden', !names.length);
+  if (names.length) {
+    $('typingText').textContent = names.length === 1 ? `${names[0]} is typing`
+      : names.length === 2 ? `${names[0]} and ${names[1]} are typing`
+      : 'Several people are typing';
+  }
+}
+listen('typing', ({ payload }) => {
+  if (!S.typing.has(payload.chat)) S.typing.set(payload.chat, new Map());
+  S.typing.get(payload.chat).set(payload.who, { name: payload.name, until: Date.now() + 5000 });
+  if (payload.chat === S.active) renderTyping();
+  setTimeout(() => { if (payload.chat === S.active) renderTyping(); }, 5100);
+});
+let typingSent = 0;
+$('msgInput').addEventListener('input', () => {
+  if (!S.active || !S.me?.typing || !$('msgInput').value.trim()) return;
+  if (Date.now() - typingSent < 2500) return;
+  typingSent = Date.now();
+  invoke('typing', { chat: S.active }).catch(() => {});
+});
 
 // Delete a message: just for you, or (your own) for everyone in the chat.
 function deleteMessage(m) {
@@ -627,6 +716,7 @@ listen('thumb', ({ payload }) => {
 
 function onMessage(m) {
   ensureThumb(m);
+  if (S.typing.get(m.chat)?.delete(m.sender) && m.chat === S.active) renderTyping();
   const list = S.msgs.get(m.chat);
   const isNew = list && !list.some((x) => x.id === m.id);
   if (isNew) list.push(m);
@@ -646,6 +736,7 @@ function onMessage(m) {
       if (!prev || dayFmt.format(prev.ts) !== day) box.append(el('div', { class: 'day', text: day }));
       box.append(messageNode(m, !prev || prev.sender !== m.sender));
       if (near || m.mine) box.scrollTop = box.scrollHeight;
+      markRead();
     }
   } else if (!m.mine) {
     S.unread.set(m.chat, (S.unread.get(m.chat) || 0) + 1);
@@ -660,6 +751,7 @@ $('composer').addEventListener('submit', async (e) => {
   if (!text || !S.active) return;
   input.value = '';
   try {
+    typingSent = 0;
     await invoke('send_text', { chats: [S.active], text });
   } catch (err) {
     input.value = text;
@@ -1057,7 +1149,7 @@ function makeVlcPlayer(container, { file, onBack }) {
   const toggle = el('button', { type: 'button', class: 'small', text: 'Play / Pause', onclick: () => (video.paused ? video.play() : video.pause()) });
   const back = el('button', { type: 'button', class: 'small', text: 'Watch here instead', onclick: () => onBack?.() });
   const root = el('div', { class: 'vlc-panel' },
-    el('div', { class: 'vlc-cone', text: '🎬' }),
+    el('div', { class: 'vlc-cone' }, svg(ICON.bigplay)),
     el('div', { class: 'strong', text: `Playing in VLC: ${file.name}` }),
     el('div', { class: 'sub', text: 'Play, pause and seek in VLC or here. Everyone stays in sync.' }),
     status,
@@ -1172,7 +1264,7 @@ function openPick(mode, group) {
   $('pickNote').textContent = {
     multi: 'Pick friends and groups. A file is sent once and lands in every chat.',
     group: 'Pick the friends to put in the group. Everyone sees everything posted there.',
-    add: 'Pick friends to add.',
+    add: 'Pick friends to add. They will see the earlier messages too.',
   }[mode];
   $('pickName').classList.toggle('hidden', mode !== 'group');
   $('pickText').classList.toggle('hidden', mode !== 'multi');
@@ -1254,24 +1346,95 @@ $('pickForm').addEventListener('submit', async (e) => {
       await invoke('group_action', { group: pickGroup.id, action: 'add', ids, name: '' });
       $('pickDlg').close();
       await loadContacts();
-      openGroupInfo();
+      if (pickGroup.owner === S.me.id) {
+        toast('Added. They can see the earlier messages too.');
+      } else {
+        const creator = pickGroup.members.find((m) => m.id === pickGroup.owner)?.name || 'the group’s creator';
+        toast(`They join as soon as ${creator}’s PC is online (it keeps the member list).`);
+      }
     }
   } catch (err) { $('pickError').textContent = err; }
 });
 
-// ---------- Chat details ----------
-$('chatInfoBtn').addEventListener('click', async () => {
-  const info = chatInfo(S.active);
-  if (!info) return;
-  if (info.group) return openGroupInfo();
-  if (await ask(`Remove ${info.name} from your friends? You won’t be able to message each other until one of you adds the other again.`, 'Remove friend')) {
-    friendAction(info.friend.id, 'remove');
+// ---------- Menus ----------
+function showMenu(x, y, items) {
+  const m = $('ctxMenu');
+  m.replaceChildren(...items.filter(Boolean).map((it) => (it === '-'
+    ? el('hr')
+    : el('button', { type: 'button', class: it.danger ? 'danger-text' : '', text: it.label, onclick: () => { hideMenu(); it.run(); } }))));
+  m.classList.remove('hidden');
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+  m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+}
+function hideMenu() { $('ctxMenu').classList.add('hidden'); }
+document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxMenu')) hideMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMenu(); });
+window.addEventListener('blur', hideMenu);
+
+function groupMenu(g) {
+  const owner = g.owner === S.me.id;
+  return [
+    { label: 'Add people…', run: () => openPick('add', g) },
+    { label: 'Members and details', run: () => openGroupInfo(g.id) },
+    '-',
+    { label: 'Clear messages for me', run: () => clearChat(`g:${g.id}`, false) },
+    owner ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(`g:${g.id}`, true) } : null,
+    { label: owner ? 'Delete group' : 'Leave group', danger: true, run: () => leaveGroup(g) },
+  ];
+}
+function friendMenu(f) {
+  return [
+    { label: 'Open chat', run: () => openChat(f.id) },
+    '-',
+    { label: 'Clear messages for me', run: () => clearChat(f.id, false) },
+    { label: 'Remove friend', danger: true, run: async () => {
+      if (await ask(`Remove ${f.name} from your friends? You won’t be able to message each other until one of you adds the other again.`, 'Remove friend')) friendAction(f.id, 'remove');
+    } },
+  ];
+}
+async function clearChat(chat, everyone) {
+  const name = chatInfo(chat)?.name || 'this chat';
+  const text = everyone
+    ? `Clear all messages in “${name}” for everyone? They disappear on every member’s PC. This can’t be undone.`
+    : `Clear all messages in “${name}” on this computer? The others keep theirs. This can’t be undone.`;
+  if (!(await ask(text, 'Clear messages'))) return;
+  try {
+    await invoke('clear_chat', { chat, everyone });
+  } catch (e) {
+    toast(e);
   }
+}
+listen('cleared', ({ payload }) => {
+  S.msgs.set(payload.chat, []);
+  S.reads.delete(payload.chat);
+  S.unread.delete(payload.chat);
+  if (payload.chat === S.active) renderMessages();
+  renderLists();
 });
 
-function openGroupInfo() {
-  const g = groupById(S.active?.slice(2));
+async function leaveGroup(g) {
+  const owner = g.owner === S.me.id;
+  if (await ask(owner ? `Delete “${g.name}” for everyone?` : `Leave “${g.name}”?`, owner ? 'Delete' : 'Leave')) {
+    await groupAct(g, owner ? 'delete' : 'leave');
+    if (S.active === `g:${g.id}`) closeChat();
+  }
+}
+
+// ---------- Chat details: click the chat's name ----------
+$('chatTitle').addEventListener('click', () => {
+  const info = chatInfo(S.active);
+  if (!info) return;
+  if (info.group) return openGroupInfo(info.group.id);
+  const r = $('chatTitle').getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, friendMenu(info.friend).slice(2));
+});
+
+let groupDlgId = null;
+function openGroupInfo(id = groupDlgId) {
+  const g = groupById(id);
   if (!g) return;
+  groupDlgId = g.id;
   const owner = g.owner === S.me.id;
   $('gTitle').textContent = g.name;
   $('gRenameRow').classList.toggle('hidden', !owner);
@@ -1283,7 +1446,6 @@ function openGroupInfo() {
     el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name + (m.status ? ` · ${m.status}` : '') }),
     m.id === g.owner ? el('span', { class: 'tag', text: 'creator' }) : null,
     owner && m.id !== S.me.id ? iconBtn('x', 'Remove from group', () => groupAct(g, 'remove', [m.id])) : null)));
-  $('gAdd').classList.toggle('hidden', !owner);
   $('gLeave').textContent = owner ? 'Delete group' : 'Leave group';
   if (!$('groupDlg').open) $('groupDlg').showModal();
 }
@@ -1292,25 +1454,24 @@ async function groupAct(g, action, ids = [], name = '') {
   try {
     await invoke('group_action', { group: g.id, action, ids, name });
     await loadContacts();
-    if (groupById(g.id)) openGroupInfo();
-    else $('groupDlg').close();
-  } catch (err) { $('gError').textContent = err; }
+    if (!groupById(g.id)) $('groupDlg').close();
+    else if ($('groupDlg').open) openGroupInfo(g.id);
+  } catch (err) {
+    if ($('groupDlg').open) $('gError').textContent = err;
+    else toast(err);
+  }
 }
-$('gRename').addEventListener('click', () => groupAct(groupById(S.active.slice(2)), 'rename', [], $('gName').value));
+$('gRename').addEventListener('click', () => groupAct(groupById(groupDlgId), 'rename', [], $('gName').value));
 $('gAdd').addEventListener('click', () => {
-  const g = groupById(S.active.slice(2));
+  const g = groupById(groupDlgId);
   $('groupDlg').close();
   openPick('add', g);
 });
 $('gClose').addEventListener('click', () => $('groupDlg').close());
-$('gLeave').addEventListener('click', async () => {
-  const g = groupById(S.active.slice(2));
-  const owner = g.owner === S.me.id;
+$('gLeave').addEventListener('click', () => {
+  const g = groupById(groupDlgId);
   $('groupDlg').close();
-  if (await ask(owner ? `Delete “${g.name}” for everyone?` : `Leave “${g.name}”?`, owner ? 'Delete' : 'Leave')) {
-    await groupAct(g, owner ? 'delete' : 'leave');
-    closeChat();
-  }
+  leaveGroup(g);
 });
 
 // ---------- Downloads ----------
@@ -1379,6 +1540,11 @@ $('settingsBtn').addEventListener('click', async () => {
   renderSwatches();
   $('sMailbox').value = S.me.mailbox || '';
   $('sAuto').checked = S.me.autostart;
+  $('sTyping').checked = S.me.typing;
+  $('sReceipts').checked = S.me.receipts;
+  renderThemeTiles();
+  renderIconTiles();
+  renderAvatarTiles();
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
@@ -1406,6 +1572,7 @@ $('settingsForm').addEventListener('submit', async (e) => {
     }
     if (!S.me.profileName && $('sAuto').checked !== S.me.autostart) await invoke('set_autostart', { enabled: $('sAuto').checked });
     await invoke('set_autodl', { on: $('sAutoDl').checked, gb: Math.max(1, Number($('sAutoDlGb').value) || 10) });
+    await invoke('set_privacy', { typing: $('sTyping').checked, receipts: $('sReceipts').checked });
     S.me = await invoke('state');
     renderMe();
     $('settingsDlg').close();
@@ -1463,7 +1630,7 @@ async function runSearch() {
   const results = await invoke('search', { query: q, kind: $('sKind').value, from: $('sFrom').value, chat: $('sChat').value, since });
   $('sCount').textContent = results.length >= 300 ? 'Showing the newest 300 matches' : `${results.length} match${results.length === 1 ? '' : 'es'}`;
   $('sResults').replaceChildren(...results.map((m) => {
-    const ext = m.file ? (m.file.name.includes('.') ? m.file.name.split('.').pop() : 'file').slice(0, 4) : '💬';
+    const ext = m.file ? (m.file.name.includes('.') ? m.file.name.split('.').pop() : 'file').slice(0, 4) : 'msg';
     const main = m.file
       ? el('div', { class: 'result-text' }, highlight(m.file.name, q), el('span', { class: 'sub', text: `  ·  ${fmtBytes(m.file.size)}` }))
       : highlight(m.text || '', q);
@@ -1535,7 +1702,7 @@ function updateBest() {
   if (!partySetup?.speeds) return;
   const best = bestHost();
   $('pBest').textContent = best
-    ? `⭐ ${nameOf(best.id)} ${best.id === S.me.id ? 'have' : 'has'} the fastest connection (${mbps(best.v).toFixed(0)} Mbit/s up), so ${best.id === S.me.id ? 'your' : 'their'} PC will share the film with everyone. Nobody downloads it: it streams, and it only starts (and keeps going) when everyone has enough loaded, so it won’t stutter even on slow internet.`
+    ? `${nameOf(best.id)} ${best.id === S.me.id ? 'have' : 'has'} the fastest connection (${mbps(best.v).toFixed(0)} Mbit/s up), so ${best.id === S.me.id ? 'your' : 'their'} PC will share the film with everyone. Nobody downloads it: it streams, and it only starts (and keeps going) when everyone has enough loaded, so it won’t stutter even on slow internet.`
     : 'Couldn’t measure anyone’s connection (are they online?). The film will be shared from the sender.';
 }
 $('pList').addEventListener('change', updateBest);
@@ -1712,13 +1879,13 @@ function renderParty(p) {
     const status = !m.joined ? 'invited'
       : m.buffering ? 'loading…'
       : m.full && !full ? `downloading the whole film · ${pct}%`
-      : m.ready ? (full ? 'ready ✓' : `ready ✓ · ${fmtBytes(m.have)} ahead`)
+      : m.ready ? (full ? 'ready' : `ready · ${fmtBytes(m.have)} ahead`)
       : `buffering ${fmtBytes(m.have)}`;
     const bar = el('div');
     const target = m.full ? p.file.size : Math.min(READY_AHEAD, p.file.size);
     bar.style.width = `${m.joined ? Math.min(100, (m.have / (target || 1)) * 100) : 0}%`;
     return el('div', { class: 'pm' + (m.ready && m.joined && !m.buffering ? ' ready' : '') },
-      el('div', { class: 'strong ellipsis', text: (m.id === S.me.id ? 'You' : m.name) + (m.id === p.seeder ? ' ⭐' : '') }),
+      el('div', { class: 'strong ellipsis', text: (m.id === S.me.id ? 'You' : m.name) }),
       el('div', { class: 'sub', text: status + (m.id === p.seeder ? ' · shares the film' : '') }),
       el('div', { class: 'bar' }, bar));
   }));
@@ -1858,46 +2025,235 @@ const ACCENTS = [
   { name: 'Pink', light: '#bf0077', dark: '#ff8ccf' },
   { name: 'Red', light: '#c42b1c', dark: '#ff8a80' },
 ];
+// Extra themes. "image" is a background gradient; the panels over it are see-through.
+const GLASS_DARK = { side: 'rgba(0, 0, 0, .30)', panel: 'rgba(0, 0, 0, .16)', card: 'rgba(255, 255, 255, .10)', theirs: 'rgba(255, 255, 255, .12)' };
+const GLASS_LIGHT = { side: 'rgba(255, 255, 255, .45)', panel: 'rgba(255, 255, 255, .55)', card: 'rgba(255, 255, 255, .85)', theirs: '#ffffff' };
+const THEMES = [
+  { id: 'system', name: 'Auto' },
+  { id: 'light', name: 'Light', preview: ['#ebebeb', '#fbfbfb'] },
+  { id: 'dark', name: 'Dark', preview: ['#1c1c1c', '#272727'] },
+  { id: 'ash', name: 'Ash', base: 'dark', bg: '#2c2f36', side: '#24272d', panel: '#32353d', card: '#3a3e47', theirs: '#3a3e47', accent: '#8ea1ff', mine: '#4b5bd6' },
+  { id: 'onyx', name: 'Onyx', base: 'dark', bg: '#000000', side: '#070707', panel: '#0d0d0d', card: '#171717', theirs: '#171717', accent: '#e6e6e6', mine: '#2b2b2b' },
+  { id: 'midnight', name: 'Midnight', base: 'dark', bg: '#0f1424', side: '#0b0f1c', panel: '#141a2e', card: '#1b2340', theirs: '#1b2340', accent: '#7aa2ff', mine: '#2f4fb0' },
+  { id: 'forest', name: 'Forest', base: 'dark', bg: '#10201a', side: '#0c1814', panel: '#152a22', card: '#1c362c', theirs: '#1c362c', accent: '#6ad19a', mine: '#1f7a52' },
+  { id: 'coffee', name: 'Coffee', base: 'dark', bg: '#241c17', side: '#1d1612', panel: '#2c221c', card: '#362a22', theirs: '#362a22', accent: '#e0b07a', mine: '#8a5a2b' },
+  { id: 'sunset', name: 'Sunset', base: 'dark', image: 'linear-gradient(135deg, #2a1338 0%, #5a1f3e 55%, #a8452a 100%)', bg: '#3a1838', ...GLASS_DARK, dialog: '#3a1a35', accent: '#ffb36b', mine: '#b0522e' },
+  { id: 'ocean', name: 'Ocean', base: 'dark', image: 'linear-gradient(135deg, #06283d 0%, #0b5c73 60%, #13836b 100%)', bg: '#0a3c50', ...GLASS_DARK, dialog: '#0b3346', accent: '#6ee7d2', mine: '#0f7f78' },
+  { id: 'aurora', name: 'Aurora', base: 'dark', image: 'linear-gradient(135deg, #1b1040 0%, #3a2a8c 50%, #0f7a6c 100%)', bg: '#2a1e68', ...GLASS_DARK, dialog: '#241a58', accent: '#9ef0c0', mine: '#5a48c8' },
+  { id: 'neon', name: 'Neon', base: 'dark', image: 'linear-gradient(135deg, #0d0221 0%, #3a0ca3 60%, #b5179e 100%)', bg: '#22085e', ...GLASS_DARK, dialog: '#1e0a52', accent: '#4cc9f0', mine: '#7209b7' },
+  { id: 'crimson', name: 'Crimson', base: 'dark', image: 'linear-gradient(135deg, #1a0508 0%, #4a0d18 55%, #7a1524 100%)', bg: '#3a0a12', ...GLASS_DARK, dialog: '#330a11', accent: '#ff9a9a', mine: '#9c1f30' },
+  { id: 'sakura', name: 'Sakura', base: 'light', image: 'linear-gradient(135deg, #ffe3ec 0%, #ffd0e0 50%, #e9d5ff 100%)', bg: '#ffdbe8', ...GLASS_LIGHT, dialog: '#fff3f7', accent: '#c2255c', mine: '#c2255c' },
+  { id: 'mint', name: 'Mint', base: 'light', image: 'linear-gradient(135deg, #e3fff3 0%, #c9f2ff 100%)', bg: '#d8f8f8', ...GLASS_LIGHT, dialog: '#f2fffb', accent: '#0b7a5c', mine: '#0b7a5c' },
+  { id: 'lavender', name: 'Lavender', base: 'light', image: 'linear-gradient(135deg, #efe7ff 0%, #dfe7ff 100%)', bg: '#e8e6ff', ...GLASS_LIGHT, dialog: '#f7f4ff', accent: '#6741d9', mine: '#6741d9' },
+];
+const themeById = (id) => THEMES.find((t) => t.id === id) || THEMES[0];
 const theme = (() => {
-  try { return { mode: localStorage.getItem('uan.theme') || 'system', accent: Number(localStorage.getItem('uan.accent') || 0) }; } catch { return { mode: 'system', accent: 0 }; }
+  try {
+    const stored = localStorage.getItem('uan.accent');
+    return { mode: themeById(localStorage.getItem('uan.theme') || 'system').id, accent: stored === null ? -1 : Number(stored) };
+  } catch { return { mode: 'system', accent: -1 }; }
 })();
 
 function isDark() {
+  const t = themeById(theme.mode);
+  if (t.base) return t.base === 'dark';
   return theme.mode === 'dark' || (theme.mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
 }
+const THEME_VARS = { bg: '--bg', side: '--side', panel: '--panel', card: '--card', theirs: '--theirs', image: '--bg-image', dialog: '--dialog' };
 function applyTheme() {
   const root = document.documentElement;
-  if (theme.mode === 'system') delete root.dataset.theme;
-  else root.dataset.theme = theme.mode;
-  const a = ACCENTS[theme.accent] || ACCENTS[0];
+  const t = themeById(theme.mode);
+  if (t.id === 'system') delete root.dataset.theme;
+  else root.dataset.theme = t.base || t.id;
+  for (const [key, name] of Object.entries(THEME_VARS)) {
+    if (t[key]) root.style.setProperty(name, t[key]);
+    else root.style.removeProperty(name);
+  }
   const dark = isDark();
-  const color = dark ? a.dark : a.light;
+  // -1 = the theme's own colour.
+  const own = theme.accent < 0 || !ACCENTS[theme.accent];
+  const a = own ? ACCENTS[0] : ACCENTS[theme.accent];
+  const color = own && t.accent ? t.accent : (dark ? a.dark : a.light);
   root.style.setProperty('--accent', color);
   root.style.setProperty('--accent-hover', color);
   root.style.setProperty('--on-accent', dark ? '#000' : '#fff');
-  root.style.setProperty('--mine', dark ? `color-mix(in srgb, ${a.dark} 45%, #1c1c1c)` : a.light);
+  root.style.setProperty('--mine', own && t.mine ? t.mine : (dark ? `color-mix(in srgb, ${color} 45%, #1c1c1c)` : color));
   root.style.setProperty('--on-mine', '#fff');
 }
+function setTheme(id) {
+  theme.mode = themeById(id).id;
+  theme.accent = -1; // every theme starts with its own colour
+  try {
+    localStorage.setItem('uan.theme', theme.mode);
+    localStorage.removeItem('uan.accent');
+  } catch {}
+  applyTheme();
+  renderSwatches();
+  renderThemeTiles();
+}
 function renderSwatches() {
-  $('sAccent').replaceChildren(...ACCENTS.map((a, i) => {
-    const b = el('button', { type: 'button', class: 'swatch' + (i === theme.accent ? ' on' : ''), title: a.name, onclick: () => {
-      theme.accent = i;
-      try { localStorage.setItem('uan.accent', String(i)); } catch {}
-      applyTheme();
-      renderSwatches();
-    } });
+  const t = themeById(theme.mode);
+  const pick = (i) => {
+    theme.accent = i;
+    try { if (i < 0) localStorage.removeItem('uan.accent'); else localStorage.setItem('uan.accent', String(i)); } catch {}
+    applyTheme();
+    renderSwatches();
+  };
+  const own = el('button', { type: 'button', class: 'swatch' + (theme.accent < 0 ? ' on' : ''), title: 'The theme’s own colour', onclick: () => pick(-1) });
+  own.style.background = t.accent || (isDark() ? ACCENTS[0].dark : ACCENTS[0].light);
+  $('sAccent').replaceChildren(own, ...ACCENTS.slice(t.accent ? 0 : 1).map((a) => {
+    const i = ACCENTS.indexOf(a);
+    const b = el('button', { type: 'button', class: 'swatch' + (i === theme.accent ? ' on' : ''), title: a.name, onclick: () => pick(i) });
     b.style.background = isDark() ? a.dark : a.light;
     return b;
   }));
 }
-$('sTheme').addEventListener('change', () => {
-  theme.mode = $('sTheme').value;
-  try { localStorage.setItem('uan.theme', theme.mode); } catch {}
-  applyTheme();
-  renderSwatches();
-});
+function renderThemeTiles() {
+  const sel = $('sTheme');
+  if (!sel.options.length) sel.replaceChildren(...THEMES.map((t) => el('option', { value: t.id, text: t.name })));
+  sel.value = theme.mode;
+  $('sThemes').replaceChildren(...THEMES.map((t) => {
+    const sideC = t.side || t.preview?.[0];
+    const mainC = t.panel || t.preview?.[1];
+    const tile = el('span', { class: 'tile' });
+    if (t.id === 'system') {
+      tile.style.background = 'linear-gradient(135deg, #fbfbfb 50%, #272727 50%)';
+    } else {
+      tile.style.background = t.image || t.bg || mainC;
+      const side = el('i', { class: 't-side' });
+      side.style.background = sideC;
+      const main = el('i', { class: 't-main' });
+      main.style.background = t.image ? 'transparent' : mainC;
+      const b1 = el('b'); b1.style.cssText = `width: 60%; background: ${t.mine || (t.id === 'light' ? '#005fb8' : '#0f4a73')}`;
+      const b2 = el('b'); b2.style.cssText = `width: 40%; align-self: flex-start; background: ${t.theirs || (t.id === 'light' ? '#ffffff' : '#3a3a3a')}`;
+      main.append(b2, b1);
+      tile.append(side, main);
+    }
+    return el('button', { type: 'button', class: t.id === theme.mode ? 'on' : '', title: t.id === 'system' ? 'Same as your computer (light or dark)' : t.name, 'data-theme-id': t.id, onclick: () => setTheme(t.id) },
+      tile, el('span', { class: 't-name', text: t.name }));
+  }));
+}
+$('sTheme').addEventListener('change', () => setTheme($('sTheme').value));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 applyTheme();
+
+// ---------- App icon: a few ready-made ones ----------
+const APP_ICONS = [
+  { id: 'default', name: 'Original' },
+  { id: 'violet', name: 'Violet', from: '#8b5cf6', to: '#5b21b6', plane: '#ffffff' },
+  { id: 'green', name: 'Green', from: '#34d399', to: '#047857', plane: '#ffffff' },
+  { id: 'sunset', name: 'Sunset', from: '#fb923c', to: '#db2777', plane: '#ffffff' },
+  { id: 'red', name: 'Red', from: '#f87171', to: '#b91c1c', plane: '#ffffff' },
+  { id: 'night', name: 'Night', from: '#374151', to: '#0b0f19', plane: '#ffffff' },
+  { id: 'snow', name: 'Snow', from: '#ffffff', to: '#dbe4f0', plane: '#2563eb' },
+  { id: 'gold', name: 'Gold', from: '#fcd34d', to: '#d97706', plane: '#1f2937' },
+];
+function drawAppIcon(canvas, icon) {
+  const n = canvas.width;
+  const c = canvas.getContext('2d');
+  c.clearRect(0, 0, n, n);
+  const r = n * 0.22;
+  c.beginPath();
+  c.roundRect(0, 0, n, n, r);
+  const g = c.createLinearGradient(0, 0, n, n);
+  g.addColorStop(0, icon.from);
+  g.addColorStop(1, icon.to);
+  c.fillStyle = g;
+  c.fill();
+  // The paper plane, like on the original icon.
+  const p = (x, y) => [x * n, y * n];
+  c.beginPath();
+  c.moveTo(...p(0.26, 0.50));
+  c.lineTo(...p(0.76, 0.27));
+  c.lineTo(...p(0.53, 0.77));
+  c.lineTo(...p(0.47, 0.565));
+  c.closePath();
+  c.fillStyle = icon.plane;
+  c.fill();
+}
+function currentIconId() {
+  try { return S.me?.customIcon ? (localStorage.getItem('uan.icon') || 'default') : 'default'; } catch { return 'default'; }
+}
+async function setAppIcon(icon) {
+  try {
+    if (icon.id === 'default') {
+      await invoke('set_app_icon', { rgba: null });
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      drawAppIcon(canvas, icon);
+      const data = canvas.getContext('2d').getImageData(0, 0, 128, 128).data;
+      let bin = '';
+      for (let i = 0; i < data.length; i += 0x8000) bin += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
+      await invoke('set_app_icon', { rgba: btoa(bin) });
+    }
+    try { localStorage.setItem('uan.icon', icon.id); } catch {}
+    S.me.customIcon = icon.id !== 'default';
+    renderIconTiles();
+  } catch (e) {
+    toast(e);
+  }
+}
+function renderIconTiles() {
+  const cur = currentIconId();
+  $('sIcons').replaceChildren(...APP_ICONS.map((icon) => {
+    const b = el('button', { type: 'button', class: icon.id === cur ? 'on' : '', title: icon.name, 'data-icon-id': icon.id, onclick: () => setAppIcon(icon) });
+    if (icon.id === 'default') {
+      b.append(el('img', { src: 'icon.png', alt: '', style: 'width:100%;height:100%;display:block' }));
+    } else {
+      const canvas = el('canvas', { width: 80, height: 80 });
+      drawAppIcon(canvas, icon);
+      b.append(canvas);
+    }
+    return b;
+  }));
+}
+
+// ---------- Ready-made profile pictures ----------
+const AVATARS = [
+  { name: 'Sunrise', from: '#ffb347', to: '#ff5f6d', draw: (c) => { c.beginPath(); c.arc(50, 62, 20, Math.PI, 0); c.fill(); c.fillRect(18, 66, 64, 4); c.fillRect(28, 74, 44, 4); c.fillRect(38, 82, 24, 4); } },
+  { name: 'Moon', from: '#1e3a8a', to: '#0b1026', draw: (c) => { c.beginPath(); c.arc(50, 50, 24, 0, Math.PI * 2); c.fill(); c.globalCompositeOperation = 'destination-out'; c.beginPath(); c.arc(60, 43, 21, 0, Math.PI * 2); c.fill(); c.globalCompositeOperation = 'source-over'; c.beginPath(); c.arc(72, 30, 2.5, 0, Math.PI * 2); c.arc(80, 52, 1.8, 0, Math.PI * 2); c.fill(); } },
+  { name: 'Mountain', from: '#2dd4bf', to: '#0f766e', draw: (c) => { c.beginPath(); c.moveTo(14, 78); c.lineTo(42, 34); c.lineTo(58, 58); c.lineTo(68, 44); c.lineTo(88, 78); c.closePath(); c.fill(); c.beginPath(); c.arc(72, 26, 7, 0, Math.PI * 2); c.fill(); } },
+  { name: 'Planet', from: '#a78bfa', to: '#5b21b6', draw: (c) => { c.beginPath(); c.arc(50, 50, 19, 0, Math.PI * 2); c.fill(); c.lineWidth = 4; c.beginPath(); c.ellipse(50, 50, 34, 10, -0.4, 0, Math.PI * 2); c.stroke(); } },
+  { name: 'Wave', from: '#38bdf8', to: '#1d4ed8', draw: (c) => { c.lineWidth = 6; c.lineCap = 'round'; for (const y of [38, 54, 70]) { c.beginPath(); c.moveTo(18, y); c.bezierCurveTo(32, y - 14, 40, y + 14, 50, y); c.bezierCurveTo(60, y - 14, 68, y + 14, 82, y); c.stroke(); } } },
+  { name: 'Tree', from: '#86efac', to: '#15803d', draw: (c) => { c.beginPath(); c.moveTo(50, 16); c.lineTo(70, 44); c.lineTo(60, 44); c.lineTo(76, 68); c.lineTo(24, 68); c.lineTo(40, 44); c.lineTo(30, 44); c.closePath(); c.fill(); c.fillRect(45, 68, 10, 14); } },
+  { name: 'Bolt', from: '#fde047', to: '#f59e0b', ink: '#1f2937', draw: (c) => { c.beginPath(); c.moveTo(56, 14); c.lineTo(28, 54); c.lineTo(46, 54); c.lineTo(40, 86); c.lineTo(72, 42); c.lineTo(53, 42); c.closePath(); c.fill(); } },
+  { name: 'Heart', from: '#fb7185', to: '#be123c', draw: (c) => { c.beginPath(); c.moveTo(50, 78); c.bezierCurveTo(10, 52, 22, 22, 50, 38); c.bezierCurveTo(78, 22, 90, 52, 50, 78); c.fill(); } },
+  { name: 'Star', from: '#818cf8', to: '#3730a3', draw: (c) => { c.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 13 : 30; const a = -Math.PI / 2 + (i * Math.PI) / 5; c.lineTo(50 + r * Math.cos(a), 52 + r * Math.sin(a)); } c.closePath(); c.fill(); } },
+  { name: 'Cat', from: '#fdba74', to: '#c2410c', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 44); c.lineTo(28, 18); c.lineTo(46, 32); c.closePath(); c.fill(); c.beginPath(); c.moveTo(74, 44); c.lineTo(72, 18); c.lineTo(54, 32); c.closePath(); c.fill(); c.beginPath(); c.arc(50, 54, 26, 0, Math.PI * 2); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(40, 50, 4, 0, Math.PI * 2); c.arc(60, 50, 4, 0, Math.PI * 2); c.fill(); c.beginPath(); c.moveTo(46, 60); c.lineTo(54, 60); c.lineTo(50, 65); c.closePath(); c.fill(); } },
+  { name: 'Ghost', from: '#64748b', to: '#1e293b', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 82); c.lineTo(26, 46); c.arc(50, 46, 24, Math.PI, 0); c.lineTo(74, 82); c.lineTo(66, 74); c.lineTo(58, 82); c.lineTo(50, 74); c.lineTo(42, 82); c.lineTo(34, 74); c.closePath(); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(41, 46, 4.5, 0, Math.PI * 2); c.arc(59, 46, 4.5, 0, Math.PI * 2); c.fill(); } },
+  { name: 'Game', from: '#f472b6', to: '#7c3aed', draw: (c, bg) => { c.beginPath(); c.roundRect(16, 34, 68, 36, 18); c.fill(); c.fillStyle = bg; c.fillRect(30, 49, 14, 5); c.fillRect(34.5, 44.5, 5, 14); c.beginPath(); c.arc(62, 47, 3.5, 0, Math.PI * 2); c.arc(70, 56, 3.5, 0, Math.PI * 2); c.fill(); } },
+];
+function drawAvatar(canvas, a) {
+  const n = canvas.width;
+  const c = canvas.getContext('2d');
+  const g = c.createLinearGradient(0, 0, n, n);
+  g.addColorStop(0, a.from);
+  g.addColorStop(1, a.to);
+  // Shapes are drawn on their own layer (some cut holes), then put on the background.
+  const layer = document.createElement('canvas');
+  layer.width = layer.height = n;
+  const l = layer.getContext('2d');
+  l.scale(n / 100, n / 100);
+  l.fillStyle = l.strokeStyle = a.ink || '#ffffff';
+  a.draw(l, a.to);
+  c.fillStyle = g;
+  c.fillRect(0, 0, n, n);
+  c.drawImage(layer, 0, 0);
+}
+function renderAvatarTiles() {
+  $('sAvatars').replaceChildren(...AVATARS.map((a) => {
+    const canvas = el('canvas', { width: 72, height: 72 });
+    drawAvatar(canvas, a);
+    return el('button', { type: 'button', title: a.name, onclick: () => {
+      const big = document.createElement('canvas');
+      big.width = big.height = 160;
+      drawAvatar(big, a);
+      pendingAvatar = big.toDataURL('image/jpeg', 0.9);
+      renderAvatarPick();
+    } }, canvas);
+  }));
+}
 
 // ---------- Subtitles: off by default, one click to turn on ----------
 let subsOn = (() => { try { return localStorage.getItem('uan.subs') === '1'; } catch { return false; } })();

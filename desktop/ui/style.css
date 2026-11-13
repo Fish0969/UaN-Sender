@@ -48,7 +48,7 @@
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body {
   font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  background: var(--bg);
+  background: var(--bg-image, var(--bg));
   color: var(--text);
   user-select: none;
   -webkit-user-select: none;
@@ -186,7 +186,7 @@ label.inline input { width: 90px; margin: 0; }
 /* ---------- Dialogs ---------- */
 dialog {
   width: min(400px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--panel); color: var(--text); box-shadow: var(--shadow);
+  background: var(--dialog, var(--panel)); color: var(--text); box-shadow: var(--shadow);
 }
 dialog::backdrop { background: rgba(0, 0, 0, .3); }
 dialog h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
@@ -407,9 +407,46 @@ input.gb { width: 64px; height: 24px; margin: 0 2px; padding: 0 4px; }
 
 /* ---------- VLC ---------- */
 .vlc-panel { position: absolute; inset: 0; display: grid; place-content: center; gap: 10px; text-align: center; color: #eee; background: #111; border-radius: 6px; padding: 24px; }
-.vlc-panel .vlc-cone { font-size: 46px; line-height: 1; }
+.vlc-panel .vlc-cone svg { width: 46px; height: 46px; }
 .vlc-panel .sub { color: #aaa; }
 .vlc-panel .row { display: flex; gap: 8px; justify-content: center; }
 .vlc-panel button { background: rgba(255, 255, 255, .12); color: #fff; border: 0; }
 .note-actions { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
 .note-actions button { background: rgba(255, 255, 255, .15); color: #fff; border: 0; }
+
+/* ---------- 1.5: header button, menus, typing, seen, tiles ---------- */
+.chat-title { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 8px; margin-left: -8px; border: 0; background: none; text-align: left; border-radius: 6px; color: inherit; min-width: 0; }
+.chat-title:hover { background: var(--hover); }
+.menu { position: fixed; z-index: 60; min-width: 170px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--dialog, var(--card)); box-shadow: var(--shadow); }
+.menu button { display: block; width: 100%; height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: none; text-align: left; color: var(--text); }
+.menu button:hover { background: var(--hover); }
+.menu button.danger-text { color: var(--danger); }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+
+.typing { display: flex; align-items: center; gap: 6px; padding: 0 16px 4px; color: var(--muted); font-size: 12px; height: 18px; }
+.typing .dots { display: inline-flex; gap: 3px; }
+.typing .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: typing 1.2s infinite ease-in-out; }
+.typing .dots i:nth-child(2) { animation-delay: .15s; }
+.typing .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes typing { 0%, 60%, 100% { opacity: .25; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
+
+.seen-row { display: flex; gap: 2px; align-items: center; padding: 0 2px 3px; min-height: 0; }
+.msg.mine .seen-row { justify-content: flex-end; }
+.seen-row .avatar { width: 14px; height: 14px; font-size: 8px; }
+.seen-row .more { font-size: 10px; color: var(--muted); margin-left: 2px; }
+
+.sub-title { font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.tiles button { padding: 0; border: 2px solid transparent; background: none; border-radius: 8px; position: relative; overflow: hidden; flex: none; }
+.tiles button.on { border-color: var(--accent); }
+.tiles.themes button { width: 58px; height: 44px; border-radius: 8px; }
+.tiles.themes .tile { position: absolute; inset: 0; display: flex; }
+.tiles.themes .tile i { display: block; }
+.tiles.themes .tile .t-side { width: 30%; }
+.tiles.themes .tile .t-main { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; gap: 3px; padding: 5px; }
+.tiles.themes .tile .t-main b { display: block; height: 6px; border-radius: 3px; }
+.tiles.themes .t-name { position: absolute; left: 0; right: 0; bottom: 0; font-size: 9px; line-height: 13px; text-align: center; color: #fff; background: rgba(0, 0, 0, .45); }
+.tiles.icons button { width: 40px; height: 40px; border-radius: 10px; }
+.tiles.icons canvas, .tiles.avatars canvas { width: 100%; height: 100%; display: block; }
+.tiles.avatars button { width: 36px; height: 36px; border-radius: 50%; }
+#settingsDlg { width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; }

@@ -1,6 +1,6 @@
 [package]
 name = "uan"
-version = "1.4.1"
+version = "1.5.0"
 description = "Peer-to-peer chat and file sharing"
 edition = "2021"
 
@@ -27,6 +27,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "nat
 rusqlite = { version = "0.37", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
+flate2 = "1"
 
 [features]
 default = ["custom-protocol"]

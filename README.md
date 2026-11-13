@@ -49,6 +49,11 @@ sudo apt install ./UaN_*_amd64.deb
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
 - **Delete messages.** Hover a message and click ×: delete it just for you, or (your own) for everyone.
   Deleting a file for everyone also stops sharing it.
+- **Groups.** Click a group's name (or right-click it in the list) for members, adding people and more.
+  Anyone in the group can add their friends; new members see the earlier messages too. Clear a chat's
+  messages for yourself, or (the group's creator) for everyone.
+- **Typing and seen.** "… is typing", and small profile pictures under the last message each person has
+  seen, like in Messenger. Both can be turned off in Settings.
 - **Previews.** Photos and videos show a preview picture (and the video's length) in the chat, even
   when the sender's PC is off.
 - **Offline friends.** Messages, previews and small files (photos, short clips up to 24 MB) wait
@@ -58,7 +63,10 @@ sudo apt install ./UaN_*_amd64.deb
   the background to `Downloads/UaN`, so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
-  **profile picture, status, themes**.
+  **profile picture** (upload one or pick a ready-made one), **status**, **16 themes**, and a choice of
+  **app icons**.
+- **Small updates.** One click in the app. On Linux, the AppImage only downloads the new program
+  (a few MB), not the whole 150 MB package.
 
 ## Good to know
 

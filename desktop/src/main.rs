@@ -42,8 +42,35 @@ fn arg_value(flag: &str) -> Option<String> {
     args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// Tests set UAN_INVISIBLE: the window lives off-screen, with no taskbar button, tray icon or notifications.
+fn invisible() -> bool {
+    std::env::var_os("UAN_INVISIBLE").is_some()
+}
+
+const ICON_SIDE: u32 = 128;
+
+/// The app icon the user picked in Settings (raw RGBA, ICON_SIDE x ICON_SIDE), if any.
+fn custom_icon(dir: &std::path::Path) -> Option<tauri::image::Image<'static>> {
+    let rgba = std::fs::read(dir.join("appicon.rgba")).ok()?;
+    (rgba.len() == (ICON_SIDE * ICON_SIDE * 4) as usize).then(|| tauri::image::Image::new_owned(rgba, ICON_SIDE, ICON_SIDE))
+}
+
+fn apply_icon(app: &AppHandle) {
+    let dir = app.state::<Profile>().dir.clone();
+    let Some(icon) = custom_icon(&dir).or_else(|| app.default_window_icon().cloned().map(|i| i.to_owned())) else { return };
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.set_icon(icon.clone());
+    }
+    if let Some(t) = app.tray_by_id("tray") {
+        let _ = t.set_icon(Some(icon));
+    }
+}
+
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        if invisible() {
+            return;
+        }
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -57,12 +84,21 @@ pub fn show_main(app: &AppHandle) {
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(820.0, 540.0)
-        .min_inner_size(560.0, 400.0)
-        .center();
+        .min_inner_size(560.0, 400.0);
+    builder = if invisible() { builder } else { builder.center() };
     if profile.name.is_some() {
         builder = builder.data_directory(profile.dir.join("webview"));
     }
-    let _ = builder.build();
+    if invisible() {
+        builder = builder.position(-30000.0, -30000.0).skip_taskbar(true).focused(false);
+    }
+    if let Ok(w) = builder.build() {
+        if invisible() {
+            // Windows may pull a new window back onto the screen; push it away again.
+            let _ = w.set_position(tauri::PhysicalPosition::new(-32000, -32000));
+        }
+    }
+    apply_icon(app);
 }
 
 pub fn sync_tray(app: &AppHandle) {
@@ -92,6 +128,9 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "selftest": selftest.0,
         "autodl": node.autodl().0,
         "autodlGb": node.autodl().1,
+        "typing": node.privacy().0,
+        "receipts": node.privacy().1,
+        "customIcon": profile.dir.join("appicon.rgba").exists(),
     })
 }
 
@@ -123,6 +162,75 @@ fn version_tuple(v: &str) -> (u64, u64, u64) {
     (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
 }
 
+/// Small updates for the AppImage: the AppImage carries big libraries (video, WebKit) that rarely change,
+/// so an update only downloads the new UaN program (a few MB) into this folder. The AppImage starts the
+/// newest one found here, with its own libraries.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn delta_dir() -> PathBuf {
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("UaN").join("bin")
+}
+
+/// The UaN program in `delta_dir` newer than this one, if any (and removes older ones).
+#[cfg(target_os = "linux")]
+fn newest_delta() -> Option<(PathBuf, (u64, u64, u64))> {
+    let own = version_tuple(env!("CARGO_PKG_VERSION"));
+    let mut best: Option<(PathBuf, (u64, u64, u64))> = None;
+    for e in std::fs::read_dir(delta_dir()).ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some(v) = name.strip_prefix("uan-").filter(|v| !v.ends_with(".tmp")) else { continue };
+        let v = version_tuple(v);
+        if v <= own {
+            let _ = std::fs::remove_file(e.path());
+        } else if best.as_ref().map(|b| v > b.1).unwrap_or(true) {
+            best = Some((e.path(), v));
+        }
+    }
+    best
+}
+
+/// Does this program start here (all libraries found)? Runs it with --uan-version.
+#[cfg(target_os = "linux")]
+fn delta_works(path: &std::path::Path, expect: &str) -> bool {
+    std::process::Command::new(path)
+        .arg("--uan-version")
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == expect)
+        .unwrap_or(false)
+}
+
+/// Inside the AppImage: hand over to a newer UaN program downloaded by a small update.
+#[cfg(target_os = "linux")]
+fn run_newer_delta() {
+    if std::env::var_os("APPIMAGE").is_none() {
+        return;
+    }
+    let Some((path, v)) = newest_delta() else { return };
+    let expect = format!("{}.{}.{}", v.0, v.1, v.2);
+    if !delta_works(&path, &expect) {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(&path).args(std::env::args_os().skip(1)).exec();
+    eprintln!("Couldn't start the updated UaN: {err}");
+}
+
+/// Starts UaN again a moment after this copy has quit (so the new one isn't handed back to this one).
+fn relaunch_later(program: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("sleep 1.5; exec \"$0\"")
+            .arg(program)
+            .spawn();
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::process::Command::new(program).spawn();
+    }
+}
+
 /// Which download fits this install: Windows installer, AppImage, or .deb.
 fn update_kind() -> &'static str {
     if cfg!(windows) {
@@ -149,12 +257,20 @@ async fn check_update(app: AppHandle) -> CmdResult<Value> {
         "appimage" => ".AppImage",
         _ => ".deb",
     };
-    let asset = rel["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str().map(|n| n.ends_with(suffix)).unwrap_or(false))).cloned();
+    let find = |pred: &dyn Fn(&str) -> bool| rel["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str().map(pred).unwrap_or(false))).cloned();
+    let mut asset = find(&|n: &str| n.ends_with(suffix));
+    // The AppImage only needs the new program file, not the whole 150 MB package.
+    if update_kind() == "appimage" {
+        if let Some(small) = find(&|n: &str| n == "uan-linux-x86_64.gz") {
+            asset = Some(small);
+        }
+    }
     Ok(json!({
         "version": tag.trim_start_matches('v'),
         "page": rel["html_url"],
         "url": asset.as_ref().map(|a| a["browser_download_url"].clone()),
         "name": asset.as_ref().map(|a| a["name"].clone()),
+        "size": asset.as_ref().map(|a| a["size"].clone()),
     }))
 }
 
@@ -167,13 +283,35 @@ async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<
     let client = reqwest::Client::builder().user_agent("UaN-updater").build().map_err(|e| e.to_string())?;
     let bytes = client.get(&url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
     let safe: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c)).collect();
-    let tmp = std::env::temp_dir().join(if safe.is_empty() { "uan-update".to_string() } else { safe });
+    let tmp = std::env::temp_dir().join(if safe.is_empty() { "uan-update".to_string() } else { safe.clone() });
     std::fs::write(&tmp, &bytes).map_err(|e| format!("Couldn't save the update: {e}"))?;
     match update_kind() {
         "windows" => {
             // The installer replaces the installed version; we quit so it can.
             std::process::Command::new(&tmp).spawn().map_err(|e| format!("Couldn't start the installer: {e}"))?;
             app.exit(0);
+        }
+        "appimage" if safe == "uan-linux-x86_64.gz" => {
+            #[cfg(target_os = "linux")]
+            {
+                use std::io::Read;
+                use std::os::unix::fs::PermissionsExt;
+                let version = url.rsplit('/').nth(1).unwrap_or_default().trim_start_matches('v').to_string();
+                let mut program = Vec::new();
+                flate2::read::GzDecoder::new(&bytes[..]).read_to_end(&mut program).map_err(|e| format!("The update is damaged: {e}"))?;
+                let dir = delta_dir();
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let tmp_bin = dir.join(format!("uan-{version}.tmp"));
+                std::fs::write(&tmp_bin, &program).map_err(|e| format!("Couldn't save the update: {e}"))?;
+                let _ = std::fs::set_permissions(&tmp_bin, std::fs::Permissions::from_mode(0o755));
+                if !delta_works(&tmp_bin, &version) {
+                    let _ = std::fs::remove_file(&tmp_bin);
+                    return Err("This update needs the full download. Get the new AppImage from the website.".into());
+                }
+                std::fs::rename(&tmp_bin, dir.join(format!("uan-{version}"))).map_err(|e| e.to_string())?;
+                relaunch_later(&PathBuf::from(std::env::var_os("APPIMAGE").unwrap()));
+                app.exit(0);
+            }
         }
         "appimage" => {
             #[cfg(unix)]
@@ -184,7 +322,9 @@ async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<
                 std::fs::copy(&tmp, target.with_extension("new")).map_err(|e| e.to_string())?;
                 std::fs::rename(target.with_extension("new"), &target).map_err(|e| e.to_string())?;
                 let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
-                std::process::Command::new(&target).spawn().map_err(|e| e.to_string())?;
+                // The full package contains the newest program itself; older small updates are dropped.
+                let _ = std::fs::remove_dir_all(delta_dir());
+                relaunch_later(&target);
                 app.exit(0);
             }
         }
@@ -192,7 +332,7 @@ async fn install_update(app: AppHandle, url: String, name: String) -> CmdResult<
             // .deb: install with the system's password prompt, then restart.
             let ok = std::process::Command::new("pkexec").args(["apt-get", "install", "-y"]).arg(&tmp).status().map(|s| s.success()).unwrap_or(false);
             if ok {
-                let _ = std::process::Command::new("uan").spawn();
+                relaunch_later(std::path::Path::new("/usr/bin/uan"));
                 app.exit(0);
             } else {
                 let _ = std::process::Command::new("xdg-open").arg(&tmp).spawn();
@@ -249,6 +389,52 @@ fn open_vlc_site() {
     let url = "https://www.videolan.org/vlc/";
     let opener = if cfg!(windows) { "explorer" } else { "xdg-open" };
     let _ = std::process::Command::new(opener).arg(url).spawn();
+}
+
+#[tauri::command]
+fn clear_chat(node: State<'_, Arc<Node>>, chat: String, everyone: bool) -> CmdResult<()> {
+    node.clear_chat(&chat, everyone)
+}
+
+#[tauri::command]
+fn set_privacy(node: State<'_, Arc<Node>>, typing: bool, receipts: bool) {
+    node.set_privacy(typing, receipts)
+}
+
+#[tauri::command]
+fn typing(node: State<'_, Arc<Node>>, chat: String) {
+    node.typing(&chat)
+}
+
+#[tauri::command]
+fn read_upto(node: State<'_, Arc<Node>>, chat: String, id: String) {
+    node.read_upto(&chat, &id)
+}
+
+#[tauri::command]
+fn reads(node: State<'_, Arc<Node>>, chat: String) -> Value {
+    node.reads(&chat)
+}
+
+/// Sets the app icon (window, taskbar and tray) to a picture drawn by the window: base64 of raw RGBA,
+/// 128 x 128. None goes back to the built-in icon.
+#[tauri::command]
+fn set_app_icon(app: AppHandle, profile: State<'_, Profile>, rgba: Option<String>) -> CmdResult<()> {
+    let path = profile.dir.join("appicon.rgba");
+    match rgba {
+        Some(b64) => {
+            let raw = data_encoding::BASE64.decode(b64.as_bytes()).map_err(|e| e.to_string())?;
+            if raw.len() != (ICON_SIDE * ICON_SIDE * 4) as usize {
+                return Err("Unexpected icon size.".into());
+            }
+            std::fs::write(&path, raw).map_err(|e| e.to_string())?;
+        }
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    apply_icon(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -416,6 +602,13 @@ fn exe_stamp() -> Option<(u64, std::time::SystemTime)> {
 }
 
 fn main() {
+    // Used by small updates to check that a downloaded program starts.
+    if std::env::args().nth(1).as_deref() == Some("--uan-version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    run_newer_delta();
     // On some Linux graphics setups (NVIDIA, virtual machines, some laptops) WebKitGTK's GPU paths
     // leave the window blank/grey. The fallback renderer works everywhere, so use it unless the user
     // set these themselves. Must happen before any threads start.
@@ -443,6 +636,12 @@ fn main() {
         // the new version instead of showing the old window.
         let started_exe = exe_stamp();
         builder = builder.plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
+            #[cfg(target_os = "linux")]
+            if let (Some(_), Some(appimage)) = (newest_delta(), std::env::var_os("APPIMAGE")) {
+                relaunch_later(std::path::Path::new(&appimage));
+                app.exit(0);
+                return;
+            }
             if exe_stamp() != started_exe {
                 app.restart();
             }
@@ -507,6 +706,12 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            if invisible() {
+                if let Some(t) = app.tray_by_id("tray") {
+                    let _ = t.set_visible(false);
+                }
+            }
+            apply_icon(app.handle());
             app.manage(TrayItems { autostart });
             if !is_profile && app.autolaunch().is_enabled().unwrap_or(false) {
                 let _ = app.autolaunch().enable(); // refresh the path after an update
@@ -554,6 +759,12 @@ fn main() {
             audio_track,
             delete_message,
             links,
+            set_privacy,
+            clear_chat,
+            typing,
+            read_upto,
+            reads,
+            set_app_icon,
             party_full,
             set_thumb,
             set_autodl,

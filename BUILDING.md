@@ -27,7 +27,10 @@ npx @tauri-apps/cli@2 build
   downloaded) and controls it through VLC's web interface on 127.0.0.1, so watch together stays in sync.
   Self-test: `UAN_SELFTEST_VIDEO=film.mkv UAN_SELFTEST_VLC=1 UAN_SELFTEST_OUT=r.txt`
   (`UAN_VLC_EXTRA="--intf=dummy --vout=dummy --aout=dummy"` runs VLC without a window).
-  Tests can set `UAN_DOWNLOADS` to keep automatic downloads out of the real Downloads folder.
+  Tests can set `UAN_DOWNLOADS` to keep automatic downloads out of the real Downloads folder, and
+  `UAN_INVISIBLE=1` to run with the window off-screen and no taskbar button, tray icon or notifications.
+- Small AppImage updates: releases include `uan-linux-x86_64.gz` (just the program). The updater saves it
+  as `~/.local/share/UaN/bin/uan-<version>`; the AppImage checks it with `--uan-version` and starts it.
 - `desktop/src/main.rs`: the window, tray icon, autostart and commands for the UI.
 - `desktop/ui/`: the interface (plain HTML, CSS and JavaScript).
 - `mailbox/`: the offline mailbox, a Cloudflare Worker with a D1 database (free tier).

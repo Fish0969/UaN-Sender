@@ -74,20 +74,20 @@
       </div>
       <div id="chat" class="chat hidden">
         <header class="chat-head">
-          <div class="avatar" id="chatAvatar"></div>
-          <div class="grow">
-            <div id="chatName" class="strong ellipsis"></div>
-            <div id="chatStatus" class="sub ellipsis"></div>
-          </div>
+          <button type="button" id="chatTitle" class="chat-title grow" title="Members, add people and more">
+            <div class="avatar" id="chatAvatar"></div>
+            <div class="grow">
+              <div id="chatName" class="strong ellipsis"></div>
+              <div id="chatStatus" class="sub ellipsis"></div>
+            </div>
+          </button>
           <button class="icon" id="galleryBtn" title="Photos, videos and files in this chat">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          </button>
-          <button class="icon" id="chatInfoBtn" title="Details">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
           </button>
         </header>
         <div id="inviteBar" class="invite-bar hidden"></div>
         <div id="msgs" class="msgs"></div>
+        <div id="typingBar" class="typing hidden"><span class="dots"><i></i><i></i><i></i></span><span id="typingText"></span></div>
         <form id="composer" class="composer">
           <button type="button" class="icon" id="attachBtn" title="Send files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
@@ -135,6 +135,7 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <div id="ctxMenu" class="menu hidden"></div>
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
   <input type="file" id="avatarFile" accept="image/*" hidden>
 
@@ -211,16 +212,24 @@
         <button type="button" id="sAvatarBtn" class="avatar-pick" title="Change profile picture"></button>
         <div class="grow">
           <label>Your name<input id="sName" maxlength="32" required spellcheck="false"></label>
-          <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming 🎮, Watching a film, Away"></label>
+          <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming, Watching a film, Away"></label>
         </div>
       </div>
-      <div class="note"><button type="button" class="link" id="sAvatarPick">Choose picture…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
+      <div class="note"><button type="button" class="link" id="sAvatarPick">Upload your own…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
+      <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
       <div class="group">
         <div class="group-title">Appearance</div>
-        <label class="inline">Theme
-          <select id="sTheme"><option value="system">Same as Windows</option><option value="light">Light</option><option value="dark">Dark</option></select>
-        </label>
+        <select id="sTheme" class="hidden"></select>
+        <div class="tiles themes" id="sThemes"></div>
         <div class="swatches" id="sAccent"></div>
+        <div class="sub-title">App icon</div>
+        <div class="tiles icons" id="sIcons"></div>
+        <div class="note">Changes the icon of the window, the taskbar and the tray. The desktop shortcut keeps the original.</div>
+      </div>
+      <div class="group">
+        <div class="group-title">Privacy</div>
+        <label class="check"><input type="checkbox" id="sTyping"> Show others when I’m typing</label>
+        <label class="check"><input type="checkbox" id="sReceipts"> Show others when I’ve seen their messages</label>
       </div>
       <div class="group">
         <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when your computer starts (runs in the tray)</label>
@@ -281,7 +290,7 @@
       <div class="actions">
         <button type="button" id="gLeave" class="danger-text"></button>
         <span class="grow"></span>
-        <button type="button" id="gAdd" class="hidden">Add friends…</button>
+        <button type="button" id="gAdd">Add people…</button>
         <button type="button" id="gClose" class="accent">Done</button>
       </div>
     </form>
