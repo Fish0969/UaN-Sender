@@ -66,7 +66,9 @@ sudo apt install ./UaN_*_amd64.deb
   until the friend has watched or downloaded it (turn on automatic downloads in Settings if you
   want this to happen in the background). That's why UaN starts with your PC and stays in the tray when you close the window.
   Quit it from the tray icon menu.
-- If two PCs can't connect directly, traffic goes through a public relay, which is slower.
+- If two PCs can't connect directly, traffic goes through a public relay, which is much slower. The chat
+  header shows which one you have ("direct connection" or "through a relay server"). Speed is also limited by
+  the sender's upload speed.
 - Some video formats (e.g. some AVI files) can't be played inside UaN; those open in VLC
   automatically (free, [videolan.org](https://www.videolan.org)).
 

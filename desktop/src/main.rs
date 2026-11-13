@@ -252,6 +252,11 @@ fn open_vlc_site() {
 }
 
 #[tauri::command]
+fn links(node: State<'_, Arc<Node>>) -> Value {
+    node.links()
+}
+
+#[tauri::command]
 fn delete_message(node: State<'_, Arc<Node>>, id: String, everyone: bool) -> CmdResult<()> {
     node.delete_message(&id, everyone)
 }
@@ -548,6 +553,7 @@ fn main() {
             install_vlc,
             audio_track,
             delete_message,
+            links,
             party_full,
             set_thumb,
             set_autodl,

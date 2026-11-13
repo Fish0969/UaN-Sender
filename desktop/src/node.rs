@@ -481,7 +481,14 @@ impl Node {
         db.execute_batch(SCHEMA).map_err(e2s)?;
         let _ = db.execute("ALTER TABLE downloads ADD COLUMN chat TEXT", []); // older databases
 
+        // Bigger flow-control windows than the defaults (sized for ~100 Mbit/s at 100 ms), so films
+        // also go fast between far-away PCs with high latency.
+        let transport = iroh::endpoint::QuicTransportConfig::builder()
+            .stream_receive_window(iroh::endpoint::VarInt::from_u32(16 * 1024 * 1024))
+            .send_window(128 * 1024 * 1024)
+            .build();
         let endpoint = Endpoint::builder(presets::N0)
+            .transport_config(transport)
             .secret_key(secret.clone())
             .alpns(vec![ALPN.to_vec()])
             .bind()
@@ -939,6 +946,21 @@ impl Node {
     }
 
     // ----- Presence -----
+
+    /// How each connected peer is reached right now: directly, or through a relay server (slower).
+    pub fn links(&self) -> Value {
+        let conns: Vec<(EndpointId, Connection)> = self.conns.lock().unwrap().iter().map(|(k, v)| (*k, v.clone())).collect();
+        let mut out = serde_json::Map::new();
+        for (id, c) in conns {
+            if c.close_reason().is_some() {
+                continue;
+            }
+            let paths = c.paths();
+            let Some(p) = paths.iter().find(|p| p.is_selected()) else { continue };
+            out.insert(id.to_string(), json!({ "direct": p.is_ip(), "rtt": p.rtt().as_millis() as u64 }));
+        }
+        Value::Object(out)
+    }
 
     fn is_online(&self, peer: &str) -> bool {
         self.seen.lock().unwrap().get(peer).map(|t| t.elapsed() < ONLINE_WINDOW).unwrap_or(false)

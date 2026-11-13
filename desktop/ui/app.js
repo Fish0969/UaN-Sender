@@ -233,7 +233,7 @@ async function runSelfTest(file) {
   } catch (e) {
     thumbInfo = `preview failed: ${e}`;
   }
-  report(v.currentTime > 12.5 && thumbInfo.startsWith('preview '), `played and seeked: t=${v.currentTime.toFixed(2)} duration=${v.duration} via ${S.me.mediaBase ? 'http' : 'media scheme'}; ${thumbInfo}`);
+  report(v.currentTime > 12.5 && thumbInfo.startsWith('preview '), `played and seeked: t=${v.currentTime.toFixed(2)} duration=${v.duration} via ${S.me.mediaBase ? 'http' : 'media scheme'}; ${thumbInfo}; sound bytes reported=${v.webkitAudioDecodedByteCount}`);
 }
 
 function renderMe() {
@@ -269,6 +269,17 @@ $('showCode').addEventListener('click', () => toggleCode());
 
 // ---------- Live events ----------
 listen('message', ({ payload: m }) => onMessage(m));
+// Connection type per friend (direct or relay), refreshed every few seconds.
+S.links = {};
+setInterval(async () => {
+  try {
+    const l = await invoke('links');
+    const changed = JSON.stringify(l) !== JSON.stringify(S.links);
+    S.links = l;
+    if (changed && S.active && !isGroup(S.active)) renderChatHead();
+    if (changed && S.transfers.some((t) => t.status === 'running')) renderTransfers();
+  } catch {}
+}, 4000);
 listen('unsent', ({ payload }) => removeMessage(payload.id, payload.chat));
 listen('contacts', () => loadContacts());
 listen('presence', ({ payload }) => {
@@ -400,7 +411,14 @@ function renderChatHead() {
     setAvatar($('chatAvatar'), info.name, { group: true, seed: info.group.id });
   } else {
     const mood = info.friend.status ? ` · ${info.friend.status}` : '';
-    $('chatStatus').textContent = (info.friend.online ? 'Online' : 'Offline · messages wait for them') + mood;
+    const link = S.links?.[info.friend.id];
+    const how = !info.friend.online || !link ? ''
+      : link.direct ? ` · direct connection (${link.rtt} ms)`
+      : ' · through a relay server (slower)';
+    $('chatStatus').textContent = (info.friend.online ? 'Online' : 'Offline · messages wait for them') + how + mood;
+    $('chatStatus').title = link && !link.direct
+      ? 'Your PCs could not connect directly yet, so data goes through a public relay server, which is slow. UaN keeps trying to connect directly; this usually works within a minute. If it never does, a router or firewall blocks it.'
+      : '';
     setAvatar($('chatAvatar'), info.name, { online: info.friend.online, seed: info.friend.id, src: info.friend.avatar });
   }
 }
@@ -880,8 +898,12 @@ async function reachability(file) {
   }
 }
 
+const isFormatError = (err) => err?.code === 3 || err?.code === 4;
+
+// Only where the player reliably reports decoded sound (Windows). On Linux the count can stay 0 even
+// while sound plays, so there we never guess: VLC is only used when the player itself fails.
 function watchSound(video, file, onSilent) {
-  if (!/^video\//i.test(file.mime)) return;
+  if (!/^video\//i.test(file.mime) || S.me.platform !== 'windows') return;
   let done = false;
   let timer;
   video.addEventListener('playing', () => {
@@ -1074,6 +1096,14 @@ function openViewer(file) {
     const reach = await reachability(file);
     if (token !== viewerToken) return; // the viewer was closed or shows something else now
     const code = err?.code ? ` (code ${err.code}${err.message ? `: ${err.message}` : ''})` : '';
+    if (err && !isFormatError(err)) {
+      if (err.code === 1) return; // stopped on purpose
+      note.textContent = `The connection dropped while loading this film${code}.`;
+      note.append(el('div', { class: 'note-actions' },
+        el('button', { type: 'button', class: 'small', text: 'Try again', onclick: () => openViewer(file) })));
+      note.classList.remove('hidden');
+      return;
+    }
     if (reach !== 'ok') {
       note.textContent = file.owner === S.me.id
         ? `UaN can’t read this file from your disk any more (moved or deleted?). ${reach}`
@@ -1295,7 +1325,8 @@ function renderTransfers() {
     const pct = t.size ? (t.done / t.size) * 100 : 100;
     let info;
     if (t.status === 'running') {
-      info = t.error || [`${fmtBytes(t.done)} of ${fmtBytes(t.size)}`, t.speed ? `${fmtBytes(t.speed)}/s` : '', t.speed ? `${fmtDur((t.size - t.done) / t.speed)} left` : ''].filter(Boolean).join(' · ');
+      const relay = S.links?.[t.file.owner] && !S.links[t.file.owner].direct;
+      info = t.error || [`${fmtBytes(t.done)} of ${fmtBytes(t.size)}`, t.speed ? `${fmtBytes(t.speed)}/s` : '', t.speed ? `${fmtDur((t.size - t.done) / t.speed)} left` : '', relay ? 'through a relay (slower)' : ''].filter(Boolean).join(' · ');
     } else if (t.status === 'paused') info = t.error || `Paused · ${Math.floor(pct)}%`;
     else if (t.status === 'error') info = t.error || 'Failed';
     else info = 'Saved to Downloads';
@@ -1589,6 +1620,18 @@ function openParty(id, mode = partyMode) {
     };
     v.addEventListener('error', async () => {
       if (openPartyId !== id || partyPlayer?.video !== v) return;
+      if (!isFormatError(v.error)) {
+        // A dropped connection: reload the film where we were, still in the party.
+        const at = v.currentTime;
+        toast('The connection dropped. Reloading the film…');
+        setTimeout(() => {
+          if (openPartyId === id && partyPlayer?.video === v && v.error) {
+            v.src = v.src;
+            v.currentTime = at;
+          }
+        }, 1500);
+        return;
+      }
       if ((await reachability(p.file)) !== 'ok') return;
       toVlc('format');
     });
