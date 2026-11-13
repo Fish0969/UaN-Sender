@@ -577,7 +577,8 @@ body.modern .chat-head { height: 48px; }
 /* ================= Phones and narrow windows ================= */
 .back-btn { display: none !important; }
 html.phone .pc-only, html.phone #sAutoRow, html.phone #viewerVlc, html.phone #partyVlc, html.phone #trHead + .tr-list .tr-btns button[title="Show in folder"] { display: none !important; }
-html.phone body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+html.phone body { padding: max(env(safe-area-inset-top), 26px) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); box-sizing: border-box; }
+html.phone .viewer, html.phone .toast { top: max(env(safe-area-inset-top), 26px); }
 html.phone button, html.phone input { min-height: 36px; }
 html.phone button.icon { width: 36px; }
 html.phone .msg-act, html.phone .msg-del { opacity: .55 !important; width: 26px; height: 26px; }

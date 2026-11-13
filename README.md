@@ -79,6 +79,14 @@ sudo apt install ./UaN_*_amd64.deb
   switches over by itself, no installer, no uninstaller, everything stays. On Linux, the AppImage also only downloads the new program
   (a few MB), not the whole 150 MB package.
 
+## Android
+
+Download `UaN_<version>_android.apk` from the [Releases page](https://github.com/Fish0969/UaN-Sender/releases)
+on the phone and open it (Android asks once to allow installing apps from the browser). Updates install over
+the old version, everything stays. The phone does everything the PC does except VLC, folders and the tray;
+films stream to the phone, and the phone can send photos and videos. Android stops apps that are in the
+background for a long time, so files you send from the phone are only available while UaN is open there.
+
 ## Good to know
 
 - **Big files need both PCs on at the same time once**: the sender's PC must be on, with UaN running,
