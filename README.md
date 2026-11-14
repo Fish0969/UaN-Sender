@@ -51,7 +51,8 @@ sudo apt install ./UaN_*_amd64.deb
 - **Delete messages.** Hover a message and click ×: delete it just for you, or (your own) for everyone.
   Deleting a file for everyone also stops sharing it.
 - **Channels.** Groups can have channels besides *general* (tabs above the messages; + makes a new one). A channel can be locked with a password: its
-  messages are encrypted with that password, so only people who know it can read them.
+  messages are encrypted with that password, so only people who know it can read them. The password is asked every time
+  you open the channel.
 - **Groups.** Click a group's name (or right-click it in the list) for members, adding people and more.
   Anyone in the group can add their friends; new members see the earlier messages too. Clear a chat's
   messages for yourself, or (the group's creator) for everyone.
@@ -59,10 +60,12 @@ sudo apt install ./UaN_*_amd64.deb
   the top of the chat, and write **bold**, *italic*, ~~strike~~ or `code`. In groups, @Name mentions someone.
 - **Quiet when you want.** Mute a chat, group or channel (an @mention or an answer to you still comes through).
   Click your picture to be Online, Away or Do not disturb (no notifications at all).
-- **Folders.** Send a whole folder: every file in it arrives with its folder path.
+- **Folders.** Send a whole folder: it shows up as one folder in the chat. Click it to see what is inside, pick
+  what you want, or **Download all**; the folder structure is kept in Downloads.
+- **Photos sent together** show up as one grid, like in Discord. In groups, each message has the sender's picture beside it.
 - **Backup.** Settings → Backup saves your friend code, friends, groups and messages in one password-protected
   file, to move UaN to a new PC or restore it after reinstalling.
-- **Typing and seen.** "… is typing", and small profile pictures under the last message each person has
+- **Typing and seen.** "… is typing", and small profile pictures next to the time of the last message each person has
   seen, like in Messenger. Both can be turned off in Settings.
 - **Previews.** Photos and videos show a preview picture (and the video's length) in the chat, even
   when the sender's PC is off.
@@ -84,8 +87,13 @@ sudo apt install ./UaN_*_amd64.deb
 Download `UaN_<version>_android.apk` from the [Releases page](https://github.com/Fish0969/UaN-Sender/releases)
 on the phone and open it (Android asks once to allow installing apps from the browser). Updates install over
 the old version, everything stays. The phone does everything the PC does except VLC, folders and the tray;
-films stream to the phone, and the phone can send photos and videos. Android stops apps that are in the
+films stream to the phone, and the **Photos** button sends pictures and videos from the gallery. Android stops apps that are in the
 background for a long time, so files you send from the phone are only available while UaN is open there.
+
+**Use your PC's account on the phone.** On the PC: Settings → *Sign in on your phone*; it shows a short code. On the
+phone: *Already use UaN on your PC? Sign in with it* (or Settings → Your PC) and type the code. The phone gets your
+friends, groups and messages and becomes a second device of the same account: friends reach you on both, and
+**the phone keeps working when the PC is off**. When both are on again they catch up with each other.
 
 ## Good to know
 

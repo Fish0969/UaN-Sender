@@ -38,7 +38,7 @@ const ALPN: &[u8] = b"uan/1";
 const MAX_FRAME: usize = 1 << 20;
 /// Version of the peer-to-peer protocol. 2: History, GroupInvite, Typing, Seen. Those are only sent to
 /// peers known to understand them (older versions drop the connection on unknown requests).
-const PROTO: u32 = 2;
+const PROTO: u32 = 3;
 const MEDIA_CHUNK: u64 = 8 * 1024 * 1024;
 const MEDIA_WHOLE_LIMIT: u64 = 32 * 1024 * 1024;
 const ONLINE_WINDOW: Duration = Duration::from_secs(150);
@@ -59,6 +59,7 @@ const PROBE_BYTES: u64 = 8 * 1024 * 1024; // speed test size
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS devices (dev TEXT PRIMARY KEY, acct TEXT NOT NULL, cert TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', added INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS groups (
@@ -90,6 +91,43 @@ pub struct FileMeta {
     pub size: u64,
     pub mime: String,
     pub owner: String,
+    /// The device that has the file, when it is not the owner's PC (e.g. their phone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev: Option<String>,
+}
+
+/// One more device of an account (a phone signed in to a PC's account), with the account's signature.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DevCert {
+    pub id: String,
+    pub cert: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+fn verify_dev(acct: &str, dev: &str, cert: &str) -> bool {
+    let (Ok(pk), Ok(bytes)) = (parse_id(acct), HEXLOWER.decode(cert.as_bytes())) else { return false };
+    let Ok(arr) = <[u8; 64]>::try_from(bytes) else { return false };
+    pk.verify(format!("uan-dev:{dev}").as_bytes(), &iroh::Signature::from_bytes(&arr)).is_ok()
+}
+
+/// The key a pairing code stands for (both the PC and the phone can make it from the code).
+fn link_key(code: &str) -> SecretKey {
+    let norm: String = code.to_uppercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let h: [u8; 32] = Sha256::digest(format!("uan-link-v1:{norm}").as_bytes()).into();
+    SecretKey::from_bytes(&h)
+}
+
+fn sign_with(key: &SecretKey, msg: &str) -> String {
+    HEXLOWER.encode(&key.sign(msg.as_bytes()).to_bytes())
+}
+
+/// A phone being signed in to this PC's account.
+struct LinkSession {
+    key: SecretKey,
+    expires: i64,
+    dev: Option<String>,
+    snapshot: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -233,8 +271,38 @@ pub enum Req {
         /// online | away | dnd
         #[serde(default)]
         mode: String,
+        /// The sender's other devices (a phone signed in to the same account).
+        #[serde(default)]
+        devs: Vec<DevCert>,
     },
     Profile,
+    /// Sent by a device that isn't the account's PC: who it is, with the account's signature.
+    Dev { acct: String, cert: String, req: Box<Req> },
+    /// Between your own devices: something that happened on the other one (`from` is who did it).
+    Mirror {
+        from: String,
+        #[serde(default)]
+        chat: String,
+        req: Box<Req>,
+    },
+    /// Your friend's devices changed (they signed in on a phone).
+    Devices { devs: Vec<DevCert> },
+    /// Between your own devices: your name, status and picture.
+    MyProfile {
+        name: String,
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        avatar: Option<String>,
+        pv: i64,
+    },
+    /// A phone asks the PC for a copy of the account (with proof that it knows the pairing code).
+    LinkGet {
+        proof: String,
+        #[serde(default)]
+        name: String,
+        part: u32,
+    },
     FriendRequest { name: String },
     FriendAccept { name: String },
     FriendRemove,
@@ -605,8 +673,21 @@ pub struct Node {
     app: AppHandle,
     dir: PathBuf,
     endpoint: Endpoint,
+    /// This device's network id.
     me: EndpointId,
+    /// The account id: who you are to your friends (on a PC, the same as its network id).
     me_s: String,
+    /// This device's network id as text (mailbox address).
+    dev_s: String,
+    /// The account's key (a phone signed in to a PC has a copy; its own network key is `secret`).
+    acct_secret: SecretKey,
+    /// The account's signature for this device (only on a phone signed in to a PC).
+    cert: Option<String>,
+    /// Device -> account, for the devices we know.
+    devmap: Mutex<HashMap<String, String>>,
+    /// When we last heard from each device.
+    dev_seen: Mutex<HashMap<String, Instant>>,
+    link: Mutex<Option<LinkSession>>,
     db: Mutex<rusqlite::Connection>,
     conns: Mutex<HashMap<EndpointId, Connection>>,
     seen: Mutex<HashMap<String, Instant>>,
@@ -643,6 +724,14 @@ impl Node {
             let _ = std::fs::rename(dir.join("uan.db.import"), dir.join("uan.db"));
             let _ = std::fs::rename(dir.join("identity.key.import"), dir.join("identity.key"));
         }
+        // A phone that was just signed in to a PC's account: the account and its copy of the data.
+        if dir.join("account.key.import").exists() && dir.join("uan.db.import").exists() {
+            for f in ["uan.db-wal", "uan.db-shm"] {
+                let _ = std::fs::remove_file(dir.join(f));
+            }
+            let _ = std::fs::rename(dir.join("uan.db.import"), dir.join("uan.db"));
+            let _ = std::fs::rename(dir.join("account.key.import"), dir.join("account.key"));
+        }
         let key_path = dir.join("identity.key");
         let secret = match std::fs::read(&key_path) {
             Ok(b) if b.len() == 32 => SecretKey::from_bytes(&b.try_into().unwrap()),
@@ -660,6 +749,8 @@ impl Node {
         let _ = db.execute("ALTER TABLE messages ADD COLUMN sealed TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN reply TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN edited INTEGER", []);
+        // Locked channels ask for their password every time: no channel key survives a restart.
+        let _ = db.execute("DELETE FROM kv WHERE k LIKE 'chkey:%'", []);
 
         // Bigger flow-control windows than the defaults (sized for ~100 Mbit/s at 100 ms), so films
         // also go fast between far-away PCs with high latency.
@@ -675,6 +766,18 @@ impl Node {
             .await
             .map_err(|e| format!("Couldn't start networking: {e}"))?;
         let me = endpoint.id();
+        let acct_secret = match std::fs::read(dir.join("account.key")) {
+            Ok(b) if b.len() == 32 => SecretKey::from_bytes(&b.try_into().unwrap()),
+            _ => secret.clone(),
+        };
+        let me_s = acct_secret.public().to_string();
+        let dev_s = me.to_string();
+        let cert = (me_s != dev_s).then(|| sign_with(&acct_secret, &format!("uan-dev:{dev_s}")));
+        let devmap: HashMap<String, String> = {
+            let mut stmt = db.prepare("SELECT dev, acct FROM devices").map_err(e2s)?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e2s)?;
+            rows.filter_map(Result::ok).collect()
+        };
 
         let mut transfers: Vec<Transfer> =
             std::fs::read(dir.join("transfers.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
@@ -694,7 +797,13 @@ impl Node {
             dir,
             endpoint,
             me,
-            me_s: me.to_string(),
+            me_s,
+            dev_s,
+            acct_secret,
+            cert,
+            devmap: Mutex::new(devmap),
+            dev_seen: Mutex::new(HashMap::new()),
+            link: Mutex::new(None),
             db: Mutex::new(db),
             conns: Mutex::new(HashMap::new()),
             seen: Mutex::new(HashMap::new()),
@@ -744,7 +853,389 @@ impl Node {
     }
 
     pub fn friend_code(&self) -> String {
-        format!("UAN-{}", BASE32_NOPAD.encode(self.me.as_bytes()))
+        format!("UAN-{}", BASE32_NOPAD.encode(self.acct_secret.public().as_bytes()))
+    }
+
+    // ----- Devices: one account on a PC and a phone -----
+
+    /// Remembers that `dev` belongs to `acct` (if the account's signature is right).
+    fn learn_dev(&self, acct: &str, dev: &str, cert: &str, name: &str) -> bool {
+        if acct == dev {
+            return true;
+        }
+        if self.devmap.lock().unwrap().get(dev).is_some_and(|a| a == acct) && name.is_empty() {
+            return true;
+        }
+        if !verify_dev(acct, dev, cert) {
+            return false;
+        }
+        let _ = self.db.lock().unwrap().execute(
+            "INSERT INTO devices (dev, acct, cert, name, added) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(dev) DO UPDATE SET acct = excluded.acct, cert = excluded.cert, name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE devices.name END",
+            params![dev, acct, cert, name, now()],
+        );
+        self.devmap.lock().unwrap().insert(dev.to_string(), acct.to_string());
+        true
+    }
+
+    fn learn_devs(&self, acct: &str, list: &Value) {
+        let Some(arr) = list.as_array() else { return };
+        for d in arr.iter().take(8) {
+            if let (Some(id), Some(cert)) = (d["id"].as_str(), d["cert"].as_str()) {
+                if parse_id(id).is_ok() {
+                    self.learn_dev(acct, id, cert, d["name"].as_str().unwrap_or(""));
+                }
+            }
+        }
+    }
+
+    /// The account a device belongs to (a PC is its own account).
+    fn account_of(&self, dev: &str) -> String {
+        self.devmap.lock().unwrap().get(dev).cloned().unwrap_or_else(|| dev.to_string())
+    }
+
+    /// Every device of an account except this one, the ones heard from most recently first.
+    fn devices_of(&self, acct: &str) -> Vec<String> {
+        let mut v = vec![acct.to_string()];
+        v.extend(self.devmap.lock().unwrap().iter().filter(|(d, a)| *a == acct && *d != acct).map(|(d, _)| d.clone()));
+        v.retain(|d| *d != self.dev_s);
+        let seen = self.dev_seen.lock().unwrap();
+        v.sort_by(|a, b| seen.get(b).cmp(&seen.get(a)));
+        v
+    }
+
+    /// Our account's devices with their signatures (told to friends so they reach all of them).
+    fn my_certs(&self) -> Vec<DevCert> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("SELECT dev, cert, name FROM devices WHERE acct = ?1 ORDER BY added").unwrap();
+        let rows = stmt.query_map([&self.me_s], |r| Ok(DevCert { id: r.get(0)?, cert: r.get(1)?, name: r.get(2)? })).unwrap();
+        rows.filter_map(Result::ok).collect()
+    }
+
+    pub fn devices(&self) -> Value {
+        let seen = self.dev_seen.lock().unwrap().clone();
+        let mut out = vec![json!({ "id": self.me_s, "name": "PC", "primary": true, "here": self.me_s == self.dev_s, "online": self.me_s == self.dev_s || seen.get(&self.me_s).is_some_and(|t| t.elapsed() < ONLINE_WINDOW) })];
+        for d in self.my_certs() {
+            let online = d.id == self.dev_s || seen.get(&d.id).is_some_and(|t| t.elapsed() < ONLINE_WINDOW);
+            out.push(json!({ "id": d.id, "name": if d.name.is_empty() { "Phone".to_string() } else { d.name }, "primary": false, "here": d.id == self.dev_s, "online": online }));
+        }
+        json!(out)
+    }
+
+    /// What this device sends: phones say which account they belong to.
+    fn wrap(&self, req: &Req) -> Req {
+        match &self.cert {
+            Some(c) => Req::Dev { acct: self.me_s.clone(), cert: c.clone(), req: Box::new(req.clone()) },
+            None => req.clone(),
+        }
+    }
+
+    /// Unwraps what a device sent: (the account it speaks for, the request).
+    fn open_dev(&self, dev: &str, req: Req) -> Result<(String, Req), String> {
+        self.dev_seen.lock().unwrap().insert(dev.to_string(), Instant::now());
+        match req {
+            Req::Dev { acct, cert, req } => {
+                if matches!(*req, Req::Dev { .. }) || !self.learn_dev(&acct, dev, &cert, "") {
+                    return Err("Unknown device.".into());
+                }
+                Ok((acct, *req))
+            }
+            other => Ok((self.account_of(dev), other)),
+        }
+    }
+
+    /// Things a friend sends that our other devices should get too (in case the friend doesn't know them yet).
+    fn mirrorable(req: &Req) -> bool {
+        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Thumb { .. } | Req::ClearGroup { .. })
+    }
+
+    /// Passes something to our other devices (directly, or through the mailbox while they are off).
+    fn mirror(self: &Arc<Self>, from: &str, chat: &str, req: &Req) {
+        let devs = self.devices_of(&self.me_s);
+        if devs.is_empty() {
+            return;
+        }
+        let m = Req::Mirror { from: from.to_string(), chat: chat.to_string(), req: Box::new(req.clone()) };
+        let payload = serde_json::to_string(&m).unwrap();
+        for d in devs {
+            let _ = self.db.lock().unwrap().execute("INSERT INTO outbox (peer, payload, created_at) VALUES (?1, ?2, ?3)", params![d, payload, now()]);
+            tauri::async_runtime::spawn(self.clone().flush(d));
+        }
+    }
+
+    /// Something we did on our other device.
+    fn apply_own(self: &Arc<Self>, chat: &str, req: Req) -> Result<Value, String> {
+        let ok = json!({ "ok": true, "proto": PROTO });
+        let me = self.me_s.clone();
+        match req {
+            Req::Msg { msg } => {
+                let chat = match &msg.group {
+                    Some(g) => {
+                        if !self.is_member(g, &me) {
+                            return Err("later".into());
+                        }
+                        chat_id(g, msg.channel.as_deref())
+                    }
+                    None => chat.to_string(),
+                };
+                if chat.is_empty() || msg.file.as_ref().is_some_and(|f| f.size > MAX_FILE_SIZE) {
+                    return Err("Invalid message.".into());
+                }
+                let text = msg.text.as_ref().map(|t| t.chars().take(5000).collect::<String>());
+                self.store_message(&msg.id, &chat, &me, &msg.name, text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref(), msg.reply.as_ref());
+                Ok(ok)
+            }
+            Req::Edit { msg_id, text, sealed } => {
+                let chat: Option<String> = self.db.lock().unwrap().query_row("SELECT chat FROM messages WHERE id = ?1 AND sender = ?2", [&msg_id, &me], |r| r.get(0)).optional().ok().flatten();
+                if let Some(chat) = chat {
+                    self.apply_edit(&chat, &msg_id, text.as_deref(), sealed.as_deref());
+                }
+                Ok(ok)
+            }
+            Req::Unsend { msg_id } => {
+                self.remove_message(&msg_id, Some(&me));
+                Ok(ok)
+            }
+            Req::Pin { msg_id, pinned, .. } => {
+                if !chat.is_empty() {
+                    self.apply_pin(chat, &msg_id, &me, pinned);
+                }
+                Ok(ok)
+            }
+            Req::Thumb { file_id, data } => {
+                if data.len() <= 300_000 && data.starts_with('{') {
+                    let _ = self.db.lock().unwrap().execute("INSERT OR REPLACE INTO thumbs (file_id, data) VALUES (?1, ?2)", [&file_id, &data]);
+                    self.emit("thumb", json!({ "fileId": file_id, "thumb": serde_json::from_str::<Value>(&data).unwrap_or(Value::Null) }));
+                }
+                Ok(ok)
+            }
+            Req::Group { group } => {
+                let version: Option<i64> = self.db.lock().unwrap().query_row("SELECT version FROM groups WHERE id = ?1", [&group.id], |r| r.get(0)).optional().ok().flatten();
+                if version.is_none_or(|v| group.version > v) {
+                    if group.members.iter().any(|m| m.id == me) {
+                        self.save_group(&group);
+                    } else if version.is_some() {
+                        self.delete_group_local(&group.id);
+                    }
+                }
+                Ok(ok)
+            }
+            Req::GroupLeave { group_id } => {
+                self.delete_group_local(&group_id);
+                Ok(ok)
+            }
+            Req::FriendRequest { name } => {
+                if !chat.is_empty() && parse_id(chat).is_ok() && self.contact_status(chat).as_deref() != Some("friend") {
+                    self.set_contact(chat, &name, "outgoing");
+                }
+                Ok(ok)
+            }
+            Req::FriendAccept { name } => {
+                if !chat.is_empty() && parse_id(chat).is_ok() {
+                    self.set_contact(chat, &name, "friend");
+                }
+                Ok(ok)
+            }
+            Req::FriendRemove => {
+                let _ = self.db.lock().unwrap().execute("DELETE FROM contacts WHERE id = ?1", [chat]);
+                self.emit("contacts", Value::Null);
+                Ok(ok)
+            }
+            Req::ClearGroup { group_id, before, channel } => {
+                self.clear_local(&chat_id(&group_id, channel.as_deref()), before);
+                Ok(ok)
+            }
+            Req::MyProfile { name, status, avatar, pv } => {
+                if pv > self.my_pv() && !name.trim().is_empty() {
+                    self.set_kv("name", &name.chars().take(32).collect::<String>());
+                    self.set_kv("status", &status.chars().take(60).collect::<String>());
+                    match avatar.filter(|a| a.starts_with("data:image/") && a.len() <= 200_000) {
+                        Some(a) => self.set_kv("avatar", &a),
+                        None => {
+                            let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'avatar'", []);
+                        }
+                    }
+                    self.set_kv("pv", &pv.to_string());
+                    self.emit("me", Value::Null);
+                }
+                Ok(ok)
+            }
+            _ => Err("Not allowed.".into()),
+        }
+    }
+
+    // ----- Signing a phone in to this PC's account -----
+
+    /// Makes a pairing code for the phone and leaves this PC's address in the mailbox under it.
+    pub async fn link_start(self: &Arc<Self>) -> Result<String, String> {
+        if self.cert.is_some() {
+            return Err("Do this on your PC: this device is already signed in to it.".into());
+        }
+        const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        let raw = Sha256::digest(format!("{}{}{}", new_id(), new_id(), now()).as_bytes());
+        let code: String = raw.iter().take(10).map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char).collect();
+        let key = link_key(&code);
+        let rid = key.public().to_string();
+        let note = json!({ "pc": self.dev_s }).to_string();
+        let ts = now();
+        let digest = HEXLOWER.encode(&Sha256::digest(note.as_bytes()));
+        let sig = self.sign_hex(&format!("send:{rid}:{ts}:{digest}"));
+        self.mailbox_post("/send", json!({ "from": self.dev_s, "to": rid, "box": note, "ts": ts, "sig": sig }))
+            .await
+            .map_err(|e| format!("Couldn't reach the mailbox ({e}). Check the internet connection."))?;
+        *self.link.lock().unwrap() = Some(LinkSession { key, expires: now() + 15 * 60 * 1000, dev: None, snapshot: None });
+        Ok(format!("{}-{}-{}", &code[..4], &code[4..8], &code[8..]))
+    }
+
+    /// A phone (or second PC) signed in to another PC's account.
+    pub fn is_linked_device(&self) -> bool {
+        self.cert.is_some()
+    }
+
+    pub fn link_cancel(&self) {
+        *self.link.lock().unwrap() = None;
+    }
+
+    /// The PC's side: hands a copy of the account to the phone that knows the code, in parts.
+    fn link_serve(self: &Arc<Self>, dev: &str, proof: &str, name: &str, part: u32) -> Result<Value, String> {
+        const PART: usize = 600 * 1024;
+        let (chunk, parts, first) = {
+            let mut guard = self.link.lock().unwrap();
+            let s = guard.as_mut().ok_or("No phone is being signed in on that PC right now. Make a new code.")?;
+            if now() > s.expires {
+                *guard = None;
+                return Err("That code has expired. Make a new one on your PC.".into());
+            }
+            let ok_proof = HEXLOWER
+                .decode(proof.as_bytes())
+                .ok()
+                .and_then(|b| <[u8; 64]>::try_from(b).ok())
+                .is_some_and(|arr| s.key.public().verify(format!("uan-link:{dev}").as_bytes(), &iroh::Signature::from_bytes(&arr)).is_ok());
+            if !ok_proof || parse_id(dev).is_err() {
+                return Err("Wrong code.".into());
+            }
+            if s.dev.as_deref().is_some_and(|d| d != dev) {
+                return Err("Another device is already using this code.".into());
+            }
+            if s.snapshot.is_none() {
+                s.dev = Some(dev.to_string());
+                // Register the phone first, so its copy already knows it belongs to the account.
+                let cert = sign_with(&self.acct_secret, &format!("uan-dev:{dev}"));
+                let label: String = name.trim().chars().take(32).collect();
+                self.learn_dev(&self.me_s, dev, &cert, if label.is_empty() { "Phone" } else { &label });
+                let tmp = self.dir.join("link.tmp.db");
+                let _ = std::fs::remove_file(&tmp);
+                self.db.lock().unwrap().execute("VACUUM INTO ?1", [tmp.to_string_lossy()]).map_err(e2s)?;
+                {
+                    // Only what makes sense on the phone: no PC paths, nothing waiting to be sent from here.
+                    let c = rusqlite::Connection::open(&tmp).map_err(e2s)?;
+                    for q in [
+                        "DELETE FROM outbox",
+                        "DELETE FROM shared_files",
+                        "DELETE FROM downloads",
+                        "DELETE FROM kv WHERE k LIKE 'chkey:%' OR k IN ('autostart', 'icon')",
+                    ] {
+                        let _ = c.execute(q, []);
+                    }
+                    let _ = c.execute("VACUUM", []);
+                }
+                let bytes = std::fs::read(&tmp).map_err(e2s)?;
+                let _ = std::fs::remove_file(&tmp);
+                s.snapshot = Some(bytes);
+            }
+            let snap = s.snapshot.as_ref().unwrap();
+            let parts = snap.len().div_ceil(PART).max(1);
+            let i = part as usize;
+            if i >= parts {
+                return Err("Bad part.".into());
+            }
+            let chunk = snap[i * PART..((i + 1) * PART).min(snap.len())].to_vec();
+            if i + 1 == parts {
+                *guard = None;
+            }
+            (chunk, parts, i == 0)
+        };
+        let mut v = json!({ "ok": true, "proto": PROTO, "parts": parts, "data": BASE64.encode(&chunk) });
+        if first {
+            v["account"] = json!(HEXLOWER.encode(&self.acct_secret.to_bytes()));
+        }
+        if part as usize + 1 == parts {
+            // Tell friends about the new device, so they send to it too.
+            let req = Req::Devices { devs: self.my_certs() };
+            for p in self.known_peers() {
+                self.deliver(&p, &req);
+            }
+            self.emit("linked", json!({ "name": name }));
+        }
+        Ok(v)
+    }
+
+    /// The phone's side: finds the PC by the code, takes a copy of the account. It takes effect after a restart.
+    pub async fn link_join(self: &Arc<Self>, code: &str, name: &str) -> Result<(), String> {
+        let norm: String = code.to_uppercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if norm.len() != 10 {
+            return Err("The code has 10 letters and numbers, like ABCD-EFGH-JK.".into());
+        }
+        let key = link_key(&norm);
+        let rid = key.public().to_string();
+        let ts = now();
+        let v = self
+            .mailbox_post("/fetch", json!({ "who": rid, "ts": ts, "sig": sign_with(&key, &format!("fetch:{rid}:{ts}")) }))
+            .await
+            .map_err(|e| format!("Couldn't reach the mailbox ({e}). Check the internet connection."))?;
+        let mut pc = None;
+        let mut ids = Vec::new();
+        for m in v["mail"].as_array().cloned().unwrap_or_default() {
+            if let Some(id) = m["id"].as_i64() {
+                ids.push(id);
+            }
+            let note: Value = serde_json::from_str(m["box"].as_str().unwrap_or("")).unwrap_or(Value::Null);
+            if let (Some(p), Some(sender)) = (note["pc"].as_str(), m["sender"].as_str()) {
+                if p == sender && parse_id(p).is_ok() {
+                    pc = Some(p.to_string());
+                }
+            }
+        }
+        let pc = pc.ok_or("No PC is waiting with this code. Check the code, or make a new one on your PC.")?;
+        if pc == self.dev_s {
+            return Err("That code is from this device. Type it on your phone.".into());
+        }
+        let proof = sign_with(&key, &format!("uan-link:{}", self.dev_s));
+        let mut data = Vec::new();
+        let mut account = None;
+        let mut part = 0u32;
+        loop {
+            let v = self.request_dev(&pc, &Req::LinkGet { proof: proof.clone(), name: name.to_string(), part }).await.map_err(|e| match e {
+                ReqError::Offline(_) => "Couldn't reach your PC. Make sure UaN is running on it, then try again.".to_string(),
+                ReqError::Refused(e) => e,
+            })?;
+            if part == 0 {
+                account = v["account"].as_str().map(str::to_string);
+            }
+            data.extend(BASE64.decode(v["data"].as_str().unwrap_or("").as_bytes()).map_err(e2s)?);
+            let parts = v["parts"].as_u64().unwrap_or(1) as u32;
+            part += 1;
+            if part >= parts {
+                break;
+            }
+            self.emit("link-progress", json!({ "done": part, "parts": parts }));
+        }
+        let acct = account
+            .and_then(|a| HEXLOWER.decode(a.as_bytes()).ok())
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .map(|b| SecretKey::from_bytes(&b))
+            .ok_or("The PC didn't send the account.")?;
+        if acct.public().to_string() != pc || data.len() < 1024 {
+            return Err("That didn't work. Make a new code on your PC and try again.".into());
+        }
+        if !ids.is_empty() {
+            let ts = now();
+            let list = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+            let _ = self.mailbox_post("/ack", json!({ "who": rid, "ts": ts, "ids": ids, "sig": sign_with(&key, &format!("ack:{rid}:{ts}:{list}")) })).await;
+        }
+        std::fs::write(self.dir.join("uan.db.import"), &data).map_err(e2s)?;
+        std::fs::write(self.dir.join("account.key.import"), acct.to_bytes()).map_err(e2s)?;
+        Ok(())
     }
 
     pub fn my_name(&self) -> String {
@@ -775,7 +1266,7 @@ impl Node {
     }
 
     fn ping_req(&self) -> Req {
-        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO, mode: self.my_mode() }
+        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO, mode: self.my_mode(), devs: self.my_certs() }
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
@@ -804,6 +1295,7 @@ impl Node {
             }
         }
         self.set_kv("pv", &now().to_string());
+        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), pv: self.my_pv() });
         // Let everyone know.
         let req = self.ping_req();
         for p in self.known_peers() {
@@ -868,6 +1360,9 @@ impl Node {
                 return Err("Not your file.".into());
             }
             let _ = db.execute("INSERT OR REPLACE INTO thumbs (file_id, data) VALUES (?1, ?2)", [file_id, data]);
+            drop(db);
+            self.mirror(&self.me_s.clone(), "", &Req::Thumb { file_id: file_id.to_string(), data: data.to_string() });
+            let db = self.db.lock().unwrap();
             // Files sent only in locked channels keep their preview here (it would not be encrypted).
             let open = db
                 .query_row("SELECT 1 FROM messages WHERE json_extract(file, '$.id') = ?1 LIMIT 1", [file_id], |_| Ok(()))
@@ -930,7 +1425,7 @@ impl Node {
 
     async fn blob_send(&self, peer: &str, req: &Req) {
         let Req::Msg { msg } = req else { return };
-        let Some(file) = msg.file.as_ref().filter(|f| f.owner == self.me_s && f.size <= BLOB_MAX) else { return };
+        let Some(file) = msg.file.as_ref().filter(|f| f.owner == self.me_s && f.dev.is_none() && f.size <= BLOB_MAX) else { return };
         let url = self.mailbox_url();
         let path: Option<String> = self.db.lock().unwrap().query_row("SELECT path FROM shared_files WHERE id = ?1", [&file.id], |r| r.get(0)).optional().ok().flatten();
         let (Some(path), false) = (path, url.is_empty()) else { return };
@@ -940,7 +1435,7 @@ impl Node {
         let sig = self.sign_hex(&format!("blobput:{peer}:{}:{ts}:{}", file.id, sealed.len()));
         let res = self
             .http
-            .post(format!("{url}/blob/put?from={}&to={peer}&id={}&ts={ts}&sig={sig}", self.me_s, file.id))
+            .post(format!("{url}/blob/put?from={}&to={peer}&id={}&ts={ts}&sig={sig}", self.dev_s, file.id))
             .timeout(Duration::from_secs(600))
             .body(sealed)
             .send()
@@ -958,8 +1453,8 @@ impl Node {
         }
         let url = self.mailbox_url();
         let ts = now();
-        let sig = self.sign_hex(&format!("blobget:{}:{}:{ts}", self.me_s, file.id));
-        let Ok(r) = self.http.post(format!("{url}/blob/get")).timeout(Duration::from_secs(600)).json(&json!({ "who": self.me_s, "id": file.id, "ts": ts, "sig": sig })).send().await else { return false };
+        let sig = self.sign_hex(&format!("blobget:{}:{}:{ts}", self.dev_s, file.id));
+        let Ok(r) = self.http.post(format!("{url}/blob/get")).timeout(Duration::from_secs(600)).json(&json!({ "who": self.dev_s, "id": file.id, "ts": ts, "sig": sig })).send().await else { return false };
         if !r.status().is_success() {
             return false;
         }
@@ -992,8 +1487,8 @@ impl Node {
         });
         self.emit_transfers();
         let ts = now();
-        let sig = self.sign_hex(&format!("blobdel:{}:{}:{ts}", self.me_s, file.id));
-        let _ = self.http.post(format!("{url}/blob/del")).json(&json!({ "who": self.me_s, "id": file.id, "ts": ts, "sig": sig })).send().await;
+        let sig = self.sign_hex(&format!("blobdel:{}:{}:{ts}", self.dev_s, file.id));
+        let _ = self.http.post(format!("{url}/blob/del")).json(&json!({ "who": self.dev_s, "id": file.id, "ts": ts, "sig": sig })).send().await;
         self.log(&format!("mailbox: picked up file {}", file.name));
         true
     }
@@ -1053,7 +1548,11 @@ impl Node {
     }
 
     fn mailbox_ok(req: &Req) -> bool {
-        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. })
+        match req {
+            Req::Dev { req, .. } => Self::mailbox_ok(req),
+            Req::Mirror { req, .. } => Self::mailbox_ok(req) || matches!(**req, Req::MyProfile { .. } | Req::ClearGroup { .. }),
+            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Devices { .. }),
+        }
     }
 
     async fn mailbox_post(&self, path: &str, body: Value) -> Result<Value, String> {
@@ -1067,11 +1566,11 @@ impl Node {
     }
 
     async fn mailbox_send(&self, peer: &str, req: &Req) -> Result<(), String> {
-        let sealed = self.seal(peer, req)?;
+        let sealed = self.seal(peer, &self.wrap(req))?;
         let ts = now();
         let digest = HEXLOWER.encode(&Sha256::digest(sealed.as_bytes()));
         let sig = self.sign_hex(&format!("send:{peer}:{ts}:{digest}"));
-        self.mailbox_post("/send", json!({ "from": self.me_s, "to": peer, "box": sealed, "ts": ts, "sig": sig })).await?;
+        self.mailbox_post("/send", json!({ "from": self.dev_s, "to": peer, "box": sealed, "ts": ts, "sig": sig })).await?;
         self.log(&format!("mailbox: left a message for {}", &peer[..8]));
         Ok(())
     }
@@ -1083,36 +1582,44 @@ impl Node {
         }
         loop {
             let ts = now();
-            let sig = self.sign_hex(&format!("fetch:{}:{ts}", self.me_s));
-            let Ok(v) = self.mailbox_post("/fetch", json!({ "who": self.me_s, "ts": ts, "sig": sig })).await else { return };
+            let sig = self.sign_hex(&format!("fetch:{}:{ts}", self.dev_s));
+            let Ok(v) = self.mailbox_post("/fetch", json!({ "who": self.dev_s, "ts": ts, "sig": sig })).await else { return };
             let mail = v["mail"].as_array().cloned().unwrap_or_default();
             if mail.is_empty() {
                 return;
             }
             let mut ids = Vec::new();
             for m in &mail {
-                let (Some(id), Some(from), Some(sealed)) = (m["id"].as_i64(), m["sender"].as_str(), m["box"].as_str()) else { continue };
+                let (Some(id), Some(dev), Some(sealed)) = (m["id"].as_i64(), m["sender"].as_str(), m["box"].as_str()) else { continue };
                 ids.push(id);
-                match self.open_box(from, sealed) {
-                    Ok(req) if Self::mailbox_ok(&req) => {
+                let opened = self.open_box(dev, sealed).and_then(|req| self.open_dev(dev, req));
+                match opened {
+                    Ok((from, req)) if Self::mailbox_ok(&req) => {
+                        let from = from.as_str();
                         if let Req::Msg { msg } = &req {
-                            if let Some(file) = msg.file.as_ref().filter(|f| f.owner == from && f.size <= BLOB_MAX) {
+                            if let Some(file) = msg.file.as_ref().filter(|f| f.owner == from && f.dev.is_none() && f.size <= BLOB_MAX) {
                                 let chat = msg.group.as_ref().map(|g| format!("g:{g}")).unwrap_or_else(|| from.to_string());
-                                self.blob_fetch(from, file, &chat).await;
+                                self.blob_fetch(dev, file, &chat).await;
                             }
                         }
-                        if let Err(e) = self.on_request(from, req) {
-                            self.log(&format!("mailbox: message from {} refused: {e}", &from[..from.len().min(8)]));
+                        let copy = (from != self.me_s && Self::mirrorable(&req)).then(|| req.clone());
+                        match self.on_request(from, req) {
+                            Ok(_) => {
+                                if let Some(r) = copy {
+                                    self.mirror(from, "", &r);
+                                }
+                            }
+                            Err(e) => self.log(&format!("mailbox: message from {} refused: {e}", &from[..from.len().min(8)])),
                         }
                     }
-                    _ => self.log(&format!("mailbox: dropped an unreadable message from {}", &from[..from.len().min(8)])),
+                    _ => self.log(&format!("mailbox: dropped an unreadable message from {}", &dev[..dev.len().min(8)])),
                 }
             }
             self.log(&format!("mailbox: picked up {} message(s)", ids.len()));
             let ts = now();
             let list = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-            let sig = self.sign_hex(&format!("ack:{}:{ts}:{list}", self.me_s));
-            if self.mailbox_post("/ack", json!({ "who": self.me_s, "ts": ts, "ids": ids, "sig": sig })).await.is_err() {
+            let sig = self.sign_hex(&format!("ack:{}:{ts}:{list}", self.dev_s));
+            if self.mailbox_post("/ack", json!({ "who": self.dev_s, "ts": ts, "ids": ids, "sig": sig })).await.is_err() {
                 return;
             }
             if mail.len() < 200 {
@@ -1159,7 +1666,7 @@ impl Node {
     }
 
     fn speaks(&self, peer: &str, proto: u32) -> bool {
-        self.protos.lock().unwrap().get(peer).copied().unwrap_or(0) >= proto
+        self.protos.lock().unwrap().get(&self.account_of(peer)).copied().unwrap_or(0) >= proto
     }
 
     /// Remembers what a peer's UaN understands; the first time, sends what was waiting for that.
@@ -1216,7 +1723,20 @@ impl Node {
         Ok(c)
     }
 
+    /// Asks someone: their devices in turn (the one heard from last first) until one answers.
     async fn request(self: &Arc<Self>, peer: &str, req: &Req) -> Result<Value, ReqError> {
+        let mut last = ReqError::Offline("unreachable".into());
+        for d in self.devices_of(peer) {
+            match self.request_dev(&d, req).await {
+                Err(ReqError::Offline(e)) => last = ReqError::Offline(e),
+                other => return other,
+            }
+        }
+        Err(last)
+    }
+
+    /// Asks one device.
+    async fn request_dev(self: &Arc<Self>, peer: &str, req: &Req) -> Result<Value, ReqError> {
         let id = parse_id(peer).map_err(ReqError::Refused)?;
         if id == self.me {
             return Err(ReqError::Refused("That's you.".into()));
@@ -1227,16 +1747,18 @@ impl Node {
             let conn = self.conn(id).await.map_err(ReqError::Offline)?;
             let exchange = async {
                 let (mut send, mut recv) = conn.open_bi().await.map_err(e2s)?;
-                write_frame(&mut send, req).await?;
+                write_frame(&mut send, &self.wrap(req)).await?;
                 send.finish().map_err(e2s)?;
                 read_frame::<Value>(&mut recv).await
             };
             let limit = Duration::from_secs(if cached && attempt == 0 { 10 } else { 30 });
             let failure = match tokio::time::timeout(limit, exchange).await {
                 Ok(Ok(v)) => {
-                    self.mark_seen(peer);
+                    self.dev_seen.lock().unwrap().insert(peer.to_string(), Instant::now());
+                    let acct = self.account_of(peer);
+                    self.mark_seen(&acct);
                     if let Some(p) = v["proto"].as_u64() {
-                        self.note_proto(peer, p as u32);
+                        self.note_proto(&acct, p as u32);
                     }
                     return if v["ok"].as_bool() == Some(true) {
                         Ok(v)
@@ -1263,7 +1785,8 @@ impl Node {
                 let peer = conn.remote_id();
                 me.conns.lock().unwrap().insert(peer, conn.clone());
                 let p = peer.to_string();
-                me.mark_seen(&p);
+                me.dev_seen.lock().unwrap().insert(p.clone(), Instant::now());
+                me.mark_seen(&me.account_of(&p));
                 tauri::async_runtime::spawn(me.clone().flush(p));
                 me.serve_conn(conn).await;
             });
@@ -1279,15 +1802,23 @@ impl Node {
         }
     }
 
-    async fn handle(self: Arc<Self>, peer: String, mut send: SendStream, mut recv: RecvStream) {
+    async fn handle(self: Arc<Self>, dev: String, mut send: SendStream, mut recv: RecvStream) {
         let Ok(raw) = read_frame::<Value>(&mut recv).await else { return };
-        self.mark_seen(&peer);
         let Ok(req) = serde_json::from_value::<Req>(raw) else {
             // Something a newer UaN sent: say so, so the sender doesn't keep retrying.
             let _ = write_frame(&mut send, &json!({ "ok": false, "error": "This needs a newer version of UaN." })).await;
             let _ = send.finish();
             return;
         };
+        let (peer, req) = match self.open_dev(&dev, req) {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = write_frame(&mut send, &json!({ "ok": false, "error": e })).await;
+                let _ = send.finish();
+                return;
+            }
+        };
+        self.mark_seen(&peer);
         if let Req::FileGet { file_id, offset, len } = req {
             self.serve_file(&peer, &file_id, offset, len, send).await;
             return;
@@ -1308,8 +1839,21 @@ impl Node {
             let _ = send.finish();
             return;
         }
+        if let Req::LinkGet { proof, name, part } = &req {
+            let resp = self.link_serve(&dev, proof, name, *part).unwrap_or_else(|e| json!({ "ok": false, "error": e }));
+            let _ = write_frame(&mut send, &resp).await;
+            let _ = send.finish();
+            return;
+        }
+        let copy = (peer != self.me_s && Self::mirrorable(&req)).then(|| req.clone());
         let resp = match self.on_request(&peer, req) {
-            Ok(v) => v,
+            Ok(v) => {
+                // Our other devices get it too, in case this friend doesn't know them yet.
+                if let Some(r) = copy {
+                    self.mirror(&peer, "", &r);
+                }
+                v
+            }
             Err(e) => json!({ "ok": false, "error": e }),
         };
         let _ = write_frame(&mut send, &resp).await;
@@ -1323,11 +1867,14 @@ impl Node {
             return;
         }
         let payload = serde_json::to_string(req).unwrap();
-        let _ = self.db.lock().unwrap().execute(
-            "INSERT INTO outbox (peer, payload, created_at) VALUES (?1, ?2, ?3)",
-            params![peer, payload, now()],
-        );
-        tauri::async_runtime::spawn(self.clone().flush(peer.to_string()));
+        // To each of their devices (their PC, their phone), so it arrives wherever they are.
+        for d in self.devices_of(peer) {
+            let _ = self.db.lock().unwrap().execute(
+                "INSERT INTO outbox (peer, payload, created_at) VALUES (?1, ?2, ?3)",
+                params![d, payload, now()],
+            );
+            tauri::async_runtime::spawn(self.clone().flush(d));
+        }
     }
 
     async fn flush(self: Arc<Self>, peer: String) {
@@ -1348,7 +1895,9 @@ impl Node {
             let Some((seq, payload, created)) = row else { break };
             after = seq;
             let delivered = match serde_json::from_str::<Req>(&payload) {
-                Ok(req) if Self::mailbox_ok(&req) => match self.request(&peer, &req).await {
+                Ok(req) if Self::mailbox_ok(&req) => match self.request_dev(&peer, &req).await {
+                    // Too big for the mailbox: wait until they are online, without holding up the rest.
+                    Err(ReqError::Offline(_)) if payload.len() > 200_000 => false,
                     Err(ReqError::Offline(_)) => {
                         self.blob_send(&peer, &req).await;
                         if self.mailbox_send(&peer, &req).await.is_err() {
@@ -1356,6 +1905,8 @@ impl Node {
                         }
                         true
                     }
+                    // Their UaN is older and can't take it yet: keep it until they update.
+                    Err(ReqError::Refused(e)) if e.contains("newer version") => false,
                     _ => true,
                 },
                 // Things only a direct connection can carry (group history, …): wait until the peer is online
@@ -1365,12 +1916,12 @@ impl Node {
                         true
                     } else if !self.speaks(&peer, 2) && {
                         // Don't know their version yet: ask (the answer tells us).
-                        let _ = self.request(&peer, &self.ping_req()).await;
+                        let _ = self.request_dev(&peer, &self.ping_req()).await;
                         !self.speaks(&peer, 2)
                     } {
                         false
                     } else {
-                        match self.request(&peer, &req).await {
+                        match self.request_dev(&peer, &req).await {
                             Err(ReqError::Offline(_)) => false,
                             Err(ReqError::Refused(e)) if e == "later" => false,
                             _ => true,
@@ -1411,15 +1962,29 @@ impl Node {
                 tauri::async_runtime::spawn(async move { me.mailbox_poll().await });
             }
             if tick % 60 == 2 {
-                // Ping friends and group members to show who is online.
+                // Ping friends and group members (each of their devices) to show who is online,
+                // and our own other devices.
                 let ping = self.ping_req();
+                let mut targets: Vec<(String, String)> = Vec::new();
                 for p in self.known_peers() {
+                    for d in self.devices_of(&p) {
+                        targets.push((p.clone(), d));
+                    }
+                }
+                for d in self.devices_of(&self.me_s) {
+                    targets.push((self.me_s.clone(), d));
+                }
+                for (p, d) in targets {
                     let me = self.clone();
                     let ping = ping.clone();
                     tauri::async_runtime::spawn(async move {
                         let was = me.is_online(&p);
-                        match me.request(&p, &ping).await {
+                        match me.request_dev(&d, &ping).await {
                             Ok(v) => {
+                                me.learn_devs(&p, &v["devs"]);
+                                if p == me.me_s {
+                                    return;
+                                }
                                 if let Some(n) = v["name"].as_str() {
                                     me.update_name(&p, n);
                                 }
@@ -1428,7 +1993,7 @@ impl Node {
                                 me.note_mode(&p, v["mode"].as_str().unwrap_or(""));
                             }
                             Err(_) => {
-                                if was && !me.is_online(&p) {
+                                if was && !me.is_online(&p) && p != me.me_s {
                                     me.emit("presence", json!({ "id": p, "online": false }));
                                 }
                             }
@@ -1478,14 +2043,56 @@ impl Node {
 
     fn on_request(self: &Arc<Self>, peer: &str, req: Req) -> Result<Value, String> {
         let ok = json!({ "ok": true, "proto": PROTO });
+        let pong = || json!({ "ok": true, "name": self.my_name(), "status": self.kv("status").unwrap_or_default(), "pv": self.my_pv(), "proto": PROTO, "mode": self.my_mode(), "devs": self.my_certs() });
+        // From our own other device (the PC this phone is signed in to, or the other way round).
+        if peer == self.me_s {
+            return match req {
+                Req::Ping { devs, .. } => {
+                    for d in devs.iter().take(8) {
+                        self.learn_dev(&self.me_s, &d.id, &d.cert, &d.name);
+                    }
+                    Ok(pong())
+                }
+                Req::Mirror { from, chat, req } => {
+                    if matches!(*req, Req::Mirror { .. } | Req::Dev { .. } | Req::LinkGet { .. }) {
+                        Err("Not allowed.".into())
+                    } else if from == self.me_s {
+                        self.apply_own(&chat, *req)
+                    } else {
+                        self.on_request(&from, *req)
+                    }
+                }
+                Req::Devices { devs } => {
+                    for d in devs.iter().take(8) {
+                        self.learn_dev(&self.me_s, &d.id, &d.cert, &d.name);
+                    }
+                    Ok(ok)
+                }
+                Req::Profile => {
+                    let p = self.my_profile();
+                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"] }))
+                }
+                _ => Err("Not allowed.".into()),
+            };
+        }
         match req {
-            Req::Ping { name, status, pv, proto, mode } => {
+            Req::Ping { name, status, pv, proto, mode, devs } => {
+                for d in devs.iter().take(8) {
+                    self.learn_dev(peer, &d.id, &d.cert, &d.name);
+                }
                 self.update_name(peer, &name);
                 self.note_profile(peer, &status, pv);
                 self.note_proto(peer, proto);
                 self.note_mode(peer, &mode);
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": self.kv("status").unwrap_or_default(), "pv": self.my_pv(), "proto": PROTO, "mode": self.my_mode() }))
+                Ok(pong())
             }
+            Req::Devices { devs } => {
+                for d in devs.iter().take(8) {
+                    self.learn_dev(peer, &d.id, &d.cert, &d.name);
+                }
+                Ok(ok)
+            }
+            Req::Dev { .. } | Req::Mirror { .. } | Req::MyProfile { .. } | Req::LinkGet { .. } => Err("Not allowed.".into()),
             Req::Profile => {
                 if !self.known_peers().iter().any(|p| p == peer) {
                     return Err("Not allowed.".into());
@@ -1958,6 +2565,7 @@ impl Node {
         group.version += 1;
         self.save_group(&group);
         let req = Req::Group { group: group.clone() };
+        self.mirror(&self.me_s.clone(), "", &req);
         let mut targets: Vec<String> = group.members.iter().map(|m| m.id.clone()).collect();
         targets.extend(also.iter().cloned());
         for t in targets {
@@ -1978,6 +2586,7 @@ impl Node {
         let group = WireGroup { id: new_id(), name: name.to_string(), owner: self.me_s.clone(), version: 1, members, channels: vec![] };
         self.save_group(&group);
         let req = Req::Group { group: group.clone() };
+        self.mirror(&self.me_s.clone(), "", &req);
         for m in &group.members {
             self.deliver(&m.id, &req);
         }
@@ -2033,6 +2642,7 @@ impl Node {
                 Ok(())
             }
             "leave" => {
+                self.mirror(&self.me_s.clone(), "", &Req::GroupLeave { group_id: g.to_string() });
                 for m in &group.members {
                     self.deliver(&m.id, &Req::GroupLeave { group_id: g.to_string() });
                 }
@@ -2057,7 +2667,7 @@ impl Node {
 
     pub fn add_friend(self: &Arc<Self>, code: &str) -> Result<String, String> {
         let peer = parse_code(code)?;
-        if peer == self.me {
+        if peer.to_string() == self.me_s || peer == self.me {
             return Err("That's your own code. Send it to a friend instead.".into());
         }
         let p = peer.to_string();
@@ -2070,6 +2680,7 @@ impl Node {
             _ => {}
         }
         self.set_contact(&p, "Pending…", "outgoing");
+        self.mirror(&self.me_s.clone(), &p, &Req::FriendRequest { name: "Pending…".into() });
         self.deliver(&p, &Req::FriendRequest { name: self.my_name() });
         Ok("Friend request sent. It arrives as soon as they are online.".into())
     }
@@ -2086,12 +2697,16 @@ impl Node {
                     .map_err(e2s)?
                     .ok_or("That request is gone.")?;
                 self.set_contact(peer, &name, "friend");
+                self.mirror(&self.me_s.clone(), peer, &Req::FriendAccept { name: name.clone() });
                 self.deliver(peer, &Req::FriendAccept { name: self.my_name() });
                 Ok(())
             }
             "remove" => {
                 let _ = self.db.lock().unwrap().execute("DELETE FROM contacts WHERE id = ?1", [peer]);
-                let _ = self.db.lock().unwrap().execute("DELETE FROM outbox WHERE peer = ?1", [peer]);
+                for d in self.devices_of(peer) {
+                    let _ = self.db.lock().unwrap().execute("DELETE FROM outbox WHERE peer = ?1", [&d]);
+                }
+                self.mirror(&self.me_s.clone(), peer, &Req::FriendRemove);
                 self.deliver(peer, &Req::FriendRemove);
                 self.emit("contacts", Value::Null);
                 Ok(())
@@ -2405,6 +3020,7 @@ impl Node {
             None => (Some(text), None),
         };
         self.apply_edit(&chat, id, new_text.as_deref(), new_sealed.as_deref());
+        self.mirror(&self.me_s.clone(), &chat, &Req::Edit { msg_id: id.to_string(), text: new_text.clone(), sealed: new_sealed.clone() });
         if let Ok((_, targets)) = self.chat_targets(&chat) {
             let req = Req::Edit { msg_id: id.to_string(), text: new_text, sealed: new_sealed };
             for t in targets {
@@ -2434,6 +3050,7 @@ impl Node {
         let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
         self.apply_pin(chat, id, &self.me_s.clone(), pinned);
         let req = Req::Pin { group, channel, msg_id: id.to_string(), pinned };
+        self.mirror(&self.me_s.clone(), chat, &req);
         for t in targets {
             self.deliver(&t, &req);
         }
@@ -2459,7 +3076,8 @@ impl Node {
         self.db.lock().unwrap().execute("VACUUM INTO ?1", [tmp.to_string_lossy()]).map_err(e2s)?;
         let db = std::fs::read(&tmp).map_err(e2s)?;
         let _ = std::fs::remove_file(&tmp);
-        let identity = std::fs::read(self.dir.join("identity.key")).map_err(e2s)?;
+        // The account's key (on a phone signed in to a PC, that is the PC's identity).
+        let identity = self.acct_secret.to_bytes().to_vec();
         let salt = new_id();
         let key = channel_key("backup", &salt, password.trim());
         let inner = serde_json::to_vec(&json!({ "identity": BASE64.encode(&identity), "db": BASE64.encode(&db) })).map_err(e2s)?;
@@ -2541,6 +3159,7 @@ impl Node {
                 return Err("Only the group's creator can clear it for everyone.".into());
             }
             let req = Req::ClearGroup { group_id: g.to_string(), before, channel: channel.map(str::to_string) };
+            self.mirror(&self.me_s.clone(), chat, &req);
             for m in &group.members {
                 self.deliver(&m.id, &req);
             }
@@ -2758,6 +3377,7 @@ impl Node {
         }
         let Some((chat, _, file)) = self.remove_message(id, None) else { return Ok(()) };
         if everyone {
+            self.mirror(&self.me_s.clone(), &chat, &Req::Unsend { msg_id: id.to_string() });
             if let Ok((_, targets)) = self.chat_targets(&chat) {
                 let req = Req::Unsend { msg_id: id.to_string() };
                 for t in targets {
@@ -2834,6 +3454,7 @@ impl Node {
             }
             self.store_message(&msg.id, chat, &self.me_s, &name, msg.text.as_deref(), msg.file.as_ref(), msg.ts, msg.sealed.as_deref(), msg.reply.as_ref());
             let req = Req::Msg { msg };
+            self.mirror(&self.me_s.clone(), chat, &req);
             for t in targets {
                 self.deliver(&t, &req);
             }
@@ -2845,7 +3466,7 @@ impl Node {
     pub fn selftest_file(&self, path: &str) -> Result<FileMeta, String> {
         let p = PathBuf::from(path);
         let size = std::fs::metadata(&p).map_err(e2s)?.len();
-        let file = FileMeta { id: new_id(), name: p.file_name().and_then(|n| n.to_str()).unwrap_or("test").to_string(), size, mime: guess_mime(&p).to_string(), owner: self.me_s.clone() };
+        let file = FileMeta { id: new_id(), name: p.file_name().and_then(|n| n.to_str()).unwrap_or("test").to_string(), size, mime: guess_mime(&p).to_string(), owner: self.me_s.clone(), dev: self.my_dev() };
         self.db.lock().unwrap().execute(
             "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![file.id, path, file.name, size as i64, file.mime, now()],
@@ -2885,7 +3506,7 @@ impl Node {
                         errors.push(format!("{rel}: too big, the limit is 4 TB."));
                         continue;
                     }
-                    let file = FileMeta { id: new_id(), name: rel, size: len, mime: guess_mime(&p).to_string(), owner: self.me_s.clone() };
+                    let file = FileMeta { id: new_id(), name: rel, size: len, mime: guess_mime(&p).to_string(), owner: self.me_s.clone(), dev: self.my_dev() };
                     let _ = self.db.lock().unwrap().execute(
                         "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![file.id, p.to_string_lossy(), file.name, file.size as i64, file.mime, now()],
@@ -2899,7 +3520,7 @@ impl Node {
                 errors.push(format!("{name}: too big, the limit is 4 TB."));
                 continue;
             }
-            let file = FileMeta { id: new_id(), name: name.clone(), size: meta.len(), mime: guess_mime(&path).to_string(), owner: self.me_s.clone() };
+            let file = FileMeta { id: new_id(), name: name.clone(), size: meta.len(), mime: guess_mime(&path).to_string(), owner: self.me_s.clone(), dev: self.my_dev() };
             let _ = self.db.lock().unwrap().execute(
                 "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![file.id, path.to_string_lossy(), file.name, file.size as i64, file.mime, now()],
@@ -2913,7 +3534,12 @@ impl Node {
     // ----- Serving files: our own files, and in groups also what we downloaded (even partly) -----
 
     fn in_group_chat(&self, chat: &str, peer: &str) -> bool {
-        split_chat(chat).map(|(g, _)| self.is_member(g, peer)).unwrap_or(false)
+        peer == self.me_s || split_chat(chat).map(|(g, _)| self.is_member(g, peer)).unwrap_or(false)
+    }
+
+    /// Set on files this device shares when it isn't the account's PC: friends fetch them from here.
+    fn my_dev(&self) -> Option<String> {
+        (self.dev_s != self.me_s).then(|| self.dev_s.clone())
     }
 
     fn source_for(&self, peer: &str, file_id: &str) -> Option<Source> {
@@ -2921,10 +3547,10 @@ impl Node {
             let db = self.db.lock().unwrap();
             let own = db
                 .query_row(
-                    "SELECT f.path, f.size FROM shared_files f WHERE f.id = ?1 AND EXISTS (
+                    "SELECT f.path, f.size FROM shared_files f WHERE f.id = ?1 AND (?3 OR EXISTS (
                        SELECT 1 FROM file_access a WHERE a.file_id = f.id AND (
-                         a.who = ?2 OR EXISTS (SELECT 1 FROM group_members m WHERE 'g:' || m.group_id = a.who AND m.member_id = ?2)))",
-                    params![file_id, peer],
+                         a.who = ?2 OR EXISTS (SELECT 1 FROM group_members m WHERE 'g:' || m.group_id = a.who AND m.member_id = ?2))))",
+                    params![file_id, peer, peer == self.me_s],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()
@@ -3034,14 +3660,14 @@ impl Node {
         let conn = self.conn(id).await.map_err(ReqError::Offline)?;
         let open = async {
             let (mut send, mut recv) = conn.open_bi().await.map_err(e2s)?;
-            write_frame(&mut send, &Req::FileGet { file_id: file.id.clone(), offset, len }).await?;
+            write_frame(&mut send, &self.wrap(&Req::FileGet { file_id: file.id.clone(), offset, len })).await?;
             send.finish().map_err(e2s)?;
             let head: Value = read_frame(&mut recv).await?;
             Ok::<_, String>((head, recv))
         };
         match tokio::time::timeout(Duration::from_secs(30), open).await {
             Ok(Ok((head, recv))) => {
-                self.mark_seen(from);
+                self.mark_seen(&self.account_of(from));
                 if head["ok"].as_bool() == Some(true) {
                     Ok((head["size"].as_u64().unwrap_or(file.size), recv))
                 } else {
@@ -3081,7 +3707,20 @@ impl Node {
         if let Some((seeder, _)) = &party_group {
             push(seeder.clone(), &mut v);
         }
-        push(file.owner.clone(), &mut v);
+        // The device that has it (their phone), then the owner's PC.
+        if let Some(d) = file.dev.clone().filter(|d| *d != self.dev_s && parse_id(d).is_ok()) {
+            if !v.contains(&d) {
+                v.push(d);
+            }
+        }
+        if file.owner == self.me_s {
+            // Our own file, on our other device.
+            if self.dev_s != self.me_s && !v.contains(&file.owner) {
+                v.push(file.owner.clone());
+            }
+        } else {
+            push(file.owner.clone(), &mut v);
+        }
         let group = split_chat(chat).map(|(g, _)| g.to_string()).or(party_group.map(|(_, g)| g));
         if let Some(g) = group {
             if let Some(group) = self.load_group(&g) {
@@ -3211,7 +3850,22 @@ impl Node {
             return Ok(id);
         }
         let dir = if auto || std::env::var_os("UAN_DOWNLOADS").is_some() { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
-        let path = unique_path(&dir, &safe_file_name(&file.name));
+        // Files from a folder ("Folder/sub/file.txt") keep their folders on disk.
+        let parts: Vec<String> = file
+            .name
+            .split(['/', '\\'])
+            .filter(|p| !p.is_empty() && *p != "." && *p != "..")
+            .map(safe_file_name)
+            .collect();
+        let mut dir = dir;
+        for p in parts.iter().take(parts.len().saturating_sub(1)) {
+            dir.push(p);
+        }
+        if parts.len() > 1 {
+            std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create the folder {}: {e}", dir.display()))?;
+        }
+        let leaf = parts.last().cloned().unwrap_or_else(|| safe_file_name(&file.name));
+        let path = unique_path(&dir, &leaf);
         let id = new_id();
         self.transfers.lock().unwrap().push(Transfer {
             id: id.clone(),
@@ -3491,7 +4145,7 @@ impl Node {
         let conn = self.conn(id).await.ok()?;
         let run = async {
             let (mut send, mut recv) = conn.open_bi().await.ok()?;
-            write_frame(&mut send, &Req::Probe { bytes: PROBE_BYTES }).await.ok()?;
+            write_frame(&mut send, &self.wrap(&Req::Probe { bytes: PROBE_BYTES })).await.ok()?;
             send.finish().ok()?;
             let head: Value = read_frame(&mut recv).await.ok()?;
             if head["ok"].as_bool() != Some(true) {
@@ -4106,7 +4760,8 @@ async fn media_core(node: &Arc<Node>, path: &str, range: Option<&str>) -> (u16, 
         return (400, cors, Vec::new());
     }
     let Ok(size) = parts[2].parse::<u64>() else { return (400, cors, Vec::new()) };
-    let file = FileMeta { owner: parts[0].clone(), id: parts[1].clone(), size, mime: parts[3].clone(), name: String::new() };
+    let (owner, dev) = match parts[0].split_once('~') { Some((o, d)) => (o.to_string(), Some(d.to_string())), None => (parts[0].clone(), None) };
+    let file = FileMeta { owner, id: parts[1].clone(), size, mime: parts[3].clone(), name: String::new(), dev };
     let mut headers = cors;
     headers.push(("Content-Type", player_mime(&file.mime)));
     headers.push(("Accept-Ranges", "bytes".to_string()));
@@ -4182,7 +4837,8 @@ async fn stream_media<W: tokio::io::AsyncWrite + Unpin>(node: &Arc<Node>, path: 
         w.write_all(b"HTTP/1.1 404 Error\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n").await?;
         return w.flush().await;
     }
-    let file = FileMeta { owner: parts[0].clone(), id: parts[1].clone(), size, mime: parts[3].clone(), name: String::new() };
+    let (owner, dev) = match parts[0].split_once('~') { Some((o, d)) => (o.to_string(), Some(d.to_string())), None => (parts[0].clone(), None) };
+    let file = FileMeta { owner, id: parts[1].clone(), size, mime: parts[3].clone(), name: String::new(), dev };
     let wanted = range
         .and_then(|r| r.trim().strip_prefix("bytes="))
         .and_then(|r| r.split_once('-'))

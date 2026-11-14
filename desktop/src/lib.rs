@@ -157,6 +157,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "receipts": node.privacy().1,
         "mode": node.my_mode(),
         "customIcon": profile.dir.join("appicon.rgba").exists(),
+        "linked": node.is_linked_device(),
     })
 }
 
@@ -173,6 +174,40 @@ fn set_profile(node: State<'_, Arc<Node>>, name: String, status: String, avatar:
 #[tauri::command]
 fn set_mailbox(node: State<'_, Arc<Node>>, url: String) -> CmdResult<()> {
     node.set_mailbox(&url)
+}
+
+// ----- One account on a PC and a phone -----
+
+#[tauri::command]
+async fn link_start(node: State<'_, Arc<Node>>) -> CmdResult<String> {
+    let node = node.inner().clone();
+    node.link_start().await
+}
+
+#[tauri::command]
+fn link_cancel(node: State<'_, Arc<Node>>) {
+    node.link_cancel();
+}
+
+#[tauri::command]
+async fn link_join(node: State<'_, Arc<Node>>, code: String) -> CmdResult<()> {
+    let node = node.inner().clone();
+    let name = if cfg!(mobile) { "Phone" } else { "Second PC" };
+    node.link_join(&code, name).await
+}
+
+#[tauri::command]
+fn devices(node: State<'_, Arc<Node>>) -> Value {
+    node.devices()
+}
+
+/// After signing in to a PC's account: start again with it.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    if cfg!(mobile) || std::env::var_os("UAN_NO_RESTART").is_some() {
+        std::process::exit(0);
+    }
+    app.restart();
 }
 
 #[tauri::command]
@@ -1066,6 +1101,11 @@ pub fn run() {
             set_profile,
             set_mailbox,
             check_mailbox,
+            link_start,
+            link_cancel,
+            link_join,
+            devices,
+            restart_app,
             contacts,
             add_friend,
             friend_action,

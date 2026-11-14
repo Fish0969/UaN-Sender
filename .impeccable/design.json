@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-14T00:00:00Z",
+  "title": "Design System: UaN",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Windows Accent Blue", "canonical": "#005fb8", "tonalRamp": ["oklch(15% 0.05 256)", "oklch(25% 0.09 256)", "oklch(35% 0.12 256)", "oklch(48% 0.15 256)", "oklch(58% 0.14 256)", "oklch(68% 0.11 256)", "oklch(82% 0.06 256)", "oklch(95% 0.02 256)"] },
+      "accent-dark": { "role": "primary", "displayName": "Windows Accent Blue (dark base)", "canonical": "#60cdff", "tonalRamp": ["oklch(15% 0.04 232)", "oklch(25% 0.07 232)", "oklch(38% 0.09 232)", "oklch(52% 0.11 232)", "oklch(66% 0.12 232)", "oklch(81% 0.12 232)", "oklch(88% 0.07 232)", "oklch(95% 0.03 232)"] },
+      "mine": { "role": "primary", "displayName": "Mine (light base)", "canonical": "#005fb8" },
+      "mine-dark": { "role": "primary", "displayName": "Mine (dark base)", "canonical": "#0f4a73", "tonalRamp": ["oklch(15% 0.04 245)", "oklch(25% 0.06 245)", "oklch(38% 0.08 245)", "oklch(48% 0.09 245)", "oklch(58% 0.09 245)", "oklch(70% 0.07 245)", "oklch(84% 0.04 245)", "oklch(95% 0.015 245)"] },
+      "ground": { "role": "neutral", "displayName": "Ground", "canonical": "#e8eaed", "tonalRamp": ["oklch(15% 0.004 260)", "oklch(25% 0.004 260)", "oklch(35% 0.005 260)", "oklch(48% 0.005 260)", "oklch(60% 0.005 260)", "oklch(75% 0.005 260)", "oklch(88% 0.004 260)", "oklch(94% 0.003 260)"] },
+      "ground-dark": { "role": "neutral", "displayName": "Ground (dark)", "canonical": "#121212" },
+      "side-panel": { "role": "neutral", "displayName": "Side Panel", "canonical": "#f6f6f7" },
+      "side-panel-dark": { "role": "neutral", "displayName": "Side Panel (dark)", "canonical": "#1c1c1c" },
+      "panel": { "role": "neutral", "displayName": "Panel", "canonical": "#ffffff" },
+      "panel-dark": { "role": "neutral", "displayName": "Panel (dark)", "canonical": "#222222" },
+      "card": { "role": "neutral", "displayName": "Card", "canonical": "#ffffff" },
+      "card-dark": { "role": "neutral", "displayName": "Card (dark)", "canonical": "#2b2b2b" },
+      "theirs": { "role": "neutral", "displayName": "Theirs", "canonical": "#f1f2f4" },
+      "theirs-dark": { "role": "neutral", "displayName": "Theirs (dark)", "canonical": "#2e2e2e" },
+      "text": { "role": "neutral", "displayName": "Ink", "canonical": "#1a1a1a" },
+      "text-dark": { "role": "neutral", "displayName": "Ink (dark)", "canonical": "#f0f0f0" },
+      "muted": { "role": "neutral", "displayName": "Muted", "canonical": "#5f5f5f" },
+      "muted-dark": { "role": "neutral", "displayName": "Muted (dark)", "canonical": "#a8a8a8" },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "rgba(0, 0, 0, .09)" },
+      "hairline-dark": { "role": "neutral", "displayName": "Hairline (dark)", "canonical": "rgba(255, 255, 255, .08)" },
+      "danger": { "role": "neutral", "displayName": "Danger", "canonical": "#c42b1c", "tonalRamp": ["oklch(15% 0.05 30)", "oklch(25% 0.09 30)", "oklch(38% 0.14 30)", "oklch(52% 0.18 30)", "oklch(62% 0.16 30)", "oklch(74% 0.11 30)", "oklch(86% 0.06 30)", "oklch(95% 0.02 30)"] },
+      "ok": { "role": "neutral", "displayName": "Ok", "canonical": "#0f7b0f", "tonalRamp": ["oklch(15% 0.04 142)", "oklch(25% 0.08 142)", "oklch(38% 0.12 142)", "oklch(50% 0.15 142)", "oklch(62% 0.15 142)", "oklch(74% 0.12 142)", "oklch(86% 0.07 142)", "oklch(95% 0.03 142)"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Dialog titles (16px in the phone's full-screen settings)." },
+      "title": { "displayName": "Title", "purpose": "Your name in the people panel and the open chat's name." },
+      "body": { "displayName": "Body", "purpose": "Messages, list names, folder rows, form text. Tabular numerals on." },
+      "label": { "displayName": "Label", "purpose": "List captions and day separators at 600; times, sizes, sub-lines and badges at 400 or 600. Sentence case." },
+      "code": { "displayName": "Code", "purpose": "The one-time link code only; the join-code field uses it at 18px uppercase." }
+    },
+    "shadows": [
+      { "name": "panel-lift", "value": "0 1px 2px rgba(0, 0, 0, .06), 0 12px 32px -16px rgba(0, 0, 0, .32)", "purpose": "The two main floating panels." },
+      { "name": "composer-float", "value": "0 8px 24px -16px rgba(0, 0, 0, .5)", "purpose": "The composer pill at rest." },
+      { "name": "composer-focus", "value": "0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent), 0 8px 24px -16px rgba(0, 0, 0, .5)", "purpose": "The composer pill while typing." },
+      { "name": "print-lift", "value": "0 0 0 1px var(--border), 0 14px 26px -12px rgba(0, 0, 0, .55)", "purpose": "A print on hover, with translateY(-2px)." },
+      { "name": "dialog", "value": "0 2px 6px rgba(0, 0, 0, .12), 0 30px 70px -20px rgba(0, 0, 0, .55)", "purpose": "Modal dialogs over a rgba(0,0,0,.42) backdrop." },
+      { "name": "input-focus", "value": "0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent)", "purpose": "Focused text fields." }
+    ],
+    "motion": [
+      { "name": "ease", "value": "cubic-bezier(.16, 1, .3, 1)", "purpose": "Transforms and the dialog entrance." },
+      { "name": "state", "value": "150ms", "purpose": "Background, colour, border and shadow changes." },
+      { "name": "transform", "value": "250ms", "purpose": "Print lift and button press." },
+      { "name": "dialog-in", "value": "280ms; from opacity 0, translateY(8px) scale(.985)", "purpose": "Dialog entrance. Removed under prefers-reduced-motion." }
+    ],
+    "breakpoints": [
+      { "name": "narrow", "value": "700px" },
+      { "name": "phone", "value": "html.phone (Android build)" }
+    ],
+    "themes": {
+      "roles": ["--bg", "--bg-image", "--side", "--panel", "--card", "--theirs", "--dialog", "--accent", "--mine"],
+      "accentSwatches": [
+        { "name": "Blue", "light": "#005fb8", "dark": "#60cdff" },
+        { "name": "Purple", "light": "#7a3ec8", "dark": "#c4a3ff" },
+        { "name": "Green", "light": "#107c41", "dark": "#6ccb8f" },
+        { "name": "Orange", "light": "#c25400", "dark": "#ffb36b" },
+        { "name": "Pink", "light": "#bf0077", "dark": "#ff8ccf" },
+        { "name": "Red", "light": "#c42b1c", "dark": "#ff8a80" }
+      ],
+      "catalogue": "Auto, Light, Dark; solid dark: Ash, Onyx, Midnight, Forest, Coffee; gradient glass dark: Sunset, Ocean, Aurora, Neon, Crimson, Christmas (with snowfall); gradient glass light: Sakura, Mint, Lavender; plus a hidden Secret theme. Source of truth: THEMES / SECRET in desktop/ui/app.js."
+    }
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default quiet control: card fill, hairline border, 9px corners.",
+      "html": "<button class=\"ds-btn\">Download</button>",
+      "css": ".ds-btn { height: 30px; padding: 0 12px; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: var(--text, #1a1a1a); background: var(--card, #fff); border: 1px solid var(--border, rgba(0,0,0,.09)); border-radius: 9px; transition: background .15s, border-color .15s; } .ds-btn:hover { background: color-mix(in srgb, var(--card, #fff) 95%, #000); } .ds-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #005fb8) 75%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Accent Button",
+      "kind": "button",
+      "refersTo": "button-accent",
+      "description": "The primary action in a dialog or bar.",
+      "html": "<button class=\"ds-btn-accent\">Download all</button>",
+      "css": ".ds-btn-accent { height: 30px; padding: 0 12px; font: 600 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: var(--on-accent, #fff); background: var(--accent, #005fb8); border: 1px solid transparent; border-radius: 9px; box-shadow: 0 1px 0 rgba(255,255,255,.12) inset; transition: background .15s, transform .25s cubic-bezier(.16,1,.3,1); } .ds-btn-accent:hover { background: color-mix(in srgb, var(--accent, #005fb8) 88%, #fff); } .ds-btn-accent:active { transform: scale(.97); } .ds-btn-accent:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #005fb8) 75%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "32px field with an accent glow on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Paste a friend code\">",
+      "css": ".ds-input { height: 32px; width: 240px; padding: 0 11px; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: var(--text, #1a1a1a); background: var(--card, #fff); border: 1px solid var(--border, rgba(0,0,0,.09)); border-radius: 9px; caret-color: var(--accent, #005fb8); outline: none; transition: border-color .15s, box-shadow .15s; } .ds-input:focus { border-color: color-mix(in srgb, var(--accent, #005fb8) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #005fb8) 18%, transparent); }"
+    },
+    {
+      "name": "Channel Pills",
+      "kind": "chip",
+      "refersTo": "channel-pill",
+      "description": "Channel switcher under a group's header; the active one takes the accent tint.",
+      "html": "<div class=\"ds-pills\"><button class=\"ds-pill on\"># general</button><button class=\"ds-pill\">plans</button><button class=\"ds-pill\"># movies</button></div>",
+      "css": ".ds-pills { display: flex; gap: 6px; } .ds-pill { height: 28px; padding: 0 12px; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: var(--muted, #5f5f5f); background: transparent; border: 1px solid var(--border, rgba(0,0,0,.09)); border-radius: 999px; transition: background .15s, color .15s; } .ds-pill:hover { color: var(--text, #1a1a1a); background: rgba(0,0,0,.05); } .ds-pill.on { color: var(--text, #1a1a1a); font-weight: 600; background: color-mix(in srgb, var(--accent, #005fb8) 16%, transparent); border-color: color-mix(in srgb, var(--accent, #005fb8) 45%, transparent); } .ds-pill:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #005fb8) 75%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "People Row",
+      "kind": "nav",
+      "refersTo": "list-row",
+      "description": "48px row in the people panel: print avatar with identity hue and presence dot, name over sub-line, tabular time and unread badge.",
+      "html": "<div class=\"ds-row unread\"><span class=\"ds-av\" style=\"--h:212\">A<i></i></span><span class=\"ds-rt\"><b>Alice</b><small>Online</small></span><span class=\"ds-rm\"><time>14:45</time><em>2</em></span></div>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 10px; width: 270px; height: 48px; padding: 0 8px; border-radius: 12px; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--text, #1a1a1a); transition: background .15s; } .ds-row:hover { background: rgba(0,0,0,.05); } .ds-row.active { background: color-mix(in srgb, var(--accent, #005fb8) 16%, transparent); } .ds-av { position: relative; width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; background: hsl(var(--h) 45% 48%); color: #fff; font-size: 14px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); } .ds-av i { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--ok, #0f7b0f); border: 2px solid var(--side, #f6f6f7); } .ds-rt { flex: 1; display: flex; flex-direction: column; min-width: 0; } .ds-rt b { font-weight: 500; } .ds-row.unread .ds-rt b { font-weight: 700; } .ds-rt small { font-size: 12px; color: var(--muted, #5f5f5f); } .ds-rm { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; } .ds-rm time { font-size: 12px; color: var(--muted, #5f5f5f); } .ds-row.unread .ds-rm time { color: var(--accent, #005fb8); font-weight: 600; } .ds-rm em { font-style: normal; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: var(--accent, #005fb8); color: var(--on-accent, #fff); }"
+    },
+    {
+      "name": "Composer",
+      "kind": "input",
+      "refersTo": "composer",
+      "description": "Floating pill at the bottom of the conversation: attach, message field, round accent send.",
+      "html": "<div class=\"ds-composer\"><button class=\"ds-c-ic\" aria-label=\"Attach\"><svg viewBox=\"0 0 24 24\"><path d=\"M21 12.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.5 3.5 0 0 1 5 5l-8.6 8.6a2 2 0 0 1-2.8-2.8l8-8\"/></svg></button><input placeholder=\"Message\"><button class=\"ds-send\" aria-label=\"Send\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 12h14M13 6l6 6-6 6\"/></svg></button></div>",
+      "css": ".ds-composer { display: flex; align-items: center; gap: 4px; width: 420px; padding: 5px; background: var(--card, #fff); border: 1px solid var(--border, rgba(0,0,0,.09)); border-radius: 999px; box-shadow: 0 8px 24px -16px rgba(0,0,0,.5); transition: border-color .15s, box-shadow .15s; } .ds-composer:focus-within { border-color: color-mix(in srgb, var(--accent, #005fb8) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #005fb8) 14%, transparent), 0 8px 24px -16px rgba(0,0,0,.5); } .ds-composer input { flex: 1; height: 34px; padding: 0 6px; border: 0; background: transparent; outline: none; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: var(--text, #1a1a1a); caret-color: var(--accent, #005fb8); } .ds-composer svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .ds-c-ic { width: 34px; height: 34px; border-radius: 50%; border: 0; background: transparent; color: var(--muted, #5f5f5f); display: grid; place-items: center; } .ds-c-ic:hover { color: var(--text, #1a1a1a); background: rgba(0,0,0,.05); } .ds-send { width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--accent, #005fb8); color: var(--on-accent, #fff); display: grid; place-items: center; transition: transform .25s cubic-bezier(.16,1,.3,1); } .ds-send:active { transform: scale(.94); } .ds-send:focus-visible, .ds-c-ic:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #005fb8) 75%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Message Bubbles",
+      "kind": "custom",
+      "refersTo": "bubble-mine",
+      "description": "Mine on the right in the mine colour; theirs on the left with a hairline; 16px corners; 12px tabular time below.",
+      "html": "<div class=\"ds-msgs\"><div class=\"ds-m theirs\"><div class=\"ds-b\">Photos from Saturday</div><time>14:44</time></div><div class=\"ds-m mine\"><div class=\"ds-b\">The lake one is <b>so</b> good</div><time>14:45</time></div></div>",
+      "css": ".ds-msgs { display: flex; flex-direction: column; gap: 6px; width: 420px; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-variant-numeric: tabular-nums; } .ds-m { display: flex; flex-direction: column; gap: 2px; max-width: 76%; } .ds-m.mine { align-self: flex-end; align-items: flex-end; } .ds-m.theirs { align-self: flex-start; align-items: flex-start; } .ds-b { padding: 7px 12px; border-radius: 16px; } .mine .ds-b { background: var(--mine, #005fb8); color: var(--on-mine, #fff); } .theirs .ds-b { background: var(--theirs, #f1f2f4); color: var(--text, #1a1a1a); border: 1px solid var(--border, rgba(0,0,0,.09)); } .ds-m time { font-size: 12px; color: var(--muted, #5f5f5f); padding: 0 4px; }"
+    },
+    {
+      "name": "Contact Sheet",
+      "kind": "custom",
+      "refersTo": "print",
+      "description": "Signature: photos sent together as one grid of framed prints; with three, the first spans two rows. Prints lift on hover.",
+      "html": "<div class=\"ds-sheet\"><button class=\"ds-print big\" style=\"background:linear-gradient(135deg,#2e7d5b,#1d4f3a)\"></button><button class=\"ds-print\" style=\"background:linear-gradient(135deg,#f0b062,#d0603a)\"></button><button class=\"ds-print\" style=\"background:linear-gradient(135deg,#5a7bd0,#2a3f80)\"><span class=\"ds-play\"></span></button></div>",
+      "css": ".ds-sheet { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; width: 400px; } .ds-print { position: relative; aspect-ratio: 1; padding: 0; border: 3px solid var(--panel, #fff); border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--border, rgba(0,0,0,.09)); transition: box-shadow .15s, transform .25s cubic-bezier(.16,1,.3,1); } .ds-print.big { grid-row: span 2; aspect-ratio: auto; } .ds-print:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--border, rgba(0,0,0,.09)), 0 14px 26px -12px rgba(0,0,0,.55); z-index: 1; } .ds-print:focus-visible { outline: 2px solid var(--accent, #005fb8); outline-offset: 2px; } .ds-play { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; transform: translate(-50%,-50%); border-radius: 50%; background: rgba(0,0,0,.55); } .ds-play::after { content: ''; position: absolute; left: 16px; top: 12px; border-left: 12px solid #fff; border-top: 8px solid transparent; border-bottom: 8px solid transparent; }"
+    },
+    {
+      "name": "Folder Card",
+      "kind": "card",
+      "refersTo": "folder-card",
+      "description": "A whole folder as one item: accent-tinted tile, name over count and size, chevron.",
+      "html": "<button class=\"ds-folder\"><span class=\"ds-f-ico\"><svg viewBox=\"0 0 24 24\"><path d=\"M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg></span><span class=\"ds-f-t\"><b>Saturday trip</b><small>5 files · 5.5 MB</small></span><svg class=\"ds-chev\" viewBox=\"0 0 24 24\"><path d=\"M9 6l6 6-6 6\"/></svg></button>",
+      "css": ".ds-folder { display: flex; align-items: center; gap: 12px; width: 320px; padding: 10px 14px 10px 10px; text-align: left; font: 13.5px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--text, #1a1a1a); background: var(--card, #fff); border: 1px solid var(--border, rgba(0,0,0,.09)); border-radius: 14px; transition: background .15s; } .ds-folder:hover { background: color-mix(in srgb, var(--card, #fff) 88%, var(--text, #1a1a1a)); } .ds-folder:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #005fb8) 75%, transparent); outline-offset: 2px; } .ds-folder svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .ds-f-ico { width: 42px; height: 42px; flex: none; border-radius: 11px; display: grid; place-items: center; color: var(--accent, #005fb8); background: color-mix(in srgb, var(--accent, #005fb8) 16%, transparent); } .ds-f-ico svg { width: 22px; height: 22px; } .ds-f-t { flex: 1; display: flex; flex-direction: column; } .ds-f-t b { font-weight: 600; } .ds-f-t small { font-size: 12px; color: var(--muted, #5f5f5f); } .ds-chev { color: var(--muted, #5f5f5f); }"
+    },
+    {
+      "name": "Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "Brief pill notice that inverts the panel colours.",
+      "html": "<div class=\"ds-toast\">Friend code copied</div>",
+      "css": ".ds-toast { display: inline-block; padding: 8px 16px; border-radius: 999px; font: 12px/1.45 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; background: var(--text, #1a1a1a); color: var(--panel, #fff); box-shadow: 0 8px 24px rgba(0,0,0,.14); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Shared Album on the Table",
+    "overview": "UaN is a chat whose real material is what friends send each other: photos, films, whole folders. The interface lays two floating panels on whatever ground the active theme paints (people on the left, the conversation on the right) and keeps the text around them quiet, so that a set of photos arrives as a contact sheet of prints rather than a stack of equal-weight bubbles. It is a quiet companion for evenings next to a game or a film: compact, system-native type, soft lift, no ornament that competes with the media.\n\nThe system is split cleanly in two. Themes own colour and nothing else: seventeen named themes plus a hidden secret one set only the ground, panel, card, bubble, dialog, accent and \"mine\" colours (some as gradients with see-through glass panels). Everything else (corner radii, spacing, type, shadows, motion) is theme-independent and lives in one layer, so every theme keeps working and a new surface inherits all of them for free.\n\nThe owner rejected a Discord-style server rail; the two-panel layout with a people list on the left is the confirmed shape. No emojis appear anywhere in the interface, and all copy is English.",
+    "keyCharacteristics": [
+      "Two floating panels on the theme's ground, 16px corners, hairline borders, a soft ambient lift.",
+      "Media as prints: a frame of the panel colour, a 6px corner, a lift on hover; photos sent together form one contact-sheet grid.",
+      "System UI type on a short scale (12 / 13.5 / 15, 17 for dialog titles); weight carries rank; tabular numerals everywhere.",
+      "Colour comes from the theme; the accent marks selection, unread, focus and the send action.",
+      "Pill-shaped composer, channel pills and toasts; rounded-square controls.",
+      "Every person and group keeps a fixed identity hue on its avatar."
+    ],
+    "rules": [
+      { "name": "The Theme Owns Colour Rule", "body": "A theme may set only --bg, --bg-image, --side, --panel, --card, --theirs, --dialog, --accent and --mine. Shape, space and type never vary by theme, and no component hard-codes a surface colour.", "section": "colors" },
+      { "name": "The Accent Means Something Rule", "body": "The accent marks selection (as a 16% tint, --accent-soft), unread, focus and the send action. It is not used for decoration or for section headings.", "section": "colors" },
+      { "name": "The Weight Carries Rank Rule", "body": "Unread rows go to 700, names to 500 to 600, metadata stays at 400; size changes are reserved for the four steps above.", "section": "typography" },
+      { "name": "The Tabular Numerals Rule", "body": "font-variant-numeric: tabular-nums is set on the body, so every time, size, count and duration aligns in columns.", "section": "typography" },
+      { "name": "The Soft Lift Rule", "body": "Shadows are always blurred and negatively spread; there are no hard offset shadows. Lift on hover is reserved for prints.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do let the theme supply every colour through its roles; a new surface uses --panel, --card, --border, --text, --muted and --accent, never literal colours.",
+      "Do keep the two-panel layout: a 288px people panel and the conversation, 8px apart on the theme's ground.",
+      "Do render several photos or videos sent together as one contact sheet of prints, and a folder as one card.",
+      "Do stay on the type scale (12 / 13.5 / 15, 17 for dialog titles) and rank with weight.",
+      "Do use the hairline border for every divider and container edge.",
+      "Do give every touch target 44px (48px for icon buttons) on the phone.",
+      "Do keep icons as 16px stroked line SVGs."
+    ],
+    "donts": [
+      "Don't use emojis anywhere in the interface.",
+      "Don't bring back a Discord-style server rail.",
+      "Don't let a theme change radii, spacing, type or shadows.",
+      "Don't use the accent for decoration; it marks selection, unread, focus and send.",
+      "Don't use hard offset shadows; lift is soft and negatively spread.",
+      "Don't rely on hover alone on the phone; hover-only controls get a press-and-hold or visible equivalent there."
+    ]
+  }
+}

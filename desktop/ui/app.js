@@ -62,6 +62,7 @@ const ICON = {
   pin: '<path d="M9 4h6l-1 6 4 4H6l4-4Z"/><path d="M12 14v6"/>',
   mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 9 4 6M21 9l-4 6"/>',
   hash: '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/>',
+  chev: '<path d="m9 6 6 6-6 6"/>',
 };
 const iconBtn = (name, title, onclick) => el('button', { class: 'icon', type: 'button', title, onclick }, svg(ICON[name]));
 
@@ -140,7 +141,7 @@ function chatInfo(chat) {
 
 function mediaUrl(file) {
   const base = S.me?.mediaBase || convertFileSrc('', 'media').replace(/\/$/, '');
-  return `${base}/${file.owner}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}`;
+  return `${base}/${file.owner}${file.dev ? `~${file.dev}` : ''}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}`;
 }
 
 // Feels like an app, not a web page.
@@ -353,6 +354,23 @@ async function loadContacts() {
   renderChatHead();
 }
 
+// A list row: name and time on top, a short line and the unread count below.
+function rowText(name, sub, ts, ...extra) {
+  return el('div', { class: 'grow row-text' },
+    el('div', { class: 'row-top' }, el('span', { class: 'name ellipsis', text: name }), ts ? el('span', { class: 'when', text: whenFmt(ts) }) : null),
+    el('div', { class: 'row-bot' }, el('span', { class: 'sub ellipsis', text: sub || '' }), ...extra));
+}
+const weekdayFmt = new Intl.DateTimeFormat('en-GB', { weekday: 'short' });
+const shortDayFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+function whenFmt(ts) {
+  const d = new Date(ts), now = new Date();
+  if (d.toDateString() === now.toDateString()) return timeFmt.format(d);
+  const days = (new Date(now.toDateString()) - new Date(d.toDateString())) / 864e5;
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return weekdayFmt.format(d);
+  return shortDayFmt.format(d);
+}
+
 function renderLists() {
   const byRecent = (a, b) => (b.lastAt || 0) - (a.lastAt || 0) || a.name.localeCompare(b.name);
   const badge = (chat) => {
@@ -363,22 +381,23 @@ function renderLists() {
   $('groupList').replaceChildren(...[...S.groups].sort(byRecent).map((g) => {
     const chat = `g:${g.id}`;
     const n = unreadIn(g.id);
-    return el('li', { class: 'friend' + (groupIdOf(S.active) === g.id ? ' active' : ''), onclick: () => openGroup(g.id), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
+    const online = g.members.filter((m) => m.online && m.id !== S.me.id).length;
+    return el('li', { class: 'friend' + (groupIdOf(S.active) === g.id ? ' active' : '') + (n ? ' has-unread' : ''), onclick: () => openGroup(g.id), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
       avatar(g.name, { group: true, seed: g.id }),
-      el('span', { class: 'grow ellipsis', text: g.name }),
-      S.mutes.has(`g:${g.id}`) ? svg(ICON.mute) : null,
-      n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null);
+      rowText(g.name, `${g.members.length} members${online ? ` · ${online} online` : ''}`, g.lastAt,
+        S.mutes.has(`g:${g.id}`) ? svg(ICON.mute) : null,
+        n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null));
   }));
   $('noGroups').classList.toggle('hidden', S.groups.length > 0);
 
   $('friendList').replaceChildren(...[...S.friends].sort(byRecent).map((f) => el('li', {
-    class: 'friend' + (S.active === f.id ? ' active' : ''), onclick: () => openChat(f.id),
+    class: 'friend' + (S.active === f.id ? ' active' : '') + (S.unread.get(f.id) ? ' has-unread' : ''), onclick: () => openChat(f.id),
     oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, friendMenu(f)); },
     title: f.status || '',
   }, avatar(f.name, { online: f.online, seed: f.id, src: f.avatar, mode: f.mode }),
-  el('div', { class: 'grow' }, el('div', { class: 'ellipsis', text: f.name }), f.status ? el('div', { class: 'sub ellipsis', text: f.status }) : null),
-  S.mutes.has(f.id) ? svg(ICON.mute) : null,
-  badge(f.id))));
+  rowText(f.name, f.status || (f.online ? (f.mode === 'away' ? 'Away' : f.mode === 'dnd' ? 'Do not disturb' : 'Online') : 'Offline'), f.lastAt,
+    S.mutes.has(f.id) ? svg(ICON.mute) : null,
+    badge(f.id)))));
   $('noFriends').classList.toggle('hidden', S.friends.length > 0);
 
   $('reqSec').classList.toggle('hidden', !S.incoming.length);
@@ -483,7 +502,7 @@ function channelMenu(g, ch) {
   return [
     { label: 'Open', run: () => openChat(ch.chat) },
     ch.id ? muteItem(ch.chat) : null,
-    ch.locked && ch.unlocked ? { label: 'Lock again on this PC', run: async () => { await invoke('forget_channel', { chat: ch.chat }); await loadContacts(); if (S.active === ch.chat) openChat(ch.chat); } } : null,
+
     { label: 'Clear messages for me', run: () => clearChat(ch.chat, false) },
     owner ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(ch.chat, true) } : null,
     owner && ch.id ? '-' : null,
@@ -585,8 +604,18 @@ $('addForm').addEventListener('submit', async (e) => {
 });
 
 // ---------- Chat ----------
+// Locked channels ask for their password every time you open them: leaving one forgets its key.
+function relock(chat) {
+  const ch = chat && channelOf(chat);
+  if (!ch || !ch.locked || !ch.unlocked) return;
+  ch.unlocked = false;
+  invoke('forget_channel', { chat }).catch(() => {});
+}
 async function openChat(chat, focusId) {
-  if (S.active !== chat) cancelReply();
+  if (S.active !== chat) {
+    cancelReply();
+    relock(S.active);
+  }
   S.active = chat;
   S.unread.delete(chat);
   if (isGroup(chat)) {
@@ -628,7 +657,7 @@ async function openChat(chat, focusId) {
   renderTyping();
   markRead();
   if (focusId) {
-    const node = document.querySelector(`.msg[data-id="${focusId}"]`);
+    const node = document.querySelector(`#msgs .print[data-id="${CSS.escape(focusId)}"]`) || msgNode(focusId);
     if (node) {
       node.scrollIntoView({ block: 'center' });
       node.classList.add('flash');
@@ -640,6 +669,7 @@ async function openChat(chat, focusId) {
 }
 
 function closeChat() {
+  relock(S.active);
   S.active = null;
   $('main').classList.remove('in-chat');
   $('chat').classList.add('hidden');
@@ -652,7 +682,10 @@ function renderChatHead() {
   $('chatName').textContent = info.group ? `# ${info.channelName}` : info.name;
   if (info.group) {
     const online = info.group.members.filter((m) => m.online && m.id !== S.me.id).length;
-    $('chatStatus').textContent = `${info.name} · ${info.group.members.length} members${online ? ` · ${online} online` : ''}`;
+    const phone = document.documentElement.classList.contains('phone');
+    $('chatStatus').textContent = phone && online
+      ? `${info.name} · ${online} online`
+      : `${info.name} · ${info.group.members.length} members${online ? ` · ${online} online` : ''}`;
     setAvatar($('chatAvatar'), info.name, { group: true, seed: info.group.id });
   } else {
     const mood = info.friend.status ? ` · ${info.friend.status}` : '';
@@ -668,20 +701,92 @@ function renderChatHead() {
   }
 }
 
-function renderMessages() {
+// Messages are shown in blocks: a single message, a contact sheet (photos and videos sent together)
+// or a folder (all files of a folder that was sent). A run is the same person writing within a few minutes.
+const RUN_GAP = 7 * 60 * 1000;
+const SHEET_GAP = 2 * 60 * 1000;
+const folderOf = (m) => (m.file && !m.locked && /[\\/]/.test(m.file.name) ? m.file.name.split(/[\\/]/)[0] : null);
+const isMediaOnly = (m) => !!(m.file && !m.text && !m.reply && !m.locked && !folderOf(m)
+  && (IMAGE.test(m.file.mime) || /^video\//i.test(m.file.mime))
+  && (m.thumb?.img || (IMAGE.test(m.file.mime) && m.file.size <= INLINE_IMAGE_LIMIT)));
+function blocksOf(list) {
+  const out = [];
+  for (const m of list) {
+    const b = out[out.length - 1];
+    const last = b && b.items[b.items.length - 1];
+    const same = last && last.sender === m.sender && dayFmt.format(last.ts) === dayFmt.format(m.ts);
+    const f = folderOf(m);
+    if (f && same && b.kind === 'folder' && b.folder === f && m.ts - last.ts < 30 * 60 * 1000) { b.items.push(m); continue; }
+    if (!f && same && isMediaOnly(m) && isMediaOnly(last) && b.kind !== 'folder' && m.ts - last.ts < SHEET_GAP) { b.kind = 'sheet'; b.items.push(m); continue; }
+    out.push({ kind: f ? 'folder' : 'one', folder: f, items: [m] });
+  }
+  return out;
+}
+function renderMessages(keepPlace = false) {
   const box = $('msgs');
+  const top = box.scrollTop;
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const list = S.msgs.get(S.active) || [];
   const nodes = [];
   let lastDay = '';
-  let lastSender = '';
-  for (const m of list) {
+  let prev = null;
+  for (const b of blocksOf(list)) {
+    const m = b.items[0];
     const day = dayFmt.format(m.ts);
-    if (day !== lastDay) { nodes.push(el('div', { class: 'day', text: day })); lastDay = day; lastSender = ''; }
-    nodes.push(messageNode(m, m.sender !== lastSender));
-    lastSender = m.sender;
+    if (day !== lastDay) { nodes.push(el('div', { class: 'day', text: day })); lastDay = day; prev = null; }
+    const run = !prev || prev.sender !== m.sender || m.ts - prev.ts > RUN_GAP;
+    nodes.push(b.kind === 'one' ? messageNode(m, run) : messageNode(b.items[b.items.length - 1], run, b));
+    prev = b.items[b.items.length - 1];
   }
+  // Within a run, only the last message shows its time (the others on hover).
+  nodes.forEach((n, i) => {
+    const next = nodes[i + 1];
+    if (n.classList.contains('msg') && next?.classList.contains('msg') && !next.classList.contains('run')) n.classList.add('cont');
+  });
+  if (!list.length) nodes.push(emptyChatNode());
   box.replaceChildren(...nodes);
-  box.scrollTop = box.scrollHeight;
+  box.scrollTop = keepPlace && !near ? top : box.scrollHeight;
+}
+const msgNode = (id) => document.querySelector(`#msgs .msg[data-ids~="${CSS.escape(id)}"]`);
+function emptyChatNode() {
+  const info = chatInfo(S.active);
+  const phone = document.documentElement.classList.contains('phone');
+  const where = info?.group ? `in #${info.channelName}` : `with ${info?.name || 'them'}`;
+  return el('div', { class: 'chat-empty', text: `No messages ${where} yet. Write something, or ${phone ? 'send a photo' : 'drop a file here'}.` });
+}
+// Reply, edit, pin, copy and delete: right-click on PC, press and hold on the phone.
+function msgMenu(m, items) {
+  const many = items.length > 1;
+  return [
+    m.locked ? null : { label: 'Reply', run: () => startReply(m) },
+    !many && m.mine && m.text && !m.locked ? { label: 'Edit', run: () => startEdit(m) } : null,
+    !many && !m.locked ? { label: m.pinned ? 'Unpin' : 'Pin', run: () => togglePin(m) } : null,
+    m.text && !m.locked ? { label: 'Copy text', run: () => navigator.clipboard.writeText(m.text).then(() => toast('Copied.')).catch(() => {}) } : null,
+    '-',
+    { label: many ? 'Delete these…' : 'Delete…', danger: true, run: () => deleteMessage(many ? items : m) },
+  ];
+}
+function attachMenu(node, m, items) {
+  const open = (x, y, target) => {
+    const print = target.closest?.('.print');
+    const pm = print && items.find((i) => i.id === print.dataset.id);
+    showMenu(x, y, pm ? printMenu(pm) : msgMenu(m, items));
+  };
+  node.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.bubble') && getSelection().toString()) return; // copying selected text
+    e.preventDefault();
+    open(e.clientX, e.clientY, e.target);
+  });
+  let timer = null;
+  node.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; navigator.vibrate?.(15); open(t.clientX, t.clientY, e.target); }, 450);
+  }, { passive: true });
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  node.addEventListener('touchmove', cancel, { passive: true });
+  node.addEventListener('touchend', cancel);
+  node.addEventListener('touchcancel', cancel);
 }
 
 // **bold**, *italic*, ~~strike~~, `code`, and @mentions; everything else stays plain text.
@@ -715,33 +820,164 @@ function mentionsMe(text) {
   return false;
 }
 
-function messageNode(m, showSender = true) {
-  const quote = m.reply ? el('button', { type: 'button', class: 'quote', title: 'Show the message', onclick: () => jumpTo(m.reply.id) },
+function senderOf(m) {
+  const g = groupOf(m.chat);
+  const p = (g && g.members.find((x) => x.id === m.sender)) || friendById(m.sender);
+  return { name: m.senderName || p?.name || '?', src: p?.avatar };
+}
+function messageNode(m, run = true, block = null) {
+  const items = block ? block.items : [m];
+  const group = isGroup(m.chat);
+  const quote = !block && m.reply ? el('button', { type: 'button', class: 'quote', title: 'Show the message', onclick: () => jumpTo(m.reply.id) },
     el('b', { text: m.reply.name }), m.reply.text || '') : null;
-  const bubble = m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
+  const bubble = block ? null : m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
     : m.text ? el('div', { class: 'bubble' }, formatText(m.text)) : null;
+  const content = block ? (block.kind === 'sheet' ? sheetNode(block) : folderCard(block))
+    : m.file ? fileCard(m.file, m.chat, m.thumb) : null;
   const acts = m.locked ? [] : [
     el('button', { type: 'button', class: 'msg-act', title: 'Reply', onclick: () => startReply(m) }, svg(ICON.reply)),
-    m.mine && m.text ? el('button', { type: 'button', class: 'msg-act', title: 'Edit', onclick: () => startEdit(m) }, svg(ICON.edit)) : null,
-    el('button', { type: 'button', class: 'msg-act', title: m.pinned ? 'Unpin' : 'Pin to the top of the chat', onclick: () => togglePin(m) }, svg(ICON.pin)),
+    !block && m.mine && m.text ? el('button', { type: 'button', class: 'msg-act', title: 'Edit', onclick: () => startEdit(m) }, svg(ICON.edit)) : null,
+    !block ? el('button', { type: 'button', class: 'msg-act', title: m.pinned ? 'Unpin' : 'Pin to the top of the chat', onclick: () => togglePin(m) }, svg(ICON.pin)) : null,
   ];
-  const node = el('div', { class: 'msg ' + (m.mine ? 'mine' : 'theirs') + (!m.mine && isGroup(m.chat) && mentionsMe(m.text) ? ' mentions-me' : ''), 'data-id': m.id },
-    isGroup(m.chat) && !m.mine && showSender ? el('div', { class: 'sender', text: m.senderName }) : null,
-    quote,
-    m.file ? fileCard(m.file, m.chat, m.thumb) : null,
-    bubble,
-    el('div', { class: 'meta' },
-      el('span', { class: 'time', text: timeFmt.format(m.ts) }),
-      m.edited ? el('span', { class: 'edited', text: 'edited' }) : null,
-      m.pinned ? el('span', { class: 'pin-mark', title: 'Pinned' }, svg(ICON.pin)) : null,
-      acts,
-      el('button', { type: 'button', class: 'msg-del', title: 'Delete message', onclick: () => deleteMessage(m) }, svg(ICON.x))),
-    seenRow(m));
+  const del = el('button', { type: 'button', class: 'msg-del', title: block ? 'Delete these messages' : 'Delete message', onclick: () => deleteMessage(block ? items : m) }, svg(ICON.x));
+  const time = el('span', { class: 'time', text: timeFmt.format(m.ts), title: `${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` });
+  const edited = m.edited ? el('span', { class: 'edited', text: 'edited' }) : null;
+  const pin = items.some((x) => x.pinned) ? el('span', { class: 'pin-mark', title: 'Pinned' }, svg(ICON.pin)) : null;
+  const seen = seenRow(m.chat, items.map((x) => x.id));
+  // Seen heads always sit right before the time; the actions are on the outer side.
+  const meta = el('div', { class: 'meta' + (edited || pin ? ' keep-fixed' : '') + (seen ? ' keep-seen' : '') }, m.mine ? [del, ...acts, pin, edited, seen, time] : [seen, time, edited, pin, ...acts, del]);
+  const theirsInGroup = group && !m.mine;
+  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName }) : null, quote, content, bubble, meta];
+  const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
+    + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (block ? ` block-${block.kind}` : '');
+  const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
+  let node;
+  if (!theirsInGroup) node = el('div', attrs, body);
+  else {
+    const who = senderOf(m);
+    node = el('div', attrs,
+      run ? avatar(who.name, { seed: m.sender, src: who.src }) : el('span', { class: 'av-gap' }),
+      el('div', { class: 'msg-body' }, body));
+  }
+  attachMenu(node, m, items);
   return node;
 }
 
+function sheetNode(b) {
+  const n = b.items.length;
+  const sheet = el('div', { class: `sheet n${n}` }, b.items.map(printNode));
+  sheet.style.setProperty('--cols', n <= 4 ? 2 : 3);
+  return sheet;
+}
+function printNode(m) {
+  const f = m.file;
+  const video = /^video\//i.test(f.mime);
+  return el('button', { type: 'button', class: 'print', 'data-id': m.id, title: f.name, onclick: () => openViewer(f) },
+  el('img', { src: m.thumb?.img || mediaUrl(f), alt: '', loading: 'lazy', onload: keepBottom }),
+  video ? el('span', { class: 'play-badge' }, svg(ICON.bigplay)) : null,
+  video && m.thumb?.dur ? el('span', { class: 'dur', text: fmtTime(m.thumb.dur) }) : null);
+}
+function printMenu(m) {
+  const t = downloadOf(m.file.id);
+  return [
+    { label: /^video\//i.test(m.file.mime) ? 'Play' : 'Open', run: () => openViewer(m.file) },
+    m.file.owner !== S.me.id ? (t?.status === 'done'
+      ? { label: 'Open the downloaded file', run: () => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast) }
+      : { label: 'Download', run: () => startDownload(m.file, m.chat) }) : null,
+    isGroup(m.chat) && /^video\//i.test(m.file.mime) ? { label: 'Watch together', run: () => openPartySetup(m.file, groupIdOf(m.chat)) } : null,
+    '-',
+    { label: 'Reply', run: () => startReply(m) },
+    { label: m.pinned ? 'Unpin' : 'Pin', run: () => togglePin(m) },
+    { label: 'Delete…', danger: true, run: () => deleteMessage(m) },
+  ];
+}
+
+// ---------- Folders: one card in the chat, the contents in a panel ----------
+function folderCard(b) {
+  const files = b.items.map((x) => x.file);
+  const size = files.reduce((a, f) => a + f.size, 0);
+  const done = files.filter((f) => downloadOf(f.id)?.status === 'done').length;
+  const mine = b.items[0].mine;
+  const got = !mine && done ? ` · ${done === files.length ? 'downloaded' : `${done} downloaded`}` : '';
+  return el('button', { type: 'button', class: 'folder-card', title: 'Show what is in this folder', onclick: () => openFolder(b) },
+    el('span', { class: 'folder-ico' }, svg(ICON.folder)),
+    el('span', { class: 'grow' },
+      el('div', { class: 'file-name', text: b.folder }),
+      el('div', { class: 'sub', text: `${files.length} ${files.length === 1 ? 'file' : 'files'} · ${fmtBytes(size)}${got}` })),
+    el('span', { class: 'chev' }, svg(ICON.chev)));
+}
+let folderOpen = null;
+function openFolder(b) {
+  folderOpen = b;
+  const mine = b.items[0].mine;
+  $('folderName').textContent = b.folder;
+  for (const id of ['folderAllRow', 'folderDlSel', 'folderDlAll']) $(id).classList.toggle('hidden', mine);
+  $('folderList').replaceChildren();
+  renderFolder(true);
+  $('folderDlg').showModal();
+}
+function renderFolder(fresh = false) {
+  const b = folderOpen;
+  if (!b) return;
+  const mine = b.items[0].mine;
+  const was = new Set([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value));
+  const items = [...b.items].sort((x, y) => x.file.name.localeCompare(y.file.name, undefined, { numeric: true }));
+  const total = items.reduce((a, x) => a + x.file.size, 0);
+  $('folderInfo').textContent = `${items.length} ${items.length === 1 ? 'file' : 'files'} · ${fmtBytes(total)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
+  $('folderList').replaceChildren(...items.map((x) => {
+    const f = x.file;
+    const rel = f.name.split(/[\\/]/).slice(1);
+    const leaf = rel.pop() || f.name;
+    const t = downloadOf(f.id);
+    const state = mine ? el('span', { class: 'f-state', text: 'Sent' })
+      : t?.status === 'done' ? el('button', { type: 'button', class: 'link f-state done', text: 'Open', onclick: (e) => { e.preventDefault(); invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast); } })
+      : t?.status === 'running' ? el('span', { class: 'f-state', text: `${Math.floor((t.done / Math.max(t.size, 1)) * 100)}%` })
+      : t?.status === 'error' ? el('span', { class: 'f-state danger-text', text: 'Failed' })
+      : t?.status === 'paused' ? el('span', { class: 'f-state', text: 'Paused' })
+      : el('span', { class: 'f-state' });
+    const box = el('input', { type: 'checkbox', value: f.id, onchange: folderSelInfo });
+    box.checked = fresh ? !t : was.has(f.id);
+    if (mine) box.classList.add('hidden');
+    return el('label', { class: 'f-row', title: f.name },
+      box,
+      el('span', { class: 'f-path' }, rel.length ? el('span', { class: 'dir', text: rel.join('/') + '/' }) : null, leaf),
+      el('span', { class: 'f-size', text: fmtBytes(f.size) }),
+      state);
+  }));
+  folderSelInfo();
+}
+function folderSelInfo() {
+  if (!folderOpen) return;
+  const boxes = [...$('folderList').querySelectorAll('input')];
+  const on = boxes.filter((i) => i.checked);
+  const size = on.reduce((a, i) => a + (folderOpen.items.find((x) => x.file.id === i.value)?.file.size || 0), 0);
+  $('folderAll').checked = on.length === boxes.length && boxes.length > 0;
+  $('folderSel').textContent = folderOpen.items[0].mine ? '' : on.length ? `${on.length} selected · ${fmtBytes(size)}` : 'Nothing selected';
+  $('folderDlSel').disabled = !on.length;
+}
+$('folderAll').addEventListener('change', () => {
+  for (const i of $('folderList').querySelectorAll('input')) i.checked = $('folderAll').checked;
+  folderSelInfo();
+});
+function downloadFolder(ids) {
+  const b = folderOpen;
+  if (!b) return;
+  let n = 0;
+  for (const x of b.items) {
+    if (!ids.includes(x.file.id)) continue;
+    const t = downloadOf(x.file.id);
+    if (t && (t.status === 'done' || t.status === 'running')) continue;
+    startDownload(x.file, x.chat);
+    n++;
+  }
+  toast(n ? `Downloading ${n} ${n === 1 ? 'file' : 'files'} into Downloads/${b.folder}.` : 'Those files are already downloaded.');
+}
+$('folderDlSel').addEventListener('click', () => downloadFolder([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value)));
+$('folderDlAll').addEventListener('click', () => downloadFolder(folderOpen.items.map((x) => x.file.id)));
+$('folderDlg').addEventListener('close', () => { folderOpen = null; });
+
 function jumpTo(id) {
-  const node = document.querySelector(`#msgs .msg[data-id="${id}"]`);
+  const node = document.querySelector(`#msgs .print[data-id="${CSS.escape(id)}"]`) || msgNode(id);
   if (!node) return toast('That message is no longer here.');
   node.scrollIntoView({ block: 'center', behavior: 'smooth' });
   node.classList.add('flash');
@@ -789,8 +1025,13 @@ function updateMessage(chat, id, fn) {
   if (!m) return;
   fn(m);
   if (chat === S.active) {
-    const old = document.querySelector(`#msgs .msg[data-id="${id}"]`);
-    if (old) old.replaceWith(messageNode(m, !!old.querySelector('.sender')));
+    const old = msgNode(id);
+    if (old && !old.dataset.ids.includes(' ')) {
+      const fresh = messageNode(m, old.classList.contains('run'));
+      if (old.classList.contains('cont')) fresh.classList.add('cont');
+      old.replaceWith(fresh);
+    }
+    else if (old) renderMessages(true);
   }
 }
 listen('edited', ({ payload }) => {
@@ -869,18 +1110,18 @@ $('msgInput').addEventListener('keydown', (e) => {
 });
 $('msgInput').addEventListener('blur', () => setTimeout(() => $('mentionPop').classList.add('hidden'), 150));
 
-// Like in Messenger: small pictures under the last message each person has seen.
-function seenRow(m) {
-  const reads = S.reads.get(m.chat) || {};
-  const who = Object.keys(reads).filter((id) => reads[id] === m.id && id !== S.me.id);
+// Like in Messenger: small pictures of who has seen up to here, in the same row as the time.
+function seenRow(chat, ids) {
+  const reads = S.reads.get(chat) || {};
+  const who = Object.keys(reads).filter((id) => ids.includes(reads[id]) && id !== S.me.id);
   if (!who.length) return null;
-  const group = isGroup(m.chat) ? groupOf(m.chat) : null;
+  const group = isGroup(chat) ? groupOf(chat) : null;
   const person = (id) => (group ? group.members.find((x) => x.id === id) : friendById(id)) || friendById(id);
   const known = who.map(person).filter(Boolean);
   if (!known.length) return null;
-  const row = el('div', { class: 'seen-row', title: `Seen by ${known.map((p) => p.name).join(', ')}` },
-    known.slice(0, 8).map((p) => avatar(p.name, { seed: p.id, src: p.avatar })));
-  if (known.length > 8) row.append(el('span', { class: 'more', text: `+${known.length - 8}` }));
+  const row = el('span', { class: 'seen-row', title: `Seen by ${known.map((p) => p.name).join(', ')}` },
+    known.slice(0, 6).map((p) => avatar(p.name, { seed: p.id, src: p.avatar })));
+  if (known.length > 6) row.append(el('span', { class: 'more', text: `+${known.length - 6}` }));
   return row;
 }
 
@@ -888,9 +1129,13 @@ function renderSeen() {
   const box = $('msgs');
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   box.querySelectorAll('.seen-row').forEach((n) => n.remove());
-  for (const m of S.msgs.get(S.active) || []) {
-    const row = seenRow(m);
-    if (row) box.querySelector(`.msg[data-id="${m.id}"]`)?.append(row);
+  box.querySelectorAll('.meta.keep-seen').forEach((n) => n.classList.remove('keep-seen'));
+  for (const node of box.querySelectorAll('.msg[data-ids]')) {
+    const row = seenRow(S.active, node.dataset.ids.split(' '));
+    if (!row) continue;
+    const time = node.querySelector('.meta .time');
+    time?.before(row);
+    time?.parentElement.classList.add('keep-seen');
   }
   if (near) box.scrollTop = box.scrollHeight;
 }
@@ -951,19 +1196,25 @@ $('msgInput').addEventListener('input', () => {
 });
 
 // Delete a message: just for you, or (your own) for everyone in the chat.
-function deleteMessage(m) {
+function deleteMessage(arg) {
+  const items = Array.isArray(arg) ? arg : [arg];
+  const mine = items.every((x) => x.mine);
+  const files = items.some((x) => x.file);
   const d = $('delDlg');
-  $('delAll').classList.toggle('hidden', !m.mine);
-  $('delText').textContent = m.mine
-    ? (m.file ? 'Delete for everyone also stops sharing this file: nobody in this chat can watch or download it from your PC any more.' : 'Delete for everyone removes it for everyone in this chat, also for those who are offline now.')
-    : 'This removes it only on this computer.';
+  $('delAll').classList.toggle('hidden', !mine);
+  $('delText').textContent = (items.length > 1 ? `This deletes all ${items.length} of them. ` : '') + (mine
+    ? (files ? 'Delete for everyone also stops sharing the files: nobody in this chat can watch or download them from your PC any more.' : 'Delete for everyone removes it for everyone in this chat, also for those who are offline now.')
+    : 'This removes it only on this device.');
   d.returnValue = '';
   d.addEventListener('close', async () => {
     if (d.returnValue !== 'me' && d.returnValue !== 'all') return;
-    try {
-      await invoke('delete_message', { id: m.id, everyone: d.returnValue === 'all' });
-    } catch (e) {
-      toast(e);
+    for (const x of items) {
+      try {
+        await invoke('delete_message', { id: x.id, everyone: d.returnValue === 'all' });
+      } catch (e) {
+        toast(e);
+        break;
+      }
     }
   }, { once: true });
   d.showModal();
@@ -975,12 +1226,7 @@ function removeMessage(id, chat) {
     const i = list.findIndex((x) => x.id === id);
     if (i >= 0) list.splice(i, 1);
   }
-  if (chat === S.active) {
-    const box = $('msgs');
-    const top = box.scrollTop;
-    renderMessages();
-    box.scrollTop = Math.min(top, box.scrollHeight);
-  }
+  if (chat === S.active) renderMessages(true);
 }
 
 function fileCard(file, chat, thumb) {
@@ -1116,13 +1362,7 @@ listen('thumb', ({ payload }) => {
       }
     }
   }
-  if (visible) {
-    const box = $('msgs');
-    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-    const top = box.scrollTop;
-    renderMessages();
-    if (!near) box.scrollTop = top;
-  }
+  if (visible) renderMessages(true);
 });
 
 function onMessage(m) {
@@ -1149,9 +1389,18 @@ function onMessage(m) {
       const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
       const prev = list[list.length - 2];
       const day = dayFmt.format(m.ts);
-      if (!prev || dayFmt.format(prev.ts) !== day) box.append(el('div', { class: 'day', text: day }));
-      box.append(messageNode(m, !prev || prev.sender !== m.sender));
-      if (near || m.mine) box.scrollTop = box.scrollHeight;
+      if (folderOf(m) || isMediaOnly(m)) {
+        // It may join the folder or photo grid above it.
+        renderMessages(!(near || m.mine));
+      } else {
+        box.querySelector('.chat-empty')?.remove();
+        if (!prev || dayFmt.format(prev.ts) !== day) box.append(el('div', { class: 'day', text: day }));
+        const run = !prev || prev.sender !== m.sender || m.ts - prev.ts > RUN_GAP || dayFmt.format(prev.ts) !== day;
+        const last = box.lastElementChild;
+        if (!run && last?.classList.contains('msg')) last.classList.add('cont');
+        box.append(messageNode(m, run));
+        if (near || m.mine) box.scrollTop = box.scrollHeight;
+      }
       markRead();
     }
   } else if (!m.mine) {
@@ -1200,6 +1449,13 @@ async function sendPhoneFiles(files) {
 $('phoneFiles').addEventListener('change', () => {
   const files = [...$('phoneFiles').files];
   $('phoneFiles').value = '';
+  if (files.length) sendPhoneFiles(files).catch(toast);
+});
+
+$('photoBtn').addEventListener('click', () => { if (S.active) $('phonePhotos').click(); });
+$('phonePhotos').addEventListener('change', () => {
+  const files = [...$('phonePhotos').files];
+  $('phonePhotos').value = '';
   if (files.length) sendPhoneFiles(files).catch(toast);
 });
 
@@ -1409,7 +1665,7 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- VLC: for formats the built-in player can't play (streams, nothing is downloaded) ----------
 function httpUrl(file) {
-  return `${S.me.httpBase}/${file.owner}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}?stream=1`;
+  return `${S.me.httpBase}/${file.owner}${file.dev ? `~${file.dev}` : ''}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}?stream=1`;
 }
 
 // Makes sure VLC is on this computer: offers to install it (free) with one click.
@@ -1986,6 +2242,7 @@ function renderTransfers() {
     const m = (S.msgs.get(S.active) || []).find((x) => x.file?.id === btn.dataset.file);
     if (m) updateFileButton(btn, m.file, m.chat);
   });
+  if (folderOpen) renderFolder();
 }
 function act(t, action) {
   invoke('transfer_action', { id: t.id, action }).catch(toast);
@@ -2001,8 +2258,86 @@ function renderAvatarPick() {
   btn.replaceChildren(src ? el('img', { src, alt: '' }) : ($('sName').value || S.me.name || '?')[0].toUpperCase());
 }
 
+// ---------- One account on a PC and a phone ----------
+const ICON_DEV = {
+  pc: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  phone: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>',
+};
+async function renderDevices() {
+  const list = await invoke('devices').catch(() => []);
+  const phone = document.documentElement.classList.contains('phone');
+  const shown = S.me.linked ? list : list.filter((d) => !d.primary);
+  $('sDevicesTitle').textContent = S.me.linked || phone ? 'Your PC' : 'Phone';
+  $('sDevices').replaceChildren(...shown.map((d) => el('div', { class: 'dev-row' },
+    svg(d.primary ? ICON_DEV.pc : ICON_DEV.phone),
+    el('span', { class: 'grow', text: d.name + (d.here ? ' (this device)' : '') }),
+    el('span', { class: 'sub', text: d.here ? '' : d.online ? 'Online' : 'Offline' }))));
+  $('sLinkBtn').classList.toggle('hidden', !!S.me.linked);
+  $('sLinkBtn').textContent = phone ? 'Sign in with your PC…' : 'Sign in on your phone…';
+  $('sLinkNote').textContent = S.me.linked
+    ? 'This device uses your PC’s account. It keeps working when the PC is off; the two catch up when both are on.'
+    : phone ? 'Use the same account as on your PC: friends, groups and messages. What is on this phone now is replaced.'
+    : 'Your phone gets your friends, groups and messages, and keeps working when this PC is off.';
+}
+$('sLinkBtn').addEventListener('click', () => {
+  if (document.documentElement.classList.contains('phone')) openJoin();
+  else openLink();
+});
+async function openLink() {
+  $('linkCode').textContent = '…';
+  $('linkStatus').textContent = 'Making a code…';
+  $('linkDlg').showModal();
+  try {
+    $('linkCode').textContent = await invoke('link_start');
+    $('linkStatus').textContent = 'The code works for 15 minutes. Keep UaN open on this PC until the phone is done.';
+  } catch (e) {
+    $('linkCode').textContent = '';
+    $('linkStatus').textContent = String(e);
+  }
+}
+$('linkDlg').addEventListener('close', () => invoke('link_cancel').catch(() => {}));
+listen('linked', ({ payload }) => {
+  $('linkStatus').textContent = `Your ${(payload.name || 'phone').toLowerCase()} is signed in. It gets everything from now on, also while this PC is off.`;
+  $('linkCode').textContent = 'Done';
+  if ($('settingsDlg').open) renderDevices();
+});
+function openJoin() {
+  $('joinCode').value = '';
+  $('joinErr').textContent = '';
+  $('joinStatus').textContent = '';
+  $('joinGo').disabled = false;
+  $('joinDlg').showModal();
+  setTimeout(() => $('joinCode').focus(), 50);
+}
+$('setupLink').addEventListener('click', openJoin);
+$('joinCancel').addEventListener('click', () => $('joinDlg').close());
+$('joinForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('joinErr').textContent = '';
+  $('joinGo').disabled = true;
+  $('joinStatus').textContent = 'Looking for your PC…';
+  try {
+    await invoke('link_join', { code: $('joinCode').value });
+    const phone = document.documentElement.classList.contains('phone');
+    $('joinStatus').textContent = phone ? 'Signed in. UaN closes now: open it again.' : 'Signed in. UaN starts again…';
+    setTimeout(() => invoke('restart_app'), phone ? 2500 : 1200);
+  } catch (err) {
+    $('joinErr').textContent = String(err);
+    $('joinStatus').textContent = '';
+    $('joinGo').disabled = false;
+  }
+});
+listen('link-progress', ({ payload }) => {
+  $('joinStatus').textContent = `Copying your messages… ${Math.round((payload.done / payload.parts) * 100)}%`;
+});
+listen('me', async () => {
+  S.me = await invoke('state');
+  renderMe();
+});
+
 $('settingsBtn').addEventListener('click', async () => {
   S.me = await invoke('state');
+  renderDevices();
   pendingAvatar = null;
   $('sName').value = S.me.name;
   $('sStatus').value = S.me.profile?.status || '';
@@ -2612,8 +2947,8 @@ const GLASS_DARK = { side: 'rgba(0, 0, 0, .30)', panel: 'rgba(0, 0, 0, .16)', ca
 const GLASS_LIGHT = { side: 'rgba(255, 255, 255, .45)', panel: 'rgba(255, 255, 255, .55)', card: 'rgba(255, 255, 255, .85)', theirs: '#ffffff' };
 const THEMES = [
   { id: 'system', name: 'Auto' },
-  { id: 'light', name: 'Light', preview: ['#ebebeb', '#fbfbfb'] },
-  { id: 'dark', name: 'Dark', preview: ['#1c1c1c', '#272727'] },
+  { id: 'light', name: 'Light', preview: ['#f6f6f7', '#ffffff'] },
+  { id: 'dark', name: 'Dark', preview: ['#1c1c1c', '#222222'] },
   { id: 'ash', name: 'Ash', base: 'dark', bg: '#2c2f36', side: '#24272d', panel: '#32353d', card: '#3a3e47', theirs: '#3a3e47', accent: '#8ea1ff', mine: '#4b5bd6' },
   { id: 'onyx', name: 'Onyx', base: 'dark', bg: '#000000', side: '#070707', panel: '#0d0d0d', card: '#171717', theirs: '#171717', accent: '#e6e6e6', mine: '#2b2b2b' },
   { id: 'midnight', name: 'Midnight', base: 'dark', bg: '#0f1424', side: '#0b0f1c', panel: '#141a2e', card: '#1b2340', theirs: '#1b2340', accent: '#7aa2ff', mine: '#2f4fb0' },

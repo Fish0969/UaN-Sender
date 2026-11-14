@@ -15,6 +15,7 @@
       <label>What should your friends call you?<input id="setupName" maxlength="32" required spellcheck="false"></label>
       <div id="setupError" class="error"></div>
       <button class="accent wide">Continue</button>
+      <div class="switch"><button type="button" class="link" id="setupLink">Already use UaN on your PC? Sign in with it</button></div>
     </form>
   </div>
 
@@ -44,11 +45,6 @@
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
         </button>
       </div>
-      <div class="code-row">
-        <button id="copyCode" class="small" type="button" title="Copies your code without showing it, so nobody watching your screen can grab it">Copy friend code</button>
-        <button id="showCode" class="small" type="button">Show friend code</button>
-      </div>
-      <div id="codeText" class="code code-reveal hidden"></div>
       <div id="updateBar" class="update-bar hidden"></div>
       <form id="addForm" class="add">
         <input id="addInput" placeholder="Paste a friend code" required spellcheck="false" autocomplete="off">
@@ -77,10 +73,17 @@
           <ul id="outList" class="list"></ul>
         </div>
       </div>
-      <button id="multiBtn" class="side-btn">
-        <svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z"/></svg>
-        Send to several
-      </button>
+      <div class="dock">
+        <div id="codeText" class="code code-reveal hidden"></div>
+        <div class="code-row">
+          <button id="copyCode" class="small" type="button" title="Copies your code without showing it, so nobody watching your screen can grab it">Copy friend code</button>
+          <button id="showCode" class="small" type="button">Show friend code</button>
+        </div>
+        <button id="multiBtn" class="side-btn">
+          <svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z"/></svg>
+          Send to several
+        </button>
+      </div>
     </aside>
 
     <section class="content">
@@ -108,7 +111,7 @@
         <div id="lockGate" class="lock-gate hidden">
           <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
           <div class="strong" id="lockTitle">This channel is locked</div>
-          <div class="note">Enter its password to read and write here. Messages in it are encrypted with this password.</div>
+          <div class="note">Enter its password to read and write here. It is asked every time you open this channel, and the messages in it are encrypted with it.</div>
           <form id="lockForm" class="lock-form">
             <input id="lockPw" type="password" placeholder="Password" autocomplete="off">
             <button class="accent">Unlock</button>
@@ -126,8 +129,11 @@
           <button type="button" class="icon" id="attachBtn" title="Send files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
           </button>
+          <button type="button" class="icon phone-only" id="photoBtn" title="Send photos and videos from your gallery">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>
+          </button>
           <input id="msgInput" placeholder="Message" autocomplete="off" maxlength="5000">
-          <button class="accent" id="sendBtn">Send</button>
+          <button class="accent" id="sendBtn" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
         </form>
         <div id="drop" class="drop hidden">Drop to send</div>
       </div>
@@ -187,6 +193,51 @@
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
   <input type="file" id="avatarFile" accept="image/*" hidden>
   <input type="file" id="phoneFiles" multiple hidden>
+  <input type="file" id="phonePhotos" accept="image/*,video/*" multiple hidden>
+
+  <!-- Sign in on a phone: the PC shows a code -->
+  <dialog id="linkDlg">
+    <form method="dialog">
+      <h2>Sign in on your phone</h2>
+      <ol class="link-steps">
+        <li>Install UaN on your phone and open it.</li>
+        <li>Tap <b>Already use UaN on your PC? Sign in with it</b> (or Settings, Your PC).</li>
+        <li>Type this code:</li>
+      </ol>
+      <div class="link-code" id="linkCode">…</div>
+      <div class="note" id="linkStatus">The code works for 15 minutes. Keep UaN open on this PC until the phone is done.</div>
+      <div class="actions"><span class="grow"></span><button value="close">Close</button></div>
+    </form>
+  </dialog>
+
+  <!-- Sign in with the PC's account: the phone types the code -->
+  <dialog id="joinDlg">
+    <form id="joinForm">
+      <h2>Sign in with your PC</h2>
+      <p class="note">On your PC, open Settings and press <b>Sign in on your phone</b>. Type the code it shows. Your friends, groups and messages come to this device, and it keeps working when the PC is off.</p>
+      <input id="joinCode" placeholder="ABCD-EFGH-JK" autocomplete="off" spellcheck="false" maxlength="14">
+      <div id="joinErr" class="error"></div>
+      <div class="actions"><span class="grow note" id="joinStatus"></span><button type="button" id="joinCancel">Cancel</button><button class="accent" id="joinGo">Sign in</button></div>
+    </form>
+  </dialog>
+
+  <!-- A folder someone sent: pick what to download -->
+  <dialog id="folderDlg">
+    <form method="dialog">
+      <div class="folder-head">
+        <div class="folder-ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></div>
+        <div class="grow"><h2 id="folderName" class="ellipsis"></h2><div class="sub" id="folderInfo"></div></div>
+      </div>
+      <label class="f-all" id="folderAllRow"><input type="checkbox" id="folderAll"> Select all</label>
+      <div id="folderList" class="folder-list"></div>
+      <div class="actions">
+        <span class="grow sub" id="folderSel"></span>
+        <button value="close">Close</button>
+        <button type="button" id="folderDlSel">Download selected</button>
+        <button type="button" class="accent" id="folderDlAll">Download all</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- Gallery -->
   <dialog id="galleryDlg" class="wide-dlg">
@@ -264,7 +315,7 @@
           <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming, Watching a film, Away"></label>
         </div>
       </div>
-      <div class="note"><button type="button" class="link" id="sAvatarPick">Upload your own…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
+      <div class="note avatar-links"><button type="button" class="link" id="sAvatarPick">Upload your own…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
       <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
       <div class="group">
         <div class="group-title">Appearance</div>
@@ -288,7 +339,7 @@
         <div class="note">Off by default: films stream without downloading. If on, files are saved to Downloads/UaN, so they still open when the sender’s PC is off later.</div>
         <div class="note">UaN keeps running in the tray when you close the window, so friends can watch and download what you sent them. Quit it from the tray icon.</div>
       </div>
-      <div class="group">
+      <div class="group" id="sMailboxGroup">
         <div class="group-title">Offline mailbox</div>
         <input id="sMailbox" placeholder="https://uan-mailbox.<name>.workers.dev" spellcheck="false">
         <div class="note" id="sMailboxNote">When a friend is offline, your messages wait here (encrypted) so you can turn your PC off. Files still come from the sender's PC.</div>
@@ -297,6 +348,12 @@
         <div class="group-title">Backup</div>
         <div class="row-btns"><button type="button" id="sBackup">Save a backup…</button><button type="button" id="sRestore">Restore from backup…</button></div>
         <div class="note">A backup keeps your friend code, friends, groups and messages in one password-protected file. With it you can move UaN to a new PC, or get everything back after reinstalling Windows.</div>
+      </div>
+      <div class="group" id="sDevicesGroup">
+        <div class="group-title" id="sDevicesTitle">Phone</div>
+        <div id="sDevices" class="dev-list"></div>
+        <button type="button" id="sLinkBtn">Sign in on your phone…</button>
+        <div class="note" id="sLinkNote">Your phone gets your friends, groups and messages, and keeps working when this PC is off.</div>
       </div>
       <div class="group">
         <div class="group-title">Your friend code</div>
