@@ -148,11 +148,14 @@
   <div id="viewer" class="viewer hidden">
     <div class="viewer-bar">
       <span id="viewerName" class="grow ellipsis strong"></span>
+      <span id="viewerCount" class="viewer-count"></span>
       <button id="viewerVlc" class="small" type="button" title="Play in VLC (streams, nothing is downloaded)">Open in VLC</button>
       <button id="viewerDl" class="small" type="button">Download</button>
       <button id="viewerClose" class="icon light" type="button" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
     <div id="viewerBody" class="viewer-body"></div>
+    <button id="viewerPrev" class="viewer-nav prev hidden" type="button" title="Previous (left arrow)" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg></button>
+    <button id="viewerNext" class="viewer-nav next hidden" type="button" title="Next (right arrow)" aria-label="Next"><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button>
     <div id="viewerNote" class="viewer-note hidden"></div>
   </div>
 
@@ -188,11 +191,12 @@
     </div>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" popover="manual"></div>
   <div id="ctxMenu" class="menu hidden"></div>
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
   <input type="file" id="avatarFile" accept="image/*" hidden>
   <input type="file" id="phoneFiles" multiple hidden>
+  <input type="file" id="themeFile" accept=".html,.htm,video/*,image/*" hidden>
   <input type="file" id="phonePhotos" accept="image/*,video/*" multiple hidden>
 
   <!-- Sign in on a phone: the PC shows a code -->
@@ -321,6 +325,7 @@
         <div class="group-title">Appearance</div>
         <select id="sTheme" class="hidden"></select>
         <div class="tiles themes" id="sThemes"></div>
+        <button type="button" class="link hidden" id="sThemeRemove">Remove this theme</button>
         <div class="swatches" id="sAccent"></div>
         <div class="pc-only">
         <div class="sub-title">App icon</div>

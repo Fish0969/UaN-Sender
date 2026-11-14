@@ -607,27 +607,112 @@ fn set_shortcut_icons(ico: Option<&std::path::Path>) {
 #[cfg(not(windows))]
 fn set_shortcut_icons(_ico: Option<&std::path::Path>) {}
 
-/// The secret theme's picture, kept on this PC only (secret.jpg/.webp/.png in UaN's data folder).
-#[tauri::command]
-fn secret_picture(profile: State<'_, Profile>) -> Option<String> {
-    for (ext, mime) in [("jpg", "image/jpeg"), ("webp", "image/webp"), ("png", "image/png")] {
-        if let Ok(b) = std::fs::read(profile.dir.join(format!("secret.{ext}"))) {
-            return Some(format!("data:{mime};base64,{}", data_encoding::BASE64.encode(&b)));
-        }
-    }
-    None
+// ----- Your own themes: an .html page, a video or a picture behind the panels (kept in UaN's data folder) -----
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct CustomTheme {
+    id: String,
+    name: String,
+    /// html | video | image
+    kind: String,
+    file: String,
+    size: u64,
+    mime: String,
+    /// dark | light: which glass panels go over it
+    #[serde(default)]
+    base: String,
+    #[serde(default)]
+    accent: Option<String>,
+}
+
+fn load_themes(dir: &std::path::Path) -> Vec<CustomTheme> {
+    let list: Vec<CustomTheme> = std::fs::read(dir.join("themes").join("themes.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    list.into_iter().filter(|t| dir.join("themes").join(&t.file).is_file()).collect()
+}
+
+fn save_themes(dir: &std::path::Path, list: &[CustomTheme]) -> CmdResult<()> {
+    std::fs::create_dir_all(dir.join("themes")).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("themes").join("themes.json"), serde_json::to_vec_pretty(list).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_secret_picture(profile: State<'_, Profile>, jpeg: String) -> CmdResult<()> {
-    let b = data_encoding::BASE64.decode(jpeg.as_bytes()).map_err(|e| e.to_string())?;
-    if b.len() > 4_000_000 || !b.starts_with(&[0xff, 0xd8]) {
-        return Err("That picture can't be used.".into());
+fn themes(profile: State<'_, Profile>) -> Vec<CustomTheme> {
+    load_themes(&profile.dir)
+}
+
+/// Adds a theme from a file that was just uploaded with `upload_part`.
+#[tauri::command]
+fn theme_add(profile: State<'_, Profile>, path: String, name: String, base: String, accent: Option<String>) -> CmdResult<CustomTheme> {
+    let src = PathBuf::from(&path);
+    let uploads = profile.dir.join("uploads");
+    if !src.starts_with(&uploads) || !src.is_file() {
+        return Err("That file can't be used.".into());
     }
-    for ext in ["webp", "png"] {
-        let _ = std::fs::remove_file(profile.dir.join(format!("secret.{ext}")));
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let (kind, mime, limit) = match ext.as_str() {
+        "html" | "htm" => ("html", "text/html", 8u64 << 20),
+        "mp4" | "m4v" => ("video", "video/mp4", 1 << 30),
+        "webm" => ("video", "video/webm", 1 << 30),
+        "mkv" => ("video", "video/x-matroska", 1 << 30),
+        "mov" => ("video", "video/quicktime", 1 << 30),
+        "jpg" | "jpeg" => ("image", "image/jpeg", 40 << 20),
+        "png" => ("image", "image/png", 40 << 20),
+        "webp" => ("image", "image/webp", 40 << 20),
+        "gif" => ("image", "image/gif", 40 << 20),
+        "avif" => ("image", "image/avif", 40 << 20),
+        _ => return Err("A theme can be an .html page, a video (.mp4, .webm) or a picture.".into()),
+    };
+    let size = std::fs::metadata(&src).map_err(|e| e.to_string())?.len();
+    if size == 0 || size > limit {
+        return Err("That file is too big for a theme.".into());
     }
-    std::fs::write(profile.dir.join("secret.jpg"), b).map_err(|e| e.to_string())
+    let mut list = load_themes(&profile.dir);
+    if list.len() >= 24 {
+        return Err("Remove one of your themes first (24 at most).".into());
+    }
+    let id: String = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    let file = format!("{id}.{ext}");
+    std::fs::create_dir_all(profile.dir.join("themes")).map_err(|e| e.to_string())?;
+    let dest = profile.dir.join("themes").join(&file);
+    if std::fs::rename(&src, &dest).is_err() {
+        std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&src);
+    }
+    if let Some(parent) = src.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+    let name: String = name.trim().chars().take(24).collect();
+    let accent = accent.filter(|a| a.len() == 7 && a.starts_with('#') && a[1..].chars().all(|c| c.is_ascii_hexdigit()));
+    let theme = CustomTheme {
+        id,
+        name: if name.is_empty() { "My theme".into() } else { name },
+        kind: kind.into(),
+        file,
+        size,
+        mime: mime.into(),
+        base: if base == "light" { "light".into() } else { "dark".into() },
+        accent,
+    };
+    list.push(theme.clone());
+    save_themes(&profile.dir, &list)?;
+    Ok(theme)
+}
+
+#[tauri::command]
+fn theme_remove(profile: State<'_, Profile>, id: String) -> CmdResult<()> {
+    let mut list = load_themes(&profile.dir);
+    if let Some(t) = list.iter().find(|t| t.id == id) {
+        let _ = std::fs::remove_file(profile.dir.join("themes").join(&t.file));
+    }
+    list.retain(|t| t.id != id);
+    save_themes(&profile.dir, &list)
+}
+
+/// The page of an .html theme (shown in a locked-down frame behind the panels).
+#[tauri::command]
+fn theme_html(profile: State<'_, Profile>, id: String) -> CmdResult<String> {
+    let t = load_themes(&profile.dir).into_iter().find(|t| t.id == id && t.kind == "html").ok_or("That theme is gone.")?;
+    std::fs::read_to_string(profile.dir.join("themes").join(&t.file)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1106,6 +1191,10 @@ pub fn run() {
             link_join,
             devices,
             restart_app,
+            themes,
+            theme_add,
+            theme_remove,
+            theme_html,
             contacts,
             add_friend,
             friend_action,
@@ -1152,12 +1241,10 @@ pub fn run() {
             audio_track,
             delete_message,
             links,
-            secret_picture,
             create_channel,
             channel_action,
             unlock_channel,
             forget_channel,
-            set_secret_picture,
             set_privacy,
             clear_chat,
             typing,

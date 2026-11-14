@@ -38,7 +38,8 @@ sudo apt install ./UaN_*_amd64.deb
   stream it from your PC. Films can be **watched inside UaN** without downloading, or downloaded.
 - **Remembers where you stopped.** Close a film (or leave a watch party) and it continues from
   the same spot next time.
-- **Watch together.** In a group, every video has a *Watch together* button. The PC with the fastest
+- **Watch together.** In a group, every video has a *Watch together* button (the invitation keeps arriving until the
+  person joins or says no, on all their devices). The PC with the fastest
   connection shares the film, it streams for everyone, starts when everyone has enough loaded, and
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
   A chat and a **playlist** sit next to the film (the next film starts by itself).
@@ -63,7 +64,9 @@ sudo apt install ./UaN_*_amd64.deb
   Click your picture to be Online, Away or Do not disturb (no notifications at all).
 - **Folders.** Send a whole folder: it shows up as one folder in the chat. Click it to see what is inside, with
   previews of photos and videos: download any file on its own, tick several (Shift-click ticks a range), or
-  **Download folder**; the folder structure is kept in Downloads.
+  **Download folder** (everything lands in a folder of the same name in Downloads, sub-folders kept). Click a
+  picture or film in the folder to open it big; the arrows (or the arrow keys) go through the others, and Esc
+  comes back to the folder.
 - **Photos sent together** show up as one grid, like in Discord. In groups, each message has the sender's picture beside it.
 - **Backup.** Settings → Backup saves your friend code, friends, groups and messages in one password-protected
   file, to move UaN to a new PC or restore it after reinstalling.
@@ -78,8 +81,13 @@ sudo apt install ./UaN_*_amd64.deb
   the background to `Downloads/UaN`, so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
-  **profile picture** (upload one or pick a ready-made one), **status**, **17 themes** (including a Christmas one with falling snow), and a choice of
-  **app icons**.
+  **profile picture** (upload one or pick a ready-made one), **status**, **18 themes** (including a Christmas one with falling snow
+  and *Horizon*, a black hole turning behind the chat), and a choice of **app icons**.
+- **Your own themes.** The **+** tile next to the themes takes an `.html` page, a video or a picture and puts it behind
+  the chat. A page runs locked away from the app: it can draw and animate, but cannot reach UaN, your files or the
+  internet, so it has to be one self-contained file (on Linux and Android pages are shown without scripts). A page can
+  ask for light panels with `<meta name="uan-theme" content="light">` and an accent colour with
+  `<meta name="uan-accent" content="#ff8800">`. Your themes stay on your device.
 - **Small updates.** One click on *Update* in the app: it downloads only the new program (a few MB) and
   switches over by itself, no installer, no uninstaller, everything stays. On Linux, the AppImage also only downloads the new program
   (a few MB), not the whole 150 MB package.

@@ -1302,7 +1302,7 @@ impl Node {
             let me = self.clone();
             let req = req.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = me.request(&p, &req).await;
+                let _ = me.request_all(&p, &req).await;
             });
         }
         Ok(())
@@ -1771,6 +1771,31 @@ impl Node {
         Err(last)
     }
 
+    /// Tells every device of someone (their PC and their phone), at the same time. Ok if any of them took it.
+    async fn request_all(self: &Arc<Self>, peer: &str, req: &Req) -> Result<Value, ReqError> {
+        let devs = self.devices_of(peer);
+        if devs.len() <= 1 {
+            return self.request(peer, req).await;
+        }
+        let tasks: Vec<_> = devs
+            .into_iter()
+            .map(|d| {
+                let (me, req) = (self.clone(), req.clone());
+                tauri::async_runtime::spawn(async move { me.request_dev(&d, &req).await })
+            })
+            .collect();
+        let mut out = Err(ReqError::Offline("unreachable".into()));
+        for t in tasks {
+            match (t.await, &out) {
+                (_, Ok(_)) => {}
+                (Ok(Ok(v)), _) => out = Ok(v),
+                (Ok(Err(ReqError::Refused(e))), _) => out = Err(ReqError::Refused(e)),
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// Asks one device.
     async fn request_dev(self: &Arc<Self>, peer: &str, req: &Req) -> Result<Value, ReqError> {
         let id = parse_id(peer).map_err(ReqError::Refused)?;
@@ -1991,6 +2016,20 @@ impl Node {
                 };
                 for p in peers {
                     tauri::async_runtime::spawn(self.clone().flush(p));
+                }
+            }
+            if tick % 10 == 7 {
+                // Watch together: keep inviting until the person has joined or said no (an invite that got
+                // lost on the way, or reached only one of their devices, would otherwise never arrive).
+                let mine: Vec<Party> = self.parties.lock().unwrap().values().filter(|p| p.leader == self.me_s && p.state != "ended").cloned().collect();
+                for p in mine {
+                    let req = Req::Party { party: p.clone() };
+                    for m in p.members.iter().filter(|m| m.id != self.me_s && !m.joined && !m.left) {
+                        let (me, req, to) = (self.clone(), req.clone(), m.id.clone());
+                        tauri::async_runtime::spawn(async move {
+                            let _ = me.request_all(&to, &req).await;
+                        });
+                    }
                 }
             }
             if tick == 3 || tick % 30 == 15 {
@@ -2965,7 +3004,7 @@ impl Node {
             if self.is_online(&p) {
                 let (me, req) = (self.clone(), req.clone());
                 tauri::async_runtime::spawn(async move {
-                    let _ = me.request(&p, &req).await;
+                    let _ = me.request_all(&p, &req).await;
                 });
             }
         }
@@ -3242,7 +3281,7 @@ impl Node {
             if self.is_online(&t) && self.speaks(&t, 2) {
                 let (me, req) = (self.clone(), req.clone());
                 tauri::async_runtime::spawn(async move {
-                    let _ = me.request(&t, &req).await;
+                    let _ = me.request_all(&t, &req).await;
                 });
             }
         }
@@ -3299,7 +3338,7 @@ impl Node {
             self.reads_sent.lock().unwrap().insert(key.clone(), msg_id.clone());
             let (me, peer) = (self.clone(), peer.to_string());
             tauri::async_runtime::spawn(async move {
-                if me.request(&peer, &Req::Seen { group, channel, msg_id: msg_id.clone() }).await.is_err() {
+                if me.request_all(&peer, &Req::Seen { group, channel, msg_id: msg_id.clone() }).await.is_err() {
                     let mut sent = me.reads_sent.lock().unwrap();
                     if sent.get(&key) == Some(&msg_id) {
                         sent.remove(&key);
@@ -3796,6 +3835,26 @@ impl Node {
     /// Reads a byte range for the in-app viewer: from disk if we have it, otherwise from whoever has it.
     pub async fn read_range(self: &Arc<Self>, file: &FileMeta, start: u64, len: u64) -> Result<Vec<u8>, String> {
         let len = len.min(file.size.saturating_sub(start));
+        if file.owner == "_theme" {
+            // A video or picture of one of your own themes (UaN's data folder, themes/).
+            let name: String = file.id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
+            if name.is_empty() || name.starts_with('.') {
+                return Err("No such theme file.".into());
+            }
+            let mut f = tokio::fs::File::open(self.dir.join("themes").join(name)).await.map_err(e2s)?;
+            f.seek(SeekFrom::Start(start)).await.map_err(e2s)?;
+            let mut buf = vec![0u8; len as usize];
+            let mut got = 0;
+            while got < buf.len() {
+                let n = f.read(&mut buf[got..]).await.map_err(e2s)?;
+                if n == 0 {
+                    break;
+                }
+                got += n;
+            }
+            buf.truncate(got);
+            return Ok(buf);
+        }
         let local = self.local_copy(file).or_else(|| {
             self.partials.lock().unwrap().get(&file.id).filter(|p| p.has_range(start, len)).map(|p| p.part.clone())
         });
@@ -4320,7 +4379,7 @@ impl Node {
             let req = req.clone();
             let to = m.id.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = me.request(&to, &req).await;
+                let _ = me.request_all(&to, &req).await;
             });
         }
     }
@@ -4486,7 +4545,7 @@ impl Node {
             let me = self.clone();
             let req = Req::PartyQueue { party_id: id.to_string(), file };
             tauri::async_runtime::spawn(async move {
-                let _ = me.request(&party.leader, &req).await;
+                let _ = me.request_all(&party.leader, &req).await;
             });
         }
         Ok(())
@@ -4671,7 +4730,7 @@ impl Node {
             let me = self.clone();
             let req = Req::PartyReport { party_id: id.to_string(), have, joined, left, ready, buffering, full };
             tauri::async_runtime::spawn(async move {
-                let _ = me.request(&party.leader, &req).await;
+                let _ = me.request_all(&party.leader, &req).await;
             });
         }
     }
@@ -4708,7 +4767,7 @@ impl Node {
             let me = self.clone();
             let req = Req::PartyControl { party_id: id.to_string(), state: state.to_string(), position };
             tauri::async_runtime::spawn(async move {
-                let _ = me.request(&party.leader, &req).await;
+                let _ = me.request_all(&party.leader, &req).await;
             });
         }
         Ok(())

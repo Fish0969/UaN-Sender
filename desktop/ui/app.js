@@ -102,8 +102,10 @@ function toast(msg) {
   const t = $('toast');
   t.textContent = String(msg);
   t.classList.remove('hidden');
+  // Shown again on top of everything, also above an open dialog.
+  try { if (t.matches(':popover-open')) t.hidePopover(); t.showPopover(); } catch {}
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add('hidden'), 5000);
+  toastTimer = setTimeout(() => { t.classList.add('hidden'); try { t.hidePopover(); } catch {} }, 5000);
 }
 function ask(text, ok = 'OK') {
   return new Promise((resolve) => {
@@ -151,12 +153,15 @@ document.addEventListener('contextmenu', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key.toLowerCase() === 'f' && S.me?.name) { e.preventDefault(); openSearch(); return; }
   if (e.key === 'F5' || (e.ctrlKey && ['r', 'p', 'g', 'u'].includes(e.key.toLowerCase()))) e.preventDefault();
-  if (e.key === 'Escape' && !$('viewer').classList.contains('hidden')) closeViewer();
+  if ($('viewer').classList.contains('hidden')) return;
+  if (e.key === 'Escape') closeViewer();
+  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.target.closest?.('#viewer input') && (e.shiftKey || !viewerPlayer)) { e.preventDefault(); e.stopImmediatePropagation(); viewerStep(e.key === 'ArrowLeft' ? -1 : 1); }
 });
 
 // ---------- Start ----------
 async function boot() {
   S.me = await invoke('state');
+  loadCustomThemes();
   if (S.me.platform === 'android' || S.me.platform === 'ios') document.documentElement.classList.add('phone');
   if (S.me.selftest) return runSelfTest(S.me.selftest);
   if (!S.me.name) {
@@ -865,14 +870,15 @@ function messageNode(m, run = true, block = null) {
 
 function sheetNode(b) {
   const n = b.items.length;
-  const sheet = el('div', { class: `sheet n${n}` }, b.items.map(printNode));
+  const set = b.items.map((x) => x.file);
+  const sheet = el('div', { class: `sheet n${n}` }, b.items.map((m) => printNode(m, set)));
   sheet.style.setProperty('--cols', n <= 4 ? 2 : 3);
   return sheet;
 }
-function printNode(m) {
+function printNode(m, set) {
   const f = m.file;
   const video = /^video\//i.test(f.mime);
-  return el('button', { type: 'button', class: 'print', 'data-id': m.id, title: f.name, onclick: () => openViewer(f) },
+  return el('button', { type: 'button', class: 'print', 'data-id': m.id, title: f.name, onclick: () => openViewer(f, { list: set }) },
   el('img', { src: m.thumb?.img || mediaUrl(f), alt: '', loading: 'lazy', onload: keepBottom }),
   video ? el('span', { class: 'play-badge' }, svg(ICON.bigplay)) : null,
   video && m.thumb?.dur ? el('span', { class: 'dur', text: fmtTime(m.thumb.dur) }) : null);
@@ -907,7 +913,7 @@ function folderCard(b) {
     el('span', { class: 'chev' }, svg(ICON.chev)));
 }
 let folderOpen = null;
-function openFolder(b) {
+function openFolder(b, sel = null) {
   folderOpen = b;
   folderLast = -1;
   const mine = b.items[0].mine;
@@ -915,7 +921,23 @@ function openFolder(b) {
   for (const id of ['folderAllRow', 'folderDlSel', 'folderDlAll']) $(id).classList.toggle('hidden', mine);
   $('folderList').replaceChildren();
   renderFolder(true);
+  if (sel) {
+    // Back from a picture or film: the ticks are as you left them.
+    for (const i of $('folderList').querySelectorAll('input')) i.checked = sel.has(i.value);
+    folderSelInfo();
+  }
   $('folderDlg').showModal();
+}
+// Opens a picture, film or song of the folder in the big viewer; the arrows go through the folder's
+// other ones, and closing it comes back to the folder.
+function openFromFolder(f) {
+  const b = folderOpen;
+  if (!b) return;
+  const list = [...b.items].sort((x, y) => x.file.name.localeCompare(y.file.name, undefined, { numeric: true }))
+    .map((x) => x.file).filter((x) => IMAGE.test(x.mime) || PLAYABLE.test(x.mime));
+  const sel = new Set([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value));
+  $('folderDlg').close();
+  openViewer(f, { list, chat: b.items[0].chat, back: () => openFolder(b, sel) });
 }
 function renderFolder(fresh = false) {
   const b = folderOpen;
@@ -934,12 +956,12 @@ function renderFolder(fresh = false) {
     const playable = media || PLAYABLE.test(f.mime);
     const src = x.thumb?.img || (IMAGE.test(f.mime) && f.size <= INLINE_IMAGE_LIMIT ? mediaUrl(f) : null);
     const ext = (leaf.includes('.') ? leaf.split('.').pop() : 'file').slice(0, 4);
-    const thumb = el('button', { type: 'button', class: 'f-thumb', title: playable ? 'Open' : f.name, onclick: stop(() => playable && openViewer(f)) },
-      src ? el('img', { src, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }) : /^video//i.test(f.mime) ? null : el('span', { class: 'ext', text: ext }),
+    const thumb = el(playable ? 'button' : 'span', playable ? { type: 'button', class: 'f-thumb', title: 'Open', onclick: stop(() => openFromFolder(f)) } : { class: 'f-thumb' },
+      src ? el('img', { src, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }) : f.mime.startsWith('video/') ? null : el('span', { class: 'ext', text: ext }),
       /^video\//i.test(f.mime) ? el('span', { class: 'f-play' }, svg(ICON.bigplay)) : null);
     const t = downloadOf(f.id);
     let act;
-    if (mine) act = playable ? el('button', { type: 'button', class: 'small', text: /^(video|audio)\//i.test(f.mime) ? 'Play' : 'Open', onclick: stop(() => openViewer(f)) }) : el('span', { class: 'f-state', text: 'Sent' });
+    if (mine) act = playable ? el('button', { type: 'button', class: 'small', text: /^(video|audio)\//i.test(f.mime) ? 'Play' : 'Open', onclick: stop(() => openFromFolder(f)) }) : el('span', { class: 'f-state', text: 'Sent' });
     else if (t?.status === 'done') act = el('button', { type: 'button', class: 'small', text: 'Open', title: 'Open the downloaded file', onclick: stop(() => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast)) });
     else if (t?.status === 'running') act = el('span', { class: 'f-state', text: `${Math.floor((t.done / Math.max(t.size, 1)) * 100)}%` });
     else act = el('button', { type: 'button', class: 'small', text: t?.status === 'error' ? 'Retry' : t?.status === 'paused' ? 'Resume' : 'Download', onclick: stop(() => startDownload(f, x.chat)) });
@@ -973,6 +995,9 @@ function folderSelInfo() {
   const on = boxes.filter((i) => i.checked);
   const size = on.reduce((a, i) => a + (folderOpen.items.find((x) => x.file.id === i.value)?.file.size || 0), 0);
   $('folderAll').checked = on.length === boxes.length && boxes.length > 0;
+  const allDone = folderOpen.items.every((x) => downloadOf(x.file.id)?.status === 'done');
+  $('folderDlAll').textContent = allDone ? 'Show in Downloads' : 'Download folder';
+  $('folderDlAll').title = allDone ? 'Opens the folder in Downloads' : `Downloads every file into Downloads/${folderOpen.folder}`;
   $('folderSel').textContent = folderOpen.items[0].mine ? 'Click a picture or video to open it.' : on.length ? `${on.length} selected · ${fmtBytes(size)}` : 'Nothing selected';
   $('folderDlSel').disabled = !on.length;
   $('folderDlSel').textContent = on.length && on.length < boxes.length ? `Download ${on.length} selected` : 'Download selected';
@@ -995,7 +1020,11 @@ function downloadFolder(ids) {
   toast(n ? `Downloading ${n} ${n === 1 ? 'file' : 'files'} into Downloads/${b.folder}.` : 'Those files are already downloaded.');
 }
 $('folderDlSel').addEventListener('click', () => downloadFolder([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value)));
-$('folderDlAll').addEventListener('click', () => downloadFolder(folderOpen.items.map((x) => x.file.id)));
+$('folderDlAll').addEventListener('click', () => {
+  const done = folderOpen.items.map((x) => downloadOf(x.file.id));
+  if (done.every((t) => t?.status === 'done')) return invoke('transfer_action', { id: done[0].id, action: 'reveal' }).catch(toast);
+  downloadFolder(folderOpen.items.map((x) => x.file.id));
+});
 $('folderDlg').addEventListener('close', () => { folderOpen = null; });
 
 function jumpTo(id) {
@@ -1175,6 +1204,16 @@ function markRead() {
 }
 window.addEventListener('focus', markRead);
 document.addEventListener('visibilitychange', markRead);
+// Nothing moves on screen while the window is hidden.
+function onStage() {
+  const away = document.hidden || !document.hasFocus();
+  document.documentElement.classList.toggle('paused', away);
+  const v = typeof backdrop !== 'undefined' ? backdrop?.video : null;
+  if (v) { if (away) v.pause(); else v.play().catch(() => {}); }
+}
+document.addEventListener('visibilitychange', onStage);
+window.addEventListener('blur', onStage);
+window.addEventListener('focus', onStage);
 
 listen('seen', ({ payload }) => {
   const r = S.reads.get(payload.chat) || {};
@@ -1449,23 +1488,25 @@ $('composer').addEventListener('submit', async (e) => {
   }
 });
 
+// Hands a file picked in the window to the app core (in pieces); gives back where it was put.
+async function uploadFile(f) {
+  const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const CH = 2 * 1024 * 1024;
+  let path = '';
+  for (let off = 0; off < f.size || off === 0; off += CH) {
+    const buf = new Uint8Array(await f.slice(off, off + CH).arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    path = await invoke('upload_part', { id, name: f.name || 'file', offset: off, data: btoa(bin) });
+    if (f.size > CH * 4) toast(`Preparing ${f.name}: ${Math.min(100, Math.round(((off + CH) / f.size) * 100))}%`);
+    if (f.size === 0) break;
+  }
+  return path;
+}
 async function sendPhoneFiles(files) {
   const chat = S.active;
   const paths = [];
-  for (const f of files) {
-    const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    const CH = 2 * 1024 * 1024;
-    let path = '';
-    for (let off = 0; off < f.size || off === 0; off += CH) {
-      const buf = new Uint8Array(await f.slice(off, off + CH).arrayBuffer());
-      let bin = '';
-      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-      path = await invoke('upload_part', { id, name: f.name || 'file', offset: off, data: btoa(bin) });
-      if (f.size > CH * 4) toast(`Preparing ${f.name}: ${Math.min(100, Math.round(((off + CH) / f.size) * 100))}%`);
-      if (f.size === 0) break;
-    }
-    paths.push(path);
-  }
+  for (const f of files) paths.push(await uploadFile(f));
   if (paths.length) await invoke('send_paths', { paths, chats: [chat], text: '' });
 }
 $('phoneFiles').addEventListener('change', () => {
@@ -1902,7 +1943,46 @@ function makeVlcPlayer(container, { file, onBack }) {
 // ---------- Viewer: watch films without downloading ----------
 let viewerPlayer = null;
 let viewerToken = 0;
-function openViewer(file) {
+let viewerCtx = null; // { list: the files the arrows go through, chat, back: what to reopen when it closes }
+let viewerFile = null;
+function openViewer(file, ctx = null) {
+  viewerCtx = ctx;
+  showInViewer(file);
+}
+function viewerStep(d) {
+  const list = viewerCtx?.list;
+  if (!list || list.length < 2 || !viewerFile) return;
+  const i = list.findIndex((f) => f.id === viewerFile.id);
+  showInViewer(list[(i + d + list.length) % list.length]);
+}
+$('viewerPrev').addEventListener('click', () => viewerStep(-1));
+$('viewerNext').addEventListener('click', () => viewerStep(1));
+// On the phone: swipe left or right to go through them.
+{
+  let start = null;
+  $('viewerBody').addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    start = e.touches.length === 1 && !e.target.closest('.pl-bar') ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  $('viewerBody').addEventListener('touchend', (e) => {
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x, dy = t.clientY - start.y;
+    start = null;
+    if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.5) viewerStep(dx < 0 ? 1 : -1);
+  });
+}
+function showInViewer(file) {
+  viewerFile = file;
+  const chat = viewerCtx?.chat || S.active;
+  const list = viewerCtx?.list || [];
+  const many = list.length > 1;
+  $('viewerPrev').classList.toggle('hidden', !many);
+  $('viewerNext').classList.toggle('hidden', !many);
+  $('viewerCount').textContent = many ? `${list.findIndex((f) => f.id === file.id) + 1} / ${list.length}` : '';
+  const film = PLAYABLE.test(file.mime);
+  $('viewerPrev').title = film ? 'Previous (Shift+left arrow)' : 'Previous (left arrow)';
+  $('viewerNext').title = film ? 'Next (Shift+right arrow)' : 'Next (right arrow)';
   const token = ++viewerToken;
   let autoVlc = false;
   const body = $('viewerBody');
@@ -1920,7 +2000,7 @@ function openViewer(file) {
       if (err.code === 1) return; // stopped on purpose
       note.textContent = `The connection dropped while loading this film${code}.`;
       note.append(el('div', { class: 'note-actions' },
-        el('button', { type: 'button', class: 'small', text: 'Try again', onclick: () => openViewer(file) })));
+        el('button', { type: 'button', class: 'small', text: 'Try again', onclick: () => showInViewer(file) })));
       note.classList.remove('hidden');
       return;
     }
@@ -1935,7 +2015,7 @@ function openViewer(file) {
         : `This file’s format can’t be played inside UaN on this computer${code}.`;
       note.append(el('div', { class: 'note-actions' },
         video ? el('button', { type: 'button', class: 'small', text: 'Open in VLC (no download)', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } }) : '',
-        el('button', { type: 'button', class: 'small', text: 'Download', onclick: () => startDownload(file, S.active) })));
+        el('button', { type: 'button', class: 'small', text: 'Download', onclick: () => startDownload(file, chat) })));
     }
     note.classList.remove('hidden');
     if (reach === 'ok' && /^video\//i.test(file.mime) && !autoVlc) {
@@ -1944,7 +2024,7 @@ function openViewer(file) {
     }
   };
   if (/^video\//i.test(file.mime)) {
-    viewerPlayer = makePlayer(body, { file, chat: S.active });
+    viewerPlayer = makePlayer(body, { file, chat });
     viewerPlayer.video.addEventListener('error', showError);
     watchSound(viewerPlayer.video, file, () => {
       if (token !== viewerToken || autoVlc) return;
@@ -1962,19 +2042,25 @@ function openViewer(file) {
     node.addEventListener('error', showError);
     body.replaceChildren(node);
   }
-  $('viewerName').textContent = `${file.name} · ${fmtBytes(file.size)}`;
+  $('viewerName').textContent = `${file.name.split(/[\\/]/).pop()} · ${fmtBytes(file.size)}`;
   $('viewerDl').classList.toggle('hidden', file.owner === S.me.id);
   $('viewerVlc').classList.toggle('hidden', !/^video\//i.test(file.mime));
   $('viewerVlc').onclick = () => { viewerPlayer?.video.pause(); openInVlc(file); };
-  $('viewerDl').onclick = () => { startDownload(file, S.active); toast('Download started. It saves to your Downloads folder.'); };
+  $('viewerDl').onclick = () => { startDownload(file, chat); toast('Download started. It saves to your Downloads folder.'); };
   $('viewer').classList.remove('hidden');
+  // The keys now belong to the viewer, not to the message box behind it.
+  if (!$('viewer').contains(document.activeElement)) document.activeElement?.blur();
 }
 function closeViewer() {
   viewerToken++;
   viewerPlayer?.destroy();
   viewerPlayer = null;
+  viewerFile = null;
   $('viewer').classList.add('hidden');
   $('viewerBody').replaceChildren(); // stops playback and network reads
+  const back = viewerCtx?.back;
+  viewerCtx = null;
+  back?.();
 }
 $('viewerClose').addEventListener('click', closeViewer);
 
@@ -2985,9 +3071,27 @@ const THEMES = [
   { id: 'sakura', name: 'Sakura', base: 'light', image: 'linear-gradient(135deg, #ffe3ec 0%, #ffd0e0 50%, #e9d5ff 100%)', bg: '#ffdbe8', ...GLASS_LIGHT, dialog: '#fff3f7', accent: '#c2255c', mine: '#c2255c' },
   { id: 'mint', name: 'Mint', base: 'light', image: 'linear-gradient(135deg, #e3fff3 0%, #c9f2ff 100%)', bg: '#d8f8f8', ...GLASS_LIGHT, dialog: '#f2fffb', accent: '#0b7a5c', mine: '#0b7a5c' },
   { id: 'lavender', name: 'Lavender', base: 'light', image: 'linear-gradient(135deg, #efe7ff 0%, #dfe7ff 100%)', bg: '#e8e6ff', ...GLASS_LIGHT, dialog: '#f7f4ff', accent: '#6741d9', mine: '#6741d9' },
+  // Event Horizon: a black hole turning behind the conversation (drawn by the app, see setHorizon).
+  {
+    id: 'horizon', name: 'Horizon', base: 'dark', horizon: true,
+    bg: '#040509', side: 'rgba(6, 6, 10, .62)', panel: 'rgba(6, 6, 10, .3)', card: 'rgba(22, 18, 20, .8)', head: 'rgba(7, 7, 11, .42)', composer: 'rgba(16, 14, 18, .86)', transfers: 'rgba(7, 7, 11, .62)', shade: '0 1px 3px rgba(0, 0, 0, .95), 0 0 12px rgba(0, 0, 0, .7)',
+    theirs: 'rgba(17, 15, 19, .84)', dialog: '#0e0e13', accent: '#ffb454', mine: 'linear-gradient(135deg, #7c3a0a, #a9570f)',
+    tile: 'radial-gradient(circle at 62% 50%, #000 0 13%, #ffe2b0 14% 16%, #ff8a2a 21%, rgba(255, 120, 30, 0) 44%), #040509',
+  },
 ];
-const SECRET = { id: 'secret', name: 'Secret', base: 'dark', ...GLASS_DARK, side: 'rgba(20, 12, 6, .82)', card: 'rgba(60, 36, 18, .9)', theirs: 'rgba(25, 15, 8, .8)', dialog: '#2a1a0e', bg: '#2a1a0e', accent: '#e8a25c', mine: '#9a4d1e', secret: true };
-const themeById = (id) => (id === 'secret' ? SECRET : THEMES.find((t) => t.id === id) || THEMES[0]);
+// Your own themes (the + tile): an .html page, a video or a picture behind the panels.
+let customThemes = (() => { try { return JSON.parse(localStorage.getItem('uan.customThemes') || '[]'); } catch { return []; } })();
+const customTheme = (c) => (c.base === 'light'
+  ? { id: `custom:${c.id}`, name: c.name, base: 'light', custom: c, ...GLASS_LIGHT, bg: '#e9e9ee', dialog: '#f6f6f9', head: 'rgba(255, 255, 255, .78)', composer: 'rgba(255, 255, 255, .9)', accent: c.accent || undefined }
+  : { id: `custom:${c.id}`, name: c.name, base: 'dark', custom: c, bg: '#0b0b10', side: 'rgba(8, 8, 12, .62)', panel: 'rgba(8, 8, 12, .36)', card: 'rgba(22, 22, 28, .8)', theirs: 'rgba(18, 18, 22, .84)', dialog: '#15151b', head: 'rgba(7, 7, 11, .42)', composer: 'rgba(16, 14, 18, .86)', transfers: 'rgba(7, 7, 11, .62)', shade: '0 1px 3px rgba(0, 0, 0, .95), 0 0 12px rgba(0, 0, 0, .7)', accent: c.accent || undefined });
+const themeById = (id) => {
+  if (id === 'secret') id = 'horizon'; // it was a hidden theme in 1.9
+  if (id?.startsWith('custom:')) {
+    const c = customThemes.find((x) => `custom:${x.id}` === id);
+    return c ? customTheme(c) : THEMES[0];
+  }
+  return THEMES.find((t) => t.id === id) || THEMES[0];
+};
 const theme = (() => {
   try {
     const stored = localStorage.getItem('uan.accent');
@@ -3000,7 +3104,7 @@ function isDark() {
   if (t.base) return t.base === 'dark';
   return theme.mode === 'dark' || (theme.mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
 }
-const THEME_VARS = { bg: '--bg', side: '--side', panel: '--panel', card: '--card', theirs: '--theirs', image: '--bg-image', dialog: '--dialog' };
+const THEME_VARS = { bg: '--bg', side: '--side', panel: '--panel', card: '--card', theirs: '--theirs', image: '--bg-image', dialog: '--dialog', head: '--head-bg', composer: '--composer-bg', transfers: '--transfers-bg', shade: '--text-shade' };
 function applyTheme() {
   const root = document.documentElement;
   const t = themeById(theme.mode);
@@ -3021,7 +3125,91 @@ function applyTheme() {
   root.style.setProperty('--mine', own && t.mine ? t.mine : (dark ? `color-mix(in srgb, ${color} 45%, #1c1c1c)` : color));
   root.style.setProperty('--on-mine', '#fff');
   setSnow(!!t.snow);
+  setHorizon(!!t.horizon);
+  setBackdrop(t.custom || null);
 }
+
+// The background of one of your own themes. An .html page runs in a locked-down frame: its scripts
+// can draw and animate, but cannot reach UaN, your files or the internet.
+const THEME_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:";
+function wrapThemeHtml(html) {
+  const guard = `<meta http-equiv="Content-Security-Policy" content="${THEME_CSP}"><script>for (const k of ['__TAURI__', '__TAURI_INTERNALS__', '__TAURI_INVOKE_KEY__', '__TAURI_PATTERN__', 'ipc']) { try { Object.defineProperty(window, k, { value: undefined, configurable: false, writable: false }); } catch (e) { try { delete window[k]; } catch (e2) {} } }</` + `script>`;
+  const m = html.match(/<!doctype[^>]*>/i);
+  return m ? html.replace(m[0], m[0] + guard) : `<!doctype html>${guard}${html}`;
+}
+const themeFileUrl = (c) => `${S.me?.mediaBase || convertFileSrc('', 'media').replace(/\/$/, '')}/_theme/${c.file}/${c.size}/${encodeURIComponent(c.mime)}`;
+let backdrop = null;
+function setBackdrop(c) {
+  const root = document.documentElement;
+  if (!c) {
+    delete root.dataset.backdrop;
+    backdrop?.node.remove();
+    backdrop = null;
+    return;
+  }
+  root.dataset.backdrop = c.base === 'light' ? 'light' : 'dark';
+  if (backdrop?.id === c.id || !S.me) return; // (before the app has started, the media address isn't known yet)
+  backdrop?.node.remove();
+  const node = el('div', { class: 'backdrop', 'aria-hidden': 'true' });
+  document.body.prepend(node);
+  backdrop = { id: c.id, node, video: null };
+  if (c.kind === 'video') {
+    const v = el('video', { src: themeFileUrl(c), loop: true, playsinline: true, preload: 'auto' });
+    v.muted = true;
+    v.autoplay = true;
+    v.disablePictureInPicture = true;
+    backdrop.video = v;
+    node.append(v);
+    if (!document.hidden && document.hasFocus()) v.play().catch(() => {});
+  } else if (c.kind === 'image') {
+    node.append(el('img', { src: themeFileUrl(c), alt: '' }));
+  } else {
+    // Scripts run only on Windows, where the frame is proven to be cut off from the app (see the tests).
+    // Elsewhere the page is shown without scripts: its CSS still animates.
+    const frame = el('iframe', { sandbox: S.me.platform === 'windows' ? 'allow-scripts' : '', referrerpolicy: 'no-referrer', tabindex: '-1', title: '' });
+    node.append(frame);
+    invoke('theme_html', { id: c.id }).then((html) => { if (backdrop?.id === c.id) frame.srcdoc = wrapThemeHtml(html); }).catch(() => {});
+  }
+}
+async function loadCustomThemes() {
+  try {
+    customThemes = await invoke('themes');
+    localStorage.setItem('uan.customThemes', JSON.stringify(customThemes));
+  } catch {}
+  if (theme.mode.startsWith('custom:') && !customThemes.some((c) => `custom:${c.id}` === theme.mode)) setTheme('dark');
+  else applyTheme();
+  if ($('settingsDlg').open) renderThemeTiles();
+}
+$('themeFile').addEventListener('change', async () => {
+  const f = $('themeFile').files[0];
+  $('themeFile').value = '';
+  if (!f) return;
+  try {
+    let base = 'dark';
+    let accent = null;
+    if (/\.html?$/i.test(f.name)) {
+      // A page can say which panels suit it: <meta name="uan-theme" content="light"> and <meta name="uan-accent" content="#ff8800">
+      const head = await f.slice(0, 65536).text();
+      if (/<meta[^>]+name=["']uan-theme["'][^>]+content=["']light["']/i.test(head)) base = 'light';
+      accent = head.match(/<meta[^>]+name=["']uan-accent["'][^>]+content=["'](#[0-9a-f]{6})["']/i)?.[1] || null;
+    }
+    toast('Adding the theme…');
+    const path = await uploadFile(f);
+    const t = await invoke('theme_add', { path, name: f.name.replace(/\.[^.]+$/, ''), base, accent });
+    await loadCustomThemes();
+    setTheme(`custom:${t.id}`);
+    toast(`Theme added: ${t.name}.`);
+  } catch (e) {
+    toast(e);
+  }
+});
+$('sThemeRemove').addEventListener('click', async () => {
+  const c = themeById(theme.mode).custom;
+  if (!c || !(await ask(`Remove your theme “${c.name}”?`, 'Remove'))) return;
+  await invoke('theme_remove', { id: c.id }).catch(toast);
+  setTheme('dark');
+  await loadCustomThemes();
+});
 
 // Gentle snowfall behind the app (Christmas theme). Light on the CPU: few flakes, ~30 frames a second,
 // and it stops while the window is hidden.
@@ -3058,70 +3246,211 @@ function setSnow(on) {
   };
   snow = { canvas, raf: requestAnimationFrame(frame) };
 }
-// Where the face is in the secret picture (0..1 of width/height). For the original photo it is
-// known; for other pictures: portrait photos usually have the face in the upper part.
-let secretPic = null;
-function secretFocus(img) {
-  if (img.naturalWidth === 987 && img.naturalHeight === 1755) return [0.565, 0.135];
-  return img.naturalHeight > img.naturalWidth * 1.15 ? [0.5, 0.25] : [0.5, 0.4];
-}
-function placeSecret() {
-  if (!secretPic || theme.mode !== 'secret') return;
-  const img = secretPic.img;
-  if (!img.naturalWidth) return;
-  const W = innerWidth, H = innerHeight;
-  const [fx, fy] = secretFocus(img);
-  // Centre of the chat area (right of the side bar), or of the window.
-  const area = document.querySelector('#main:not(.hidden) .content')?.getBoundingClientRect();
-  const cx = area && area.width ? area.left + area.width / 2 : W / 2;
-  const cy = area && area.height ? area.top + area.height / 2 : H / 2;
-  // Big enough to cover the window, and to have room to put the face in the centre.
-  const iw = img.naturalWidth, ih = img.naturalHeight;
-  const k = Math.min(3, Math.max(W / iw, H / ih, cx / (fx * iw), (W - cx) / ((1 - fx) * iw), cy / (fy * ih), (H - cy) / ((1 - fy) * ih)));
-  const w = iw * k, h = ih * k;
-  const x = Math.min(0, Math.max(W - w, cx - fx * w));
-  const y = Math.min(0, Math.max(H - h, cy - fy * h));
-  SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${secretPic.url}") ${Math.round(x)}px ${Math.round(y)}px / ${Math.round(w)}px ${Math.round(h)}px no-repeat`;
-  document.documentElement.style.setProperty('--bg-image', SECRET.image);
-}
-function useSecretPicture(url) {
-  const img = new Image();
-  secretPic = { url, img };
-  img.onload = placeSecret;
-  img.src = url;
-  SECRET.image = `linear-gradient(rgba(0, 0, 0, .25), rgba(0, 0, 0, .45)), url("${url}") center / cover no-repeat`;
-}
-window.addEventListener('resize', placeSecret);
+// Event Horizon: the ground is a black hole seen almost edge-on. Everything that moves is a transform
+// or an opacity on its own layer (the disk turns once in 90 seconds), so it costs next to nothing.
+// Draws the black hole's textures once: the disk gas (face-on, with filaments), its bright inner rim for
+// the band in front of the hole, and the lensed light (arc over, thin arc under, photon ring).
+async function hzTextures() {
+  if (hzTextures.cache) return hzTextures.cache;
+  let seed = 90210;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const canvas = (n) => { const c = document.createElement('canvas'); c.width = c.height = n; return [c, c.getContext('2d')]; };
+  const mix = (stops, t) => {
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i][0]) {
+        const [t0, a] = stops[i - 1], [t1, b] = stops[i];
+        const k = (t - t0) / (t1 - t0 || 1);
+        return a.map((v, j) => Math.round(v + (b[j] - v) * k));
+      }
+    }
+    return stops[stops.length - 1][1];
+  };
+  const HEAT = [[0, [255, 252, 240]], [0.08, [255, 226, 168]], [0.22, [255, 176, 88]], [0.45, [244, 118, 42]], [0.72, [196, 66, 22]], [1, [110, 26, 8]]];
+  const ring = (ctx, cx, cy, r0, r1) => { ctx.beginPath(); ctx.arc(cx, cy, r1, 0, Math.PI * 2); ctx.arc(cx, cy, r0, 0, Math.PI * 2, true); };
+  const blob = (c) => new Promise((res) => c.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
 
-async function unlockSecret() {
-  let pic = await invoke('secret_picture').catch(() => null);
-  if (!pic) {
-    // Not on this PC yet: pick the picture once (it stays on this PC only).
-    const input = el('input', { type: 'file', accept: 'image/*' });
-    pic = await new Promise((resolve) => {
-      input.onchange = async () => {
-        const f = input.files[0];
-        if (!f) return resolve(null);
-        try {
-          const img = await createImageBitmap(f);
-          const k = Math.min(1, 1600 / Math.max(img.width, img.height));
-          const c = document.createElement('canvas');
-          c.width = Math.round(img.width * k);
-          c.height = Math.round(img.height * k);
-          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-          const url = c.toDataURL('image/jpeg', 0.88);
-          await invoke('set_secret_picture', { jpeg: url.split(',')[1] });
-          resolve(url);
-        } catch { resolve(null); }
-      };
-      input.click();
-    });
-    if (!pic) return;
+  // 1) The disk, face-on. Inner edge sharp and white-hot, outer gas thin and ember-red.
+  // The inner edge sits just inside the shadow, so its brightest gas never shows as tips beside it.
+  const N = 1024, C = N / 2, rin = C * 0.165, rout = C * 0.985;
+  const [disk, d] = canvas(N);
+  const base = d.createRadialGradient(C, C, rin, C, C, rout);
+  base.addColorStop(0, 'rgba(255, 236, 196, .95)');
+  base.addColorStop(0.05, 'rgba(255, 190, 110, .7)');
+  base.addColorStop(0.2, 'rgba(240, 120, 44, .42)');
+  base.addColorStop(0.5, 'rgba(190, 64, 20, .2)');
+  base.addColorStop(1, 'rgba(90, 20, 6, 0)');
+  d.fillStyle = base;
+  ring(d, C, C, rin, rout);
+  d.fill('evenodd');
+  d.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 4200; i++) {
+    const t = Math.pow(rnd(), 1.9);
+    const r = rin + (rout - rin) * t;
+    const a0 = rnd() * Math.PI * 2;
+    const len = 0.15 + rnd() * (1.2 + t * 2.2);
+    const [cr, cg, cb] = mix(HEAT, t);
+    d.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${(0.04 + rnd() * 0.14) * (1 - t * 0.6)})`;
+    d.lineWidth = 0.5 + rnd() * (1.2 + t * 3.5);
+    d.beginPath();
+    d.arc(C, C, r, a0, a0 + len);
+    d.stroke();
   }
-  useSecretPicture(pic);
-  setTheme('secret');
-  placeSecret();
-  toast('Secret theme unlocked.');
+  // a few dark lanes between the bright filaments
+  d.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 260; i++) {
+    const t = 0.05 + Math.pow(rnd(), 1.3) * 0.9;
+    const a0 = rnd() * Math.PI * 2;
+    d.strokeStyle = `rgba(0, 0, 0, ${0.15 + rnd() * 0.35})`;
+    d.lineWidth = 1 + rnd() * 4;
+    d.beginPath();
+    d.arc(C, C, rin + (rout - rin) * t, a0, a0 + 0.3 + rnd() * 1.6);
+    d.stroke();
+  }
+  // 2) Only the inner, brightest part: the band that passes in front of the hole.
+  // Drawn from the hot end only (white to amber), so the nearest gas is the brightest thing in the scene.
+  const [front, f] = canvas(N);
+  const fb = f.createRadialGradient(C, C, rin, C, C, rin * 1.7);
+  fb.addColorStop(0, 'rgba(255, 228, 170, 1)');
+  fb.addColorStop(0.25, 'rgba(255, 196, 112, .95)');
+  fb.addColorStop(0.6, 'rgba(255, 170, 80, .55)');
+  fb.addColorStop(1, 'rgba(255, 140, 50, 0)');
+  f.fillStyle = fb;
+  ring(f, C, C, rin, rin * 1.7);
+  f.fill('evenodd');
+  // normal blending: piled-up light would turn the band white instead of amber
+  for (let i = 0; i < 900; i++) {
+    const t = 0.08 + Math.pow(rnd(), 1.4) * 0.14;
+    const r = rin + (rin * 0.7) * ((t - 0.08) / 0.14);
+    const a0 = rnd() * Math.PI * 2;
+    const [cr, cg, cb] = mix(HEAT, t);
+    f.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.12 + rnd() * 0.3})`;
+    f.lineWidth = 0.6 + rnd() * 2.2;
+    f.beginPath();
+    f.arc(C, C, r, a0, a0 + 0.2 + rnd() * 1.4);
+    f.stroke();
+  }
+
+  // 3) The lensed light around the shadow (drawn for an element twice the shadow's width... see CSS).
+  const L = 1024, LC = L / 2, rs = L * 0.25; // the shadow's radius in this texture
+  const [lens, l] = canvas(L);
+  l.globalCompositeOperation = 'lighter';
+  const arc = (r0, r1, from, to, count, bright, widthMax) => {
+    for (let i = 0; i < count; i++) {
+      const u = Math.pow(rnd(), 1.5);
+      const r = r0 + (r1 - r0) * u;
+      const span = to - from;
+      const a0 = from + rnd() * span;
+      const len = 0.2 + rnd() * 1.4;
+      const [cr, cg, cb] = mix(HEAT, Math.min(1, u * 0.9));
+      // fades out towards the ends of the arc
+      const mid = (a0 + len / 2 - from) / span;
+      const env = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, mid))));
+      l.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${(0.05 + rnd() * 0.12) * bright * env * (1 - u * 0.55)})`;
+      l.lineWidth = 0.6 + rnd() * widthMax;
+      l.beginPath();
+      l.arc(LC, LC, r, a0, a0 + len);
+      l.stroke();
+    }
+  };
+  // over the top: the far side of the disk, bent up and over the hole (thick, bright)
+  arc(rs * 1.03, rs * 1.62, Math.PI - 0.28, Math.PI * 2 + 0.28, 2800, 1.25, 3.2);
+  // underneath: its other image, thin and dimmer
+  arc(rs * 1.02, rs * 1.16, -0.22, Math.PI + 0.22, 900, 0.55, 1.6);
+  // a soft glow under the arcs
+  l.globalCompositeOperation = 'destination-over';
+  const lg = l.createRadialGradient(LC, LC, rs, LC, LC, rs * 1.9);
+  lg.addColorStop(0, 'rgba(255, 200, 130, .5)');
+  lg.addColorStop(0.25, 'rgba(255, 150, 70, .2)');
+  lg.addColorStop(1, 'rgba(255, 110, 40, 0)');
+  l.fillStyle = lg;
+  ring(l, LC, LC, rs, rs * 1.9);
+  l.fill('evenodd');
+  // the photon ring: a thin, soft circle of light right at the edge
+  l.globalCompositeOperation = 'lighter';
+  l.filter = 'blur(1.6px)';
+  l.strokeStyle = 'rgba(255, 244, 222, .6)';
+  l.lineWidth = 2.2;
+  l.beginPath();
+  l.arc(LC, LC, rs * 1.012, 0, Math.PI * 2);
+  l.stroke();
+  l.filter = 'none';
+
+  hzTextures.cache = { disk: await blob(disk), front: await blob(front), lens: await blob(lens) };
+  return hzTextures.cache;
+}
+
+let horizon = null;
+function setHorizon(on, ignite = false) {
+  const root = document.documentElement;
+  if (!on) {
+    delete root.dataset.horizon;
+    if (horizon) { horizon.watch.disconnect(); horizon.node.remove(); horizon = null; }
+    return;
+  }
+  root.dataset.horizon = '';
+  if (!horizon) {
+    const plane = () => el('div', { class: 'hz-plane' }, el('i'));
+    const stars = [el('canvas', { class: 'hz-stars a' }), el('canvas', { class: 'hz-stars b' })];
+    const node = el('div', { class: 'horizon', 'aria-hidden': 'true' },
+      stars,
+      el('div', { class: 'hz-streak' }),
+      el('div', { class: 'hz-hole' },
+        el('div', { class: 'hz-glow' }),
+        plane(),
+        el('div', { class: 'hz-lens' }),
+        el('div', { class: 'hz-shadow' }),
+        el('div', { class: 'hz-front' }, plane())));
+    document.body.prepend(node);
+    const watch = new ResizeObserver(placeHorizon);
+    watch.observe(document.body);
+    watch.observe($('main'));
+    horizon = { node, stars, watch, drawn: '' };
+    hzTextures().then((t) => {
+      node.style.setProperty('--hz-disk', `url(${t.disk})`);
+      node.style.setProperty('--hz-front', `url(${t.front})`);
+      node.style.setProperty('--hz-lens', `url(${t.lens})`);
+    }).catch(() => {});
+  }
+  placeHorizon();
+  if (ignite) {
+    horizon.node.classList.remove('ignite');
+    void horizon.node.offsetWidth;
+    horizon.node.classList.add('ignite');
+  }
+}
+function placeHorizon() {
+  if (!horizon) return;
+  const W = innerWidth, H = innerHeight;
+  const area = document.querySelector('#main:not(.hidden) .content')?.getBoundingClientRect();
+  const r = area && area.width > 40 ? area : { left: 0, top: 0, width: W, height: H };
+  const s = Math.round(Math.max(300, Math.min(r.width * 1.06, r.height * 1.5, 1150)));
+  const st = horizon.node.style;
+  st.setProperty('--hz-x', `${Math.round(r.left + r.width / 2)}px`);
+  st.setProperty('--hz-y', `${Math.round(r.top + r.height * 0.46)}px`);
+  st.setProperty('--hz-s', `${s}px`);
+  // The stars are drawn once per window size, on two layers that fade against each other.
+  const key = `${W}x${H}`;
+  if (horizon.drawn === key) return;
+  horizon.drawn = key;
+  let seed = 20261114;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  horizon.stars.forEach((cv, layer) => {
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    const c = cv.getContext('2d');
+    c.scale(dpr, dpr);
+    const n = Math.round((W * H) / (layer ? 2600 : 1700));
+    for (let i = 0; i < n; i++) {
+      const x = rnd() * W, y = rnd() * H, big = rnd() > 0.93;
+      const rad = big ? 1.1 + rnd() * 0.8 : 0.35 + rnd() * 0.65;
+      const warm = rnd();
+      c.fillStyle = warm > 0.82 ? `rgba(255, 214, 170, ${0.5 + rnd() * 0.5})` : warm < 0.14 ? `rgba(180, 205, 255, ${0.5 + rnd() * 0.5})` : `rgba(255, 255, 255, ${0.25 + rnd() * 0.65})`;
+      c.beginPath();
+      c.arc(x, y, rad, 0, Math.PI * 2);
+      c.fill();
+    }
+  });
 }
 
 function setTheme(id) {
@@ -3132,6 +3461,7 @@ function setTheme(id) {
     localStorage.removeItem('uan.accent');
   } catch {}
   applyTheme();
+  if (theme.mode === 'horizon') setHorizon(true, true); // picked just now: the disk ignites
   renderSwatches();
   renderThemeTiles();
 }
@@ -3156,14 +3486,26 @@ function renderThemeTiles() {
   const sel = $('sTheme');
   if (!sel.options.length) sel.replaceChildren(...THEMES.map((t) => el('option', { value: t.id, text: t.name })));
   sel.value = theme.mode;
-  $('sThemes').replaceChildren(...THEMES.map((t) => {
+  $('sThemeRemove').classList.toggle('hidden', !theme.mode.startsWith('custom:'));
+  const add = el('button', { type: 'button', class: 'add-theme', title: 'Add your own theme: an .html page, a video or a picture', 'aria-label': 'Add your own theme', onclick: () => $('themeFile').click() },
+    svg('<path d="M12 5v14M5 12h14"/>'));
+  $('sThemes').replaceChildren(...[...THEMES, ...customThemes.map(customTheme)].map((t) => {
+    if (t.custom) {
+      const c = t.custom;
+      const tile = el('span', { class: 'tile custom' },
+        c.kind === 'image' ? el('img', { src: themeFileUrl(c), alt: '', loading: 'lazy' })
+          : c.kind === 'video' ? el('video', { src: `${themeFileUrl(c)}#t=1`, preload: 'metadata', muted: true, tabindex: '-1' })
+          : svg('<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12"/>'));
+      return el('button', { type: 'button', class: t.id === theme.mode ? 'on' : '', title: `${t.name} (your own theme)`, 'data-theme-id': t.id, onclick: () => setTheme(t.id) },
+        tile, el('span', { class: 't-name', text: t.name }));
+    }
     const sideC = t.side || t.preview?.[0];
     const mainC = t.panel || t.preview?.[1];
     const tile = el('span', { class: 'tile' });
     if (t.id === 'system') {
       tile.style.background = 'linear-gradient(135deg, #fbfbfb 50%, #272727 50%)';
     } else {
-      tile.style.background = t.image || t.bg || mainC;
+      tile.style.background = t.tile || t.image || t.bg || mainC;
       const side = el('i', { class: 't-side' });
       side.style.background = sideC;
       const main = el('i', { class: 't-main' });
@@ -3175,17 +3517,11 @@ function renderThemeTiles() {
     }
     return el('button', { type: 'button', class: t.id === theme.mode ? 'on' : '', title: t.id === 'system' ? 'Same as your computer (light or dark)' : t.name, 'data-theme-id': t.id, onclick: () => setTheme(t.id) },
       tile, el('span', { class: 't-name', text: t.name }));
-  }));
+  }), add);
 }
 $('sTheme').addEventListener('change', () => setTheme($('sTheme').value));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 applyTheme();
-if (theme.mode === 'secret') {
-  invoke('secret_picture').then((pic) => {
-    if (pic) { useSecretPicture(pic); applyTheme(); }
-    else setTheme('dark');
-  }).catch(() => {});
-}
 
 // ---------- App icon: a few ready-made ones ----------
 const APP_ICONS = [
@@ -3275,7 +3611,7 @@ const AVATARS = [
   { name: 'Star', from: '#818cf8', to: '#3730a3', draw: (c) => { c.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 13 : 30; const a = -Math.PI / 2 + (i * Math.PI) / 5; c.lineTo(50 + r * Math.cos(a), 52 + r * Math.sin(a)); } c.closePath(); c.fill(); } },
   { name: 'Cat', from: '#fdba74', to: '#c2410c', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 44); c.lineTo(28, 18); c.lineTo(46, 32); c.closePath(); c.fill(); c.beginPath(); c.moveTo(74, 44); c.lineTo(72, 18); c.lineTo(54, 32); c.closePath(); c.fill(); c.beginPath(); c.arc(50, 54, 26, 0, Math.PI * 2); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(40, 50, 4, 0, Math.PI * 2); c.arc(60, 50, 4, 0, Math.PI * 2); c.fill(); c.beginPath(); c.moveTo(46, 60); c.lineTo(54, 60); c.lineTo(50, 65); c.closePath(); c.fill(); } },
   { name: 'Ghost', from: '#64748b', to: '#1e293b', draw: (c, bg) => { c.beginPath(); c.moveTo(26, 82); c.lineTo(26, 46); c.arc(50, 46, 24, Math.PI, 0); c.lineTo(74, 82); c.lineTo(66, 74); c.lineTo(58, 82); c.lineTo(50, 74); c.lineTo(42, 82); c.lineTo(34, 74); c.closePath(); c.fill(); c.fillStyle = bg; c.beginPath(); c.arc(41, 46, 4.5, 0, Math.PI * 2); c.arc(59, 46, 4.5, 0, Math.PI * 2); c.fill(); } },
-  { name: 'Mushroom', from: '#e0a96d', to: '#8a4f22', secret: true, draw: (c, bg) => {
+  { name: 'Mushroom', from: '#e0a96d', to: '#8a4f22', draw: (c, bg) => {
     // stem: a thick, slightly bulging trunk
     c.globalAlpha = 0.78;
     c.beginPath(); c.moveTo(39, 50); c.bezierCurveTo(31, 62, 31, 80, 50, 83); c.bezierCurveTo(69, 80, 69, 62, 61, 50); c.closePath(); c.fill();
@@ -3310,18 +3646,12 @@ function renderAvatarTiles() {
   $('sAvatars').replaceChildren(...AVATARS.map((a) => {
     const canvas = el('canvas', { width: 72, height: 72 });
     drawAvatar(canvas, a);
-    let clicks = [];
     return el('button', { type: 'button', title: a.name, onclick: () => {
       const big = document.createElement('canvas');
       big.width = big.height = 160;
       drawAvatar(big, a);
       pendingAvatar = big.toDataURL('image/jpeg', 0.9);
       renderAvatarPick();
-      if (a.secret) {
-        const now = Date.now();
-        clicks = [...clicks.filter((t) => now - t < 900), now];
-        if (clicks.length >= 3) { clicks = []; unlockSecret(); }
-      }
     } }, canvas);
   }));
 }
