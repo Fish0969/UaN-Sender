@@ -909,6 +909,7 @@ function folderCard(b) {
 let folderOpen = null;
 function openFolder(b) {
   folderOpen = b;
+  folderLast = -1;
   const mine = b.items[0].mine;
   $('folderName').textContent = b.folder;
   for (const id of ['folderAllRow', 'folderDlSel', 'folderDlAll']) $(id).classList.toggle('hidden', mine);
@@ -924,36 +925,57 @@ function renderFolder(fresh = false) {
   const items = [...b.items].sort((x, y) => x.file.name.localeCompare(y.file.name, undefined, { numeric: true }));
   const total = items.reduce((a, x) => a + x.file.size, 0);
   $('folderInfo').textContent = `${items.length} ${items.length === 1 ? 'file' : 'files'} · ${fmtBytes(total)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
-  $('folderList').replaceChildren(...items.map((x) => {
+  const stop = (fn) => (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
+  $('folderList').replaceChildren(...items.map((x, i) => {
     const f = x.file;
     const rel = f.name.split(/[\\/]/).slice(1);
     const leaf = rel.pop() || f.name;
+    const media = IMAGE.test(f.mime) || /^video\//i.test(f.mime);
+    const playable = media || PLAYABLE.test(f.mime);
+    const src = x.thumb?.img || (IMAGE.test(f.mime) && f.size <= INLINE_IMAGE_LIMIT ? mediaUrl(f) : null);
+    const ext = (leaf.includes('.') ? leaf.split('.').pop() : 'file').slice(0, 4);
+    const thumb = el('button', { type: 'button', class: 'f-thumb', title: playable ? 'Open' : f.name, onclick: stop(() => playable && openViewer(f)) },
+      src ? el('img', { src, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }) : /^video//i.test(f.mime) ? null : el('span', { class: 'ext', text: ext }),
+      /^video\//i.test(f.mime) ? el('span', { class: 'f-play' }, svg(ICON.bigplay)) : null);
     const t = downloadOf(f.id);
-    const state = mine ? el('span', { class: 'f-state', text: 'Sent' })
-      : t?.status === 'done' ? el('button', { type: 'button', class: 'link f-state done', text: 'Open', onclick: (e) => { e.preventDefault(); invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast); } })
-      : t?.status === 'running' ? el('span', { class: 'f-state', text: `${Math.floor((t.done / Math.max(t.size, 1)) * 100)}%` })
-      : t?.status === 'error' ? el('span', { class: 'f-state danger-text', text: 'Failed' })
-      : t?.status === 'paused' ? el('span', { class: 'f-state', text: 'Paused' })
-      : el('span', { class: 'f-state' });
-    const box = el('input', { type: 'checkbox', value: f.id, onchange: folderSelInfo });
+    let act;
+    if (mine) act = playable ? el('button', { type: 'button', class: 'small', text: /^(video|audio)\//i.test(f.mime) ? 'Play' : 'Open', onclick: stop(() => openViewer(f)) }) : el('span', { class: 'f-state', text: 'Sent' });
+    else if (t?.status === 'done') act = el('button', { type: 'button', class: 'small', text: 'Open', title: 'Open the downloaded file', onclick: stop(() => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast)) });
+    else if (t?.status === 'running') act = el('span', { class: 'f-state', text: `${Math.floor((t.done / Math.max(t.size, 1)) * 100)}%` });
+    else act = el('button', { type: 'button', class: 'small', text: t?.status === 'error' ? 'Retry' : t?.status === 'paused' ? 'Resume' : 'Download', onclick: stop(() => startDownload(f, x.chat)) });
+    const box = el('input', { type: 'checkbox', value: f.id, onchange: folderSelInfo,
+      onclick: (e) => {
+        // Shift-click selects everything between the last click and this one.
+        const boxes = [...$('folderList').querySelectorAll('input')];
+        if (e.shiftKey && folderLast >= 0) {
+          const [a, z] = [Math.min(folderLast, i), Math.max(folderLast, i)];
+          boxes.slice(a, z + 1).forEach((c) => { c.checked = e.target.checked; });
+          folderSelInfo();
+        }
+        folderLast = i;
+      } });
     box.checked = fresh ? !t : was.has(f.id);
     if (mine) box.classList.add('hidden');
-    return el('label', { class: 'f-row', title: f.name },
+    return el('label', { class: 'f-row' + (mine ? ' mine' : ''), title: f.name },
       box,
-      el('span', { class: 'f-path' }, rel.length ? el('span', { class: 'dir', text: rel.join('/') + '/' }) : null, leaf),
-      el('span', { class: 'f-size', text: fmtBytes(f.size) }),
-      state);
+      thumb,
+      el('span', { class: 'f-text' },
+        el('span', { class: 'f-path' }, rel.length ? el('span', { class: 'dir', text: rel.join('/') + '/' }) : null, leaf),
+        el('span', { class: 'f-size', text: fmtBytes(f.size) })),
+      act);
   }));
   folderSelInfo();
 }
+let folderLast = -1;
 function folderSelInfo() {
   if (!folderOpen) return;
   const boxes = [...$('folderList').querySelectorAll('input')];
   const on = boxes.filter((i) => i.checked);
   const size = on.reduce((a, i) => a + (folderOpen.items.find((x) => x.file.id === i.value)?.file.size || 0), 0);
   $('folderAll').checked = on.length === boxes.length && boxes.length > 0;
-  $('folderSel').textContent = folderOpen.items[0].mine ? '' : on.length ? `${on.length} selected · ${fmtBytes(size)}` : 'Nothing selected';
+  $('folderSel').textContent = folderOpen.items[0].mine ? 'Click a picture or video to open it.' : on.length ? `${on.length} selected · ${fmtBytes(size)}` : 'Nothing selected';
   $('folderDlSel').disabled = !on.length;
+  $('folderDlSel').textContent = on.length && on.length < boxes.length ? `Download ${on.length} selected` : 'Download selected';
 }
 $('folderAll').addEventListener('change', () => {
   for (const i of $('folderList').querySelectorAll('input')) i.checked = $('folderAll').checked;
@@ -1702,23 +1724,23 @@ const isFormatError = (err) => err?.code === 3 || err?.code === 4;
 // while sound plays, so there we never guess: VLC is only used when the player itself fails.
 function watchSound(video, file, onSilent) {
   if (!/^video\//i.test(file.mime) || S.me.platform !== 'windows') return;
-  let done = false;
-  let timer;
-  video.addEventListener('playing', () => {
-    if (done) return;
-    const start = video.currentTime;
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      if (done || video.paused || video.muted || video.volume === 0 || video.currentTime - start < 2) return;
-      const decoded = video.webkitAudioDecodedByteCount;
-      if (typeof decoded !== 'number') return;
-      done = true;
-      if (decoded > 0) return;
-      let has = false;
-      try { has = await invoke('audio_track', { file }); } catch { return; }
-      if (has && video.isConnected) onSilent();
-    }, 4000);
-  });
+  // Counts real playback time (a stream from far away often stalls at first), and decides after 3 seconds.
+  let played = 0;
+  let last = null;
+  const iv = setInterval(async () => {
+    if (!video.isConnected) return clearInterval(iv);
+    if (video.paused || video.seeking || video.readyState < 3) { last = null; return; }
+    const t = video.currentTime;
+    if (last !== null && t > last && t - last < 3) played += t - last;
+    last = t;
+    if (played < 3) return;
+    clearInterval(iv);
+    const decoded = video.webkitAudioDecodedByteCount;
+    if (typeof decoded !== 'number' || decoded > 0) return;
+    let has = true; // can't tell: a film with no sound at all is rare, a missing codec is not
+    try { has = await invoke('audio_track', { file }); } catch {}
+    if (has && video.isConnected) onSilent();
+  }, 1000);
 }
 
 async function openInVlc(file, why) {

@@ -1493,6 +1493,17 @@ impl Node {
         true
     }
 
+    /// Throws away a file waiting for us in the mailbox (its message was deleted).
+    async fn blob_drop(&self, file_id: &str) {
+        let url = self.mailbox_url();
+        if url.is_empty() {
+            return;
+        }
+        let ts = now();
+        let sig = self.sign_hex(&format!("blobdel:{}:{}:{ts}", self.dev_s, file_id));
+        let _ = self.http.post(format!("{url}/blob/del")).json(&json!({ "who": self.dev_s, "id": file_id, "ts": ts, "sig": sig })).send().await;
+    }
+
     // ----- Offline mailbox: encrypted, so only the recipient can read it -----
 
     pub fn mailbox_url(&self) -> String {
@@ -1551,7 +1562,7 @@ impl Node {
         match req {
             Req::Dev { req, .. } => Self::mailbox_ok(req),
             Req::Mirror { req, .. } => Self::mailbox_ok(req) || matches!(**req, Req::MyProfile { .. } | Req::ClearGroup { .. }),
-            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Devices { .. }),
+            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Devices { .. } | Req::ClearGroup { .. }),
         }
     }
 
@@ -1589,11 +1600,36 @@ impl Node {
                 return;
             }
             let mut ids = Vec::new();
+            let mut batch = Vec::new();
             for m in &mail {
                 let (Some(id), Some(dev), Some(sealed)) = (m["id"].as_i64(), m["sender"].as_str(), m["box"].as_str()) else { continue };
                 ids.push(id);
-                let opened = self.open_box(dev, sealed).and_then(|req| self.open_dev(dev, req));
+                batch.push((dev.to_string(), self.open_box(dev, sealed).and_then(|req| self.open_dev(dev, req))));
+            }
+            // Messages deleted later in the same pick-up (e.g. a folder sent, then deleted while we were off)
+            // are never shown, and their files are not fetched.
+            let mut unsent: HashSet<(String, String)> = HashSet::new();
+            let mut clears: Vec<(String, String, Option<String>, i64)> = Vec::new();
+            for (_, r) in &batch {
+                match r {
+                    Ok((from, Req::Unsend { msg_id })) => {
+                        unsent.insert((from.clone(), msg_id.clone()));
+                    }
+                    Ok((from, Req::ClearGroup { group_id, before, channel })) => clears.push((from.clone(), group_id.clone(), channel.clone(), *before)),
+                    _ => {}
+                }
+            }
+            for (dev, opened) in batch {
+                let dev = dev.as_str();
                 match opened {
+                    Ok((from, Req::Msg { msg }))
+                        if unsent.contains(&(from.clone(), msg.id.clone()))
+                            || clears.iter().any(|(by, g, c, before)| msg.group.as_deref() == Some(g.as_str()) && msg.channel == *c && msg.ts <= *before && self.group_owner(g).as_deref() == Some(by.as_str())) =>
+                    {
+                        if let Some(f) = &msg.file {
+                            self.blob_drop(&f.id).await;
+                        }
+                    }
                     Ok((from, req)) if Self::mailbox_ok(&req) => {
                         let from = from.as_str();
                         if let Req::Msg { msg } = &req {
@@ -2249,7 +2285,9 @@ impl Node {
             }
             Req::Unsend { msg_id } => {
                 // Only the person who sent a message can delete it for everyone.
-                self.remove_message(&msg_id, Some(peer));
+                if let Some((_, _, Some(f))) = self.remove_message(&msg_id, Some(peer)) {
+                    self.forget_file(&f.id);
+                }
                 Ok(ok)
             }
             Req::History { group_id, msgs } => {
@@ -2296,7 +2334,19 @@ impl Node {
                 if self.group_owner(&group_id).as_deref() != Some(peer) {
                     return Err("Not allowed.".into());
                 }
-                self.clear_local(&chat_id(&group_id, channel.as_deref()), before);
+                let chat = chat_id(&group_id, channel.as_deref());
+                let files: Vec<String> = {
+                    let db = self.db.lock().unwrap();
+                    let mut stmt = db
+                        .prepare("SELECT json_extract(file, '$.id') FROM messages WHERE chat = ?1 AND ts <= ?2 AND file IS NOT NULL AND sender <> ?3")
+                        .map_err(e2s)?;
+                    let rows = stmt.query_map(params![chat, before, self.me_s], |r| r.get::<_, Option<String>>(0)).map_err(e2s)?;
+                    rows.filter_map(Result::ok).flatten().collect()
+                };
+                self.clear_local(&chat, before);
+                for f in files {
+                    self.forget_file(&f);
+                }
                 Ok(ok)
             }
             Req::ChannelAdd { group_id, channel } => {
@@ -3158,6 +3208,8 @@ impl Node {
             if group.owner != self.me_s {
                 return Err("Only the group's creator can clear it for everyone.".into());
             }
+            let ch = channel.map(str::to_string);
+            self.purge_outbox(|r| matches!(r, Req::Msg { msg } if msg.group.as_deref() == Some(g) && msg.channel == ch && msg.ts <= before));
             let req = Req::ClearGroup { group_id: g.to_string(), before, channel: channel.map(str::to_string) };
             self.mirror(&self.me_s.clone(), chat, &req);
             for m in &group.members {
@@ -3377,6 +3429,13 @@ impl Node {
         }
         let Some((chat, _, file)) = self.remove_message(id, None) else { return Ok(()) };
         if everyone {
+            // Not delivered yet: then it never will be.
+            let fid = file.as_ref().map(|f| f.id.clone());
+            self.purge_outbox(|r| match r {
+                Req::Msg { msg } => msg.id == id,
+                Req::Thumb { file_id, .. } => fid.as_deref() == Some(file_id.as_str()),
+                _ => false,
+            });
             self.mirror(&self.me_s.clone(), &chat, &Req::Unsend { msg_id: id.to_string() });
             if let Ok((_, targets)) = self.chat_targets(&chat) {
                 let req = Req::Unsend { msg_id: id.to_string() };
@@ -3828,6 +3887,63 @@ impl Node {
     }
 
     /// Files saved automatically go to Downloads/UaN.
+    /// Drops things still waiting in the outbox (to anyone, also inside copies for our other devices).
+    fn purge_outbox(&self, hit: impl Fn(&Req) -> bool) {
+        let db = self.db.lock().unwrap();
+        let rows: Vec<(i64, String)> = {
+            let Ok(mut stmt) = db.prepare("SELECT seq, payload FROM outbox") else { return };
+            let Ok(rows) = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))) else { return };
+            rows.filter_map(Result::ok).collect()
+        };
+        for (seq, payload) in rows {
+            let Ok(req) = serde_json::from_str::<Req>(&payload) else { continue };
+            let inner = match &req {
+                Req::Mirror { req, .. } => req.as_ref(),
+                other => other,
+            };
+            if hit(inner) {
+                let _ = db.execute("DELETE FROM outbox WHERE seq = ?1", [seq]);
+            }
+        }
+    }
+
+    /// The sender deleted a file for everyone: stop downloading it, and remove the copies UaN fetched by
+    /// itself (automatic downloads, mailbox pick-ups). Files you downloaded and finished on purpose stay.
+    fn forget_file(self: &Arc<Self>, file_id: &str) {
+        self.stop_stream(file_id);
+        self.partials.lock().unwrap().remove(file_id);
+        let auto = Self::auto_dir().ok();
+        let is_auto = |p: &str| auto.as_ref().is_some_and(|d| Path::new(p).starts_with(d));
+        let gone: Vec<Transfer> = {
+            let mut list = self.transfers.lock().unwrap();
+            let gone: Vec<Transfer> = list.iter().filter(|t| t.file.id == file_id && (t.status != "done" || is_auto(&t.path))).cloned().collect();
+            list.retain(|t| !gone.iter().any(|g| g.id == t.id));
+            gone
+        };
+        if gone.is_empty() {
+            return;
+        }
+        for t in &gone {
+            if let Some(r) = self.running.lock().unwrap().remove(&t.id) {
+                r.cancel.cancel();
+            }
+        }
+        let _ = self.db.lock().unwrap().execute("DELETE FROM downloads WHERE file_id = ?1", [file_id]);
+        self.save_transfers();
+        self.emit_transfers();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            for t in gone {
+                let part = part_path(Path::new(&t.path));
+                let _ = tokio::fs::remove_file(blocks_path(&part)).await;
+                let _ = tokio::fs::remove_file(&part).await;
+                if t.status == "done" {
+                    let _ = tokio::fs::remove_file(&t.path).await;
+                }
+            }
+        });
+    }
+
     fn auto_dir() -> Result<PathBuf, String> {
         // UAN_DOWNLOADS: tests keep their files out of the real Downloads folder.
         let dir = match std::env::var_os("UAN_DOWNLOADS") {
@@ -4940,6 +5056,11 @@ pub fn has_audio_track(data: &[u8]) -> bool {
     let find_all = |pat: &[u8]| data.windows(pat.len()).enumerate().filter(|(_, w)| *w == pat).map(|(i, _)| i).collect::<Vec<_>>();
     // MKV/WebM: a CodecID element (0x86, one-byte size) whose value starts with "A_" (A_AC3, A_DTS, A_AAC, …).
     if data.windows(4).any(|w| w[0] == 0x86 && (0x81..=0x9f).contains(&w[1]) && &w[2..4] == b"A_") {
+        return true;
+    }
+    // …also when the muxer wrote the size in a longer form: look for the codec names themselves.
+    const MKV_AUDIO: [&[u8]; 12] = [b"A_AC3", b"A_EAC3", b"A_DTS", b"A_TRUEHD", b"A_AAC", b"A_OPUS", b"A_VORBIS", b"A_FLAC", b"A_MPEG/", b"A_PCM/", b"A_MLP", b"A_ALAC"];
+    if data.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) && MKV_AUDIO.iter().any(|c| data.windows(c.len()).any(|w| w == *c)) {
         return true;
     }
     // MP4/MOV: a sound sample description inside an "stsd" box.

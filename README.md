@@ -48,8 +48,9 @@ sudo apt install ./UaN_*_amd64.deb
   sound), it opens in VLC by itself, streamed without downloading. If VLC is missing, UaN offers to
   install it with one click. *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
-- **Delete messages.** Hover a message and click ×: delete it just for you, or (your own) for everyone.
-  Deleting a file for everyone also stops sharing it.
+- **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)
+  for everyone. Deleting a file for everyone also stops sharing it, stops friends' downloads of it and removes the
+  copies their UaN fetched by itself, also if they were offline when you deleted it.
 - **Channels.** Groups can have channels besides *general* (tabs above the messages; + makes a new one). A channel can be locked with a password: its
   messages are encrypted with that password, so only people who know it can read them. The password is asked every time
   you open the channel.
@@ -60,8 +61,9 @@ sudo apt install ./UaN_*_amd64.deb
   the top of the chat, and write **bold**, *italic*, ~~strike~~ or `code`. In groups, @Name mentions someone.
 - **Quiet when you want.** Mute a chat, group or channel (an @mention or an answer to you still comes through).
   Click your picture to be Online, Away or Do not disturb (no notifications at all).
-- **Folders.** Send a whole folder: it shows up as one folder in the chat. Click it to see what is inside, pick
-  what you want, or **Download all**; the folder structure is kept in Downloads.
+- **Folders.** Send a whole folder: it shows up as one folder in the chat. Click it to see what is inside, with
+  previews of photos and videos: download any file on its own, tick several (Shift-click ticks a range), or
+  **Download folder**; the folder structure is kept in Downloads.
 - **Photos sent together** show up as one grid, like in Discord. In groups, each message has the sender's picture beside it.
 - **Backup.** Settings → Backup saves your friend code, friends, groups and messages in one password-protected
   file, to move UaN to a new PC or restore it after reinstalling.
