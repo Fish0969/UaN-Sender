@@ -1315,7 +1315,7 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 /* ---- your own profile sits in a small card of its own ---- */
 .me { margin: 8px 8px 6px; padding: 8px 6px 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-ctl, 12px); }
 .search-panel .result.sel { background: var(--active); }
-.find { margin: 0 8px 6px; }
+
 
 /* ---- profile card with a background ---- */
 .profile-dlg { padding: 0; overflow: hidden; }
@@ -1330,14 +1330,6 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .pf-sec { margin: 18px 0 6px; }
 .pf-actions:empty { display: none; }
 .pf-facts:empty { display: none; }
-
-/* ---- profile background in Settings ---- */
-.banner-prev { height: 84px; border-radius: var(--r-ctl, 9px); margin: 6px 0 8px; background-size: cover; background-position: center; border: 1px solid var(--border); }
-.tiles.banners { display: flex; flex-wrap: wrap; gap: 6px; }
-.tiles.banners .banner-tile { width: 54px; height: 30px; padding: 0; border-radius: 7px; border: 2px solid transparent; position: relative; display: grid; place-items: center; font-size: 11px; overflow: hidden; background-size: cover; background-position: center; }
-.tiles.banners .banner-tile.on { border-color: var(--accent); }
-.tiles.banners .banner-more { width: auto; padding: 0 10px; background: var(--card); color: var(--text); border-color: var(--border); }
-.banner-more input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
 
 /* ---- search: a panel on the right ---- */
 .search-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(410px, 100%); z-index: 25; display: flex; flex-direction: column; background: var(--dialog, var(--panel)); border-left: 1px solid var(--border); box-shadow: -14px 0 34px -14px rgba(0, 0, 0, .55); }
@@ -1359,3 +1351,47 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .search-panel .result-meta b { color: var(--text); font-weight: 600; }
 .search-panel .result-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-word; margin-top: 2px; }
 .mention-all-note { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+/* ---- the finder: a slim field above the lists ---- */
+.find { display: flex; align-items: center; gap: 8px; margin: 0 10px 6px 12px; padding: 0 6px 0 12px; height: 34px; border-radius: 999px; border: 1px solid var(--border); background: color-mix(in srgb, var(--card) 55%, transparent); }
+.find > svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; }
+.find input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; outline: none; }
+.find:focus-within { border-color: var(--accent); }
+.find-x { width: 24px; height: 24px; min-height: 0; padding: 0; border: 0; background: transparent; border-radius: 50%; }
+.find-x svg { width: 13px; height: 13px; }
+
+/* ---- the lists: titles stand out, every row is a little card ---- */
+.cap { display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: .09em; font-size: 11px; color: var(--muted); }
+.cap::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.cap-row .icon { order: 3; }
+.list li.friend { margin: 0 6px 4px; padding: 0 10px; background: color-mix(in srgb, var(--card) 50%, transparent); border: 1px solid color-mix(in srgb, var(--border) 75%, transparent); }
+.list li.friend:hover { background: var(--hover); }
+.list li.friend.active, .list li.friend.active:hover { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* ---- profile card: clearer parts ---- */
+.pf-name { font-size: 22px; line-height: 1.2; }
+.pf-status { margin-top: 3px; font-size: 14px; }
+.pf-online { display: inline-block; margin-top: 8px; padding: 2px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); font-size: 12px; }
+.pf-sec { margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pf-facts { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); row-gap: 8px; }
+.pf-facts .k { color: var(--muted); }
+.pf-note { position: absolute; left: 10px; top: 10px; padding: 3px 10px; border-radius: 999px; background: rgba(0, 0, 0, .45); color: #fff; font-size: 11px; }
+.pf-edit { position: absolute; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 6px; height: 28px; min-height: 0; padding: 0 11px; border: 0; border-radius: 999px; background: rgba(0, 0, 0, .5); color: #fff; font-size: 12px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.pf-edit svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+.pf-edit:hover { background: rgba(0, 0, 0, .68); }
+.pf-bg { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-ctl, 12px); background: var(--card); }
+
+/* ---- profile background picker (Settings and the card) ---- */
+.banner-prev { height: 96px; border-radius: var(--r-ctl, 12px); margin: 6px 0 12px; background-size: cover; background-position: center; border: 1px solid var(--border); }
+.banner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 8px; }
+.banner-label { margin: 10px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.banner-label:first-child { margin-top: 0; }
+.banner-tile { position: relative; height: 40px; min-height: 0; padding: 0; border: 2px solid transparent; border-radius: 10px; display: grid; place-items: center; overflow: hidden; background-size: cover; background-position: center; color: var(--text); }
+.banner-tile:hover { filter: brightness(1.12); }
+.banner-tile.on { border-color: var(--accent); }
+.banner-tile.on::after { content: "✓"; color: #fff; font-weight: 700; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); }
+.banner-tile svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+.banner-plus { background: var(--card); border: 1px dashed var(--muted); }
+.banner-plus.on { border-style: solid; }
+.banner-colour { background: conic-gradient(#ef4444, #f59e0b, #84cc16, #06b6d4, #8b5cf6, #ec4899, #ef4444); }
+.banner-colour input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }

@@ -46,18 +46,16 @@
           <div id="meStatus" class="sub ellipsis"></div>
           <div id="meProfile" class="sub hidden"></div>
         </div>
-        <button class="icon" id="searchBtn" title="Find a group or a friend">
-          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        </button>
         <button class="icon" id="settingsBtn" title="Settings">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
         </button>
       </div>
-      <form id="findForm" class="add find hidden">
-        <input id="findInput" placeholder="Find a group or a friend" autocomplete="off" spellcheck="false">
-        <button type="button" class="icon" id="findClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-      </form>
       <div id="updateBar" class="update-bar hidden"></div>
+      <form id="findForm" class="find" autocomplete="off">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="findInput" placeholder="Find a group or a friend" autocomplete="off" spellcheck="false">
+        <button type="button" class="find-x hidden" id="findClose" title="Clear"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </form>
       <form id="addForm" class="add">
         <input id="addInput" placeholder="Paste a friend code" required spellcheck="false" autocomplete="off">
         <button class="icon" title="Add friend"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
@@ -367,7 +365,7 @@
             <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
             <div class="sub-title">Profile background</div>
             <div class="banner-prev" id="sBannerPrev"></div>
-            <div class="tiles banners" id="sBanners"></div>
+            <div id="sBanners"></div>
           </section>
           <section class="s-page hidden" data-page="look">
             <h3 class="s-title">Appearance</h3>
@@ -562,10 +560,15 @@
   </dialog>
   <dialog id="profileDlg" class="profile-dlg">
     <form method="dialog">
-      <div class="pf-banner" id="pfBanner"><button class="icon pf-close" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="pf-banner" id="pfBanner">
+        <span class="pf-note hidden" id="pfNote">How others see you</span>
+        <button type="button" class="pf-edit hidden" id="pfEditBg"><svg viewBox="0 0 24 24"><path d="M4 20c3 0 5-1 5-3.5L18.5 7a2.1 2.1 0 0 0-3-3L6 13.5C4 14 4 17 4 20Z"/><path d="m14 6 4 4"/></svg>Change background</button>
+        <button class="icon pf-close" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
       <div class="pf-body">
         <div class="pf-top"><div id="pfAvatar"></div>
-          <div class="grow"><div class="pf-name" id="pfName"></div><div class="pf-status" id="pfStatus"></div><div class="pf-online" id="pfOnline"></div></div></div>
+          <div class="grow"><div class="pf-name" id="pfName"></div><div class="pf-status" id="pfStatus"></div><div class="pf-online hidden" id="pfOnline"></div></div></div>
+        <div id="pfBgPanel" class="pf-bg hidden"></div>
         <div id="pfAboutBox"><div class="pf-sec">About</div><div class="pf-bio" id="pfBio"></div></div>
         <div class="pf-facts" id="pfFacts"></div>
         <div class="pf-actions" id="pfActions"></div>

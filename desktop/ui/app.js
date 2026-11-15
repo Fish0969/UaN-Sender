@@ -156,6 +156,7 @@ document.addEventListener('contextmenu', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F11') { e.preventDefault(); winCtl('fullscreen'); return; }
+  if (e.ctrlKey && e.key.toLowerCase() === 'k' && S.me?.name) { e.preventDefault(); $('findInput').focus(); $('findInput').select(); return; }
   if (e.ctrlKey && e.key.toLowerCase() === 'f' && S.me?.name) { e.preventDefault(); openSearch(S.active || ''); return; }
   if (e.key === 'F5' || (e.ctrlKey && ['r', 'p', 'g', 'u'].includes(e.key.toLowerCase()))) e.preventDefault();
   if ($('viewer').classList.contains('hidden')) return;
@@ -1393,10 +1394,32 @@ function openProfile(id) {
   if (!p) return;
   $('pfBanner').style.background = bannerStyle(p.banner, p.id);
   $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
-  $('pfName').textContent = p.me ? p.name + ' (you)' : p.name;
+  $('pfName').textContent = p.name;
   $('pfStatus').textContent = p.status || '';
+  $('pfStatus').classList.toggle('hidden', !p.status);
   const link = S.links?.[id];
-  $('pfOnline').textContent = p.me ? 'This is how others see your profile' : p.online ? (link ? (link.direct ? 'Online · direct connection' : 'Online · via relay') : 'Online') : 'Offline';
+  const online = p.me ? '' : p.online ? (link ? (link.direct ? 'Online · direct connection' : 'Online · via relay') : 'Online') : 'Offline';
+  $('pfOnline').textContent = online;
+  $('pfOnline').classList.toggle('hidden', !online);
+  $('pfNote').classList.toggle('hidden', !p.me);
+  $('pfEditBg').classList.toggle('hidden', !p.me);
+  $('pfBgPanel').classList.add('hidden');
+  $('pfEditBg').onclick = () => {
+    const panel = $('pfBgPanel');
+    if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+    let cur = S.me.profile?.banner || '';
+    const g = bannerGrid(cur, async (spec) => {
+      try {
+        await invoke('set_profile', { name: S.me.name, status: S.me.profile?.status || '', avatar: null, bio: null, banner: spec });
+        S.me = await invoke('state');
+        cur = spec;
+        $('pfBanner').style.background = bannerStyle(spec, S.me.id);
+        g.mark(cur);
+      } catch (e) { toast(e); }
+    }, false);
+    panel.replaceChildren(g);
+    panel.classList.remove('hidden');
+  };
   $('pfAboutBox').classList.toggle('hidden', !p.bio && !p.me);
   $('pfBio').textContent = p.bio || 'You have not written anything about yourself yet (Settings → Profile).';
   $('pfBio').classList.toggle('empty', !p.bio);
@@ -3373,20 +3396,17 @@ $('searchClose').addEventListener('click', closeSearch);
 $('searchPanel').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); } });
 $('sChat').addEventListener('change', updateSearchTitle);
 
-// The magnifier at the top: find a group or a friend in the lists.
+// The slim field above the lists: find a group or a friend (Ctrl+K).
 let findQ = '';
-function showFinder(on) {
-  $('findForm').classList.toggle('hidden', !on);
-  if (on) { $('findInput').focus(); $('findInput').select(); } else if (findQ) { findQ = ''; $('findInput').value = ''; renderLists(); }
+function setFind(text) {
+  findQ = fold(text.trim());
+  $('findClose').classList.toggle('hidden', !text);
+  renderLists();
 }
-$('searchBtn').addEventListener('click', () => showFinder($('findForm').classList.contains('hidden')));
-$('findClose').addEventListener('click', () => showFinder(false));
+$('findClose').addEventListener('click', () => { $('findInput').value = ''; setFind(''); $('findInput').focus(); });
 $('findForm').addEventListener('submit', (e) => { e.preventDefault(); const f = $('groupList').firstElementChild || $('friendList').firstElementChild; f?.click(); });
-$('findInput').addEventListener('input', () => { findQ = fold($('findInput').value.trim()); renderLists(); });
-$('findInput').addEventListener('keydown', (e) => { if (e.key === 'Escape') showFinder(false); });
-$('searchForm').addEventListener('submit', (e) => e.preventDefault());
-$('sq').addEventListener('input', scheduleSearch);
-for (const id of ['sKind', 'sFrom', 'sChat', 'sSince']) $(id).addEventListener('change', runSearch);
+$('findInput').addEventListener('input', () => setFind($('findInput').value));
+$('findInput').addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('findInput').value = ''; setFind(''); $('findInput').blur(); } });
 
 // ---------- Watch together ----------
 const mbps = (bps) => (bps == null ? null : (bps * 8) / 1e6);
@@ -4466,21 +4486,39 @@ function drawAvatar(canvas, a) {
   c.drawImage(layer, 0, 0);
 }
 let pendingBanner = null; // null = unchanged, '' = none
-function renderBannerPick() {
-  const cur = pendingBanner === null ? (S.me.profile?.banner || '') : pendingBanner;
-  $('sBannerPrev').style.background = bannerStyle(cur, S.me.id);
-  for (const b of $('sBanners').querySelectorAll('[data-spec]')) b.classList.toggle('on', b.dataset.spec === cur);
-}
-function renderBannerTiles() {
+let bannerTarget = null; // who gets the picture chosen with the + tile
+// The picker: ready-made backgrounds, then your own (a picture with +, or any colour).
+function bannerGrid(current, onPick, live) {
+  const wrap = el('div', { class: 'banner-picker' });
   const mk = (spec, title) => {
-    const b = el('button', { type: 'button', class: 'banner-tile', title, 'data-spec': spec, onclick: () => { pendingBanner = spec; renderBannerPick(); } });
+    const b = el('button', { type: 'button', class: 'banner-tile', title, 'data-spec': spec, onclick: () => onPick(spec) });
     b.style.background = bannerStyle(spec, S.me.id);
     return b;
   };
-  const pic = el('button', { type: 'button', class: 'banner-tile banner-more', title: 'Use your own picture', text: 'Picture', onclick: () => { $('bannerFile').value = ''; $('bannerFile').click(); } });
-  const col = el('label', { class: 'banner-tile banner-more', title: 'Pick any colour' }, 'Colour',
-    el('input', { type: 'color', value: '#5b6cf0', oninput: (e) => { pendingBanner = 'c:' + e.target.value; renderBannerPick(); } }));
-  $('sBanners').replaceChildren(mk('', 'Default (your colour)'), ...BANNERS.map((b) => mk('g:' + b.id, b.name)), pic, col);
+  const plus = el('button', { type: 'button', class: 'banner-tile banner-plus', title: 'Use your own picture', onclick: () => { bannerTarget = onPick; $('bannerFile').value = ''; $('bannerFile').click(); } }, svg('<path d="M12 5v14M5 12h14"/>'));
+  const colour = el('label', { class: 'banner-tile banner-colour', title: 'Pick any colour' },
+    el('input', { type: 'color', value: '#5b6cf0', 'aria-label': 'Colour', oninput: (e) => { if (live) onPick('c:' + e.target.value); }, onchange: (e) => { if (!live) onPick('c:' + e.target.value); } }));
+  wrap.append(
+    el('div', { class: 'banner-label', text: 'Ready-made' }),
+    el('div', { class: 'banner-grid' }, mk('', 'Default (your colour)'), ...BANNERS.map((b) => mk('g:' + b.id, b.name))),
+    el('div', { class: 'banner-label', text: 'Your own' }),
+    el('div', { class: 'banner-grid' }, plus, colour));
+  wrap.mark = (cur) => {
+    for (const b of wrap.querySelectorAll('[data-spec]')) b.classList.toggle('on', b.dataset.spec === cur);
+    plus.classList.toggle('on', cur.startsWith('data:image/'));
+    colour.classList.toggle('on', cur.startsWith('c:'));
+  };
+  wrap.mark(current || '');
+  return wrap;
+}
+function renderBannerPick() {
+  const cur = pendingBanner === null ? (S.me.profile?.banner || '') : pendingBanner;
+  $('sBannerPrev').style.background = bannerStyle(cur, S.me.id);
+  $('sBanners').firstElementChild?.mark(cur);
+}
+function renderBannerTiles() {
+  const cur = pendingBanner === null ? (S.me.profile?.banner || '') : pendingBanner;
+  $('sBanners').replaceChildren(bannerGrid(cur, (spec) => { pendingBanner = spec; renderBannerPick(); }, true));
   renderBannerPick();
 }
 $('bannerFile').addEventListener('change', async () => {
@@ -4495,10 +4533,9 @@ $('bannerFile').addEventListener('change', async () => {
     canvas.getContext('2d').drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, W, H);
     let q = 0.82, out = canvas.toDataURL('image/jpeg', q);
     while (out.length > 190000 && q > 0.3) { q -= 0.1; out = canvas.toDataURL('image/jpeg', q); }
-    pendingBanner = out;
-    renderBannerPick();
+    (bannerTarget || ((spec) => { pendingBanner = spec; renderBannerPick(); }))(out);
   } catch {
-    $('sError').textContent = 'That file isn’t a picture UaN can read.';
+    toast('That file isn’t a picture UaN can read.');
   }
 });
 function renderAvatarTiles() {

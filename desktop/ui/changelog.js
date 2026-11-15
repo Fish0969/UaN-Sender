@@ -1,5 +1,12 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.19', items: [
+    'Change your profile background right on your profile card (click your own name, then “Change background”).',
+    'The background picker is tidier: ready-made ones, then your own, with a + tile for a picture and a colour wheel.',
+    'The profile card has clearer parts, and the “(you)” is gone.',
+    'The lists are easier to read: titles stand out and every group and friend is a small card of its own.',
+    'The search for groups and friends is a slim field above the lists (Ctrl+K), no longer next to the Settings.',
+  ] },
   { v: '1.9.18', items: [
     'In the search, click a result to mark it and double-click it to go to that message in the chat.',
     'Your profile at the top sits in a small card of its own (the thin line is gone).',

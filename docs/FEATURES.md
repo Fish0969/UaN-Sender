@@ -33,7 +33,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
 - **Reactions.** Hover a message and press the smiley: 👍 ❤️ 😂 😮 😢 🙏. Your reaction shows under the message with the others'; click yours again to take it back.
 - **Sounds in messages.** An audio file (mp3 …) plays inside the message, with a play button, a bar to jump around, and a speaker you point at to set the volume (shared by all sounds).
 - **Profile background.** Pick a ready-made background (gradients, stripes, dots, a grid), any colour, or your own picture in *Settings → Profile*. It shows on your profile card for everyone.
-- **Search.** The button next to the pins searches the open chat (Ctrl+F too) in a panel on the right: filter by type, person and time; each result shows who wrote it. The magnifier at the top finds a group or a friend in your lists.
+- **Search.** The button next to the pins searches the open chat (Ctrl+F too) in a panel on the right: filter by type, person and time; each result shows who wrote it. The field above the lists (Ctrl+K) finds a group or a friend.
 - **Delete quickly.** Shift+Delete on a message, or on its open right-click menu, deletes it for everyone at once.
 - **Profiles.** Write an *About* text in *Settings → Profile*. Click anyone's picture or name (or your own, to see how others see you) to see their profile: picture, status, About and since when you are friends. In a private chat, click the name at the top for the profile and right-click it for Mute, Clear and Remove friend.
 - **Sound tracks of a film.** A film (mkv) with more than one language gets an **Audio** button in the player; the default track plays as usual, another one is decoded by a silent VLC.
