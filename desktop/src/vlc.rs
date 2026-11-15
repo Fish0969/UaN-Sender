@@ -154,7 +154,7 @@ impl Vlc {
 
     /// VLC without a window, only to decode the film's sound (AC-3, DTS … that the built-in player can't) and send it back
     /// as an Ogg stream on a local port, which the built-in player plays in step with the picture. Returns the port.
-    pub fn assist_start(&self, url: &str, start: f64) -> Result<u16, String> {
+    pub fn assist_start(&self, url: &str, start: f64, track: Option<u32>) -> Result<u16, String> {
         let (program, mut args) = find().ok_or("VLC isn't installed on this computer.")?;
         self.assist_stop();
         let port = free_port().ok_or("No free port for VLC.")?;
@@ -167,6 +167,12 @@ impl Vlc {
             "--no-osd".to_string(),
             "--quiet".to_string(),
             format!("--start-time={start:.2}"),
+        ]);
+        // Which sound track (counted from 0 among the film's sound tracks); the default one when not asked.
+        if let Some(t) = track {
+            args.push(format!("--audio-track={t}"));
+        }
+        args.extend([
             url.to_string(),
             "--sout".to_string(),
             format!("#transcode{{vcodec=none,acodec=vorb,ab=160,channels=2,samplerate=48000}}:std{{access=http{{mime=audio/ogg}},mux=ogg,dst=127.0.0.1:{port}/a.ogg}}"),

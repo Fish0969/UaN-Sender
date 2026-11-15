@@ -3,6 +3,9 @@
 const { invoke, convertFileSrc } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+// A call that may take long (a friend's PC far away): give up after some seconds instead of waiting for ever.
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
 const IMAGE = /^image\/(png|jpeg|gif|webp|avif|bmp)$/i;
 const PLAYABLE = /^(video|audio)\//i;
 const INLINE_IMAGE_LIMIT = 32 * 1024 * 1024;
@@ -190,10 +193,12 @@ function setupChrome() {
   addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => winCtl('state'), 120); });
   winCtl('state');
 }
+function applySavedZoom() { if (uiZoom !== 1) setZoom(uiZoom, false); }
 
 async function boot() {
   S.me = await invoke('state');
   setupChrome();
+  applySavedZoom();
   loadCustomThemes();
   if (S.me.platform === 'android' || S.me.platform === 'ios') document.documentElement.classList.add('phone');
   if (S.me.selftest) return runSelfTest(S.me.selftest);
@@ -232,6 +237,13 @@ async function enterMain() {
 // ---------- Updates: one click replaces the installed version ----------
 let lastUpdate = null;
 let lastUpdateFailed = false;
+// The release notes, without GitHub's automatic "Full Changelog" line.
+const updateNotes = (u) => String(u?.notes || '').split('\n').filter((l) => !/^\**Full Changelog/i.test(l.trim())).join('\n').trim();
+async function showNotes(u) {
+  const notes = updateNotes(u);
+  if (!notes) return;
+  if (await ask('UaN ' + u.version + ': what’s new\n\n' + notes, 'Update now')) installUpdate(u, [$('sUpdNow')]);
+}
 // One click: downloads the new version and switches over by itself (the buttons are the ones to disable meanwhile).
 async function installUpdate(u, btns) {
   if (!u.url) return toast('No download for this system in that release yet.');
@@ -254,6 +266,7 @@ function renderUpdateState() {
   const u = lastUpdate;
   $('sUpdState').textContent = u ? `UaN ${u.version} is available` : lastUpdateFailed ? 'Couldn’t check (no internet, or GitHub didn’t answer). Try again in a moment.' : 'You have the newest version.';
   $('sUpdNow').classList.toggle('hidden', !u);
+  $('sNotes').classList.toggle('hidden', !(u && updateNotes(u)));
 }
 async function checkUpdate() {
   let failed = false;
@@ -267,7 +280,8 @@ async function checkUpdate() {
     btn.onclick = () => installUpdate(u, [btn, $('sUpdNow')]);
     bar.replaceChildren(
       el('div', { class: 'upd-ico' }, svg('<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>')),
-      el('div', { class: 'upd-text' }, el('b', { text: 'Update available' }), el('span', { text: `UaN ${u.version}` })),
+      el('div', { class: 'upd-text' }, el('b', { text: 'Update available' }), el('span', { text: `UaN ${u.version}` }),
+        updateNotes(u) ? el('button', { type: 'button', class: 'link upd-notes', text: 'What’s new', onclick: () => showNotes(u) }) : null),
       btn);
   }
   renderUpdateState();
@@ -278,6 +292,7 @@ $('sUpdCheck').addEventListener('click', async () => {
   await checkUpdate();
 });
 $('sUpdNow').addEventListener('click', () => { if (lastUpdate) installUpdate(lastUpdate, [$('sUpdNow')]); });
+$('sNotes').addEventListener('click', () => { if (lastUpdate) showNotes(lastUpdate); });
 
 // ---------- Built-in playback self-test (used by the automatic Linux/Windows build checks) ----------
 async function runSelfTest(file) {
@@ -303,24 +318,35 @@ async function runSelfTest(file) {
     return report(afterSeek >= 14.5 && afterSeek < 25 && stillPaused, `VLC streamed: seek→${afterSeek.toFixed(1)}s, paused=${stillPaused}, duration=${v.duration}`);
   }
   if (S.me.selftestAssist) {
+    let stage = 'start';
+    const dog = setTimeout(() => report(false, 'watchdog: stuck at stage ' + stage), 100000);
+    try {
     const v = el('video', { src: mediaUrl(file) });
     document.body.append(v);
     v.play().catch(() => {});
     const t0 = Date.now();
     const wait = async (cond, ms) => { while (Date.now() - t0 < ms) { if (cond()) return true; await new Promise((r) => setTimeout(r, 250)); } return false; };
     if (!(await wait(() => v.currentTime > 2, 40000))) return report(false, 'picture did not play: t=' + v.currentTime + ' err=' + v.error?.code);
+    const tracks = await withTimeout(invoke('media_tracks', { file }), 8000).catch((e) => String(e));
+    stage = 'assist start';
     const started = await startAudioAssist(v, file, () => {});
+    stage = 'assist started';
     if (!started) return report(false, 'the sound helper did not start (VLC missing?)');
     const a = v._assist?.audio;
+    stage = 'waiting for the sound';
     const playing = await wait(() => a && !a.paused && a.currentTime > 1.5, 60000);
+    stage = 'sound playing';
     if (!playing) return report(false, 'sound did not play: ready=' + v._assist?.ready + ' paused=' + a?.paused + ' t=' + a?.currentTime + ' err=' + a?.error?.code + ' picture=' + v.currentTime.toFixed(1));
     const drift1 = v.currentTime - (v._assist.startAt + a.currentTime);
     v.currentTime = Math.min(v.currentTime + 6, (v.duration || 100) - 3); // jump ahead: the sound must follow
     await new Promise((r) => setTimeout(r, 1000));
     const back = await wait(() => a && !a.paused && !v.paused && Math.abs(v.currentTime - (v._assist.startAt + a.currentTime)) < 0.8, 60000);
     const drift2 = v.currentTime - (v._assist.startAt + a.currentTime);
+    stage = 'done';
     v._assist.stop();
-    return report(back && Math.abs(drift1) < 0.8, 'quiet sound OK: drift ' + drift1.toFixed(2) + 's, after the jump ' + drift2.toFixed(2) + 's, picture at ' + v.currentTime.toFixed(1) + 's');
+    clearTimeout(dog);
+    return report(back && Math.abs(drift1) < 0.8, 'quiet sound OK (sound tracks listed: ' + (Array.isArray(tracks) ? tracks.map((t) => t.codec + '/' + t.lang).join(',') : tracks) + '): drift ' + drift1.toFixed(2) + 's, after the jump ' + drift2.toFixed(2) + 's, picture at ' + v.currentTime.toFixed(1) + 's');
+    } catch (e) { clearTimeout(dog); return report(false, 'exception at stage ' + stage + ': ' + (e && e.stack || e)); }
   }
   const v = el('video', { src: mediaUrl(file) });
   v.muted = true;
@@ -735,6 +761,7 @@ async function openChat(chat, focusId) {
   let list = await invoke('messages', { chat, limit: 300 });
   if (focusId && !list.some((m) => m.id === focusId)) list = await invoke('messages', { chat, limit: 20000 });
   S.msgs.set(chat, list);
+  await loadReactions(chat);
   try { S.reads.set(chat, await invoke('reads', { chat })); } catch {}
   try { if (S.active === chat) renderPins(await invoke('pins', { chat })); } catch {}
   if (S.active !== chat) return;
@@ -913,6 +940,47 @@ function senderOf(m) {
   const p = (g && g.members.find((x) => x.id === m.sender)) || friendById(m.sender);
   return { name: m.senderName || p?.name || '?', src: p?.avatar };
 }
+// ---------- Reactions: one emoji per person per message ----------
+S.reacts = new Map(); // message id -> Map(person id -> emoji)
+const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+function setReaction(id, by, emoji) {
+  let m = S.reacts.get(id);
+  if (!m) S.reacts.set(id, (m = new Map()));
+  if (emoji) m.set(by, emoji); else m.delete(by);
+}
+async function loadReactions(chat) {
+  try { for (const r of await invoke('reactions', { chat })) setReaction(r.id, r.by, r.emoji); } catch {}
+}
+listen('reaction', ({ payload: p }) => {
+  setReaction(p.id, p.by, p.emoji);
+  if (p.chat === S.active) renderMessages(true);
+});
+const whoIs = (id) => (id === S.me.id ? 'You' : friendById(id)?.name || S.groups.flatMap((g) => g.members).find((x) => x.id === id)?.name || 'Someone');
+const reactTo = (m, emoji) => invoke('react', { chat: m.chat, id: m.id, emoji }).catch(toast);
+function reactsNode(m) {
+  const mp = S.reacts.get(m.id);
+  if (!mp || !mp.size) return null;
+  const groups = new Map();
+  for (const [by, e] of mp) { if (!groups.has(e)) groups.set(e, []); groups.get(e).push(by); }
+  return el('div', { class: 'reacts' }, ...[...groups].map(([e, users]) => {
+    const mine = users.includes(S.me.id);
+    return el('button', { type: 'button', class: 'react-chip' + (mine ? ' mine' : ''), title: users.map(whoIs).join(', '), onclick: () => reactTo(m, mine ? '' : e) }, e, el('span', { text: String(users.length) }));
+  }));
+}
+function reactPicker(btn, m) {
+  document.querySelector('.react-pop')?.remove();
+  const mine = S.reacts.get(m.id)?.get(S.me.id);
+  const pop = el('div', { class: 'react-pop' }, REACTIONS.map((e) => el('button', { type: 'button', class: e === mine ? 'on' : '', title: e === mine ? 'Take it back' : e,
+    onclick: () => { pop.remove(); reactTo(m, e === mine ? '' : e); } }, e)));
+  document.body.append(pop);
+  const r = btn.getBoundingClientRect();
+  const w = pop.getBoundingClientRect().width;
+  pop.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2)) + 'px';
+  pop.style.top = Math.max(6, r.top - 46) + 'px';
+  const close = (e) => { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('pointerdown', close, true); } };
+  setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
+}
+
 function messageNode(m, run = true, block = null) {
   const items = block ? block.items : [m];
   const group = isGroup(m.chat);
@@ -924,6 +992,7 @@ function messageNode(m, run = true, block = null) {
     : m.file ? fileCard(m.file, m.chat, m.thumb) : null;
   const acts = m.locked ? [] : [
     el('button', { type: 'button', class: 'msg-act', title: 'Reply', onclick: () => startReply(m) }, svg(ICON.reply)),
+    !block ? el('button', { type: 'button', class: 'msg-act', title: 'React', onclick: (e) => reactPicker(e.currentTarget, m) }, svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5v.5M15 9.5v.5"/>')) : null,
     !block && m.mine && m.text ? el('button', { type: 'button', class: 'msg-act', title: 'Edit', onclick: () => startEdit(m) }, svg(ICON.edit)) : null,
     !block ? el('button', { type: 'button', class: 'msg-act', title: m.pinned ? 'Unpin' : 'Pin to the top of the chat', onclick: () => togglePin(m) }, svg(ICON.pin)) : null,
   ];
@@ -935,7 +1004,7 @@ function messageNode(m, run = true, block = null) {
   // Seen heads always sit right before the time; the actions are on the outer side.
   const meta = el('div', { class: 'meta' + (edited || pin ? ' keep-fixed' : '') + (seen ? ' keep-seen' : '') }, m.mine ? [del, ...acts, pin, edited, seen, time] : [seen, time, edited, pin, ...acts, del]);
   const theirsInGroup = group && !m.mine;
-  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName }) : null, quote, content, bubble, meta];
+  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
     + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
@@ -1453,6 +1522,17 @@ function removeMessage(id, chat) {
 // It keeps playing while new messages arrive (the same player is put back into the message each time).
 const audioPlayers = new Map(); // file id -> player
 const AP_PLAY = '<path d="M8 5v14l11-7Z"/>';
+const AP_SPK = '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6"/>';
+const AP_SPK_OFF = '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 9 4 6M21 9l-4 6"/>';
+// One volume for every sound in the messages (kept for next time). The slider is a curve: the quiet end is spread out.
+const AP_VOL = (() => { try { const v = JSON.parse(localStorage.getItem('uan.audioVol') || 'null'); return { p: Math.min(100, Math.max(0, Number(v?.p ?? 80))), muted: !!v?.muted }; } catch { return { p: 80, muted: false }; } })();
+const apAmp = () => (AP_VOL.muted ? 0 : (AP_VOL.p / 100) ** 2);
+function applyApVolume() {
+  document.querySelectorAll('audio.ap-audio').forEach((x) => { x.volume = apAmp(); });
+  document.querySelectorAll('.ap-vol').forEach((b) => { b.value = String(AP_VOL.p); b.style.setProperty('--p', AP_VOL.p + '%'); });
+  document.querySelectorAll('.ap-vol-btn').forEach((b) => b.replaceChildren(svg(AP_VOL.muted || AP_VOL.p === 0 ? AP_SPK_OFF : AP_SPK)));
+  try { localStorage.setItem('uan.audioVol', JSON.stringify(AP_VOL)); } catch {}
+}
 const AP_PAUSE = '<rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/>';
 function audioPlayer(file) {
   const have = audioPlayers.get(file.id);
@@ -1490,7 +1570,13 @@ function audioPlayer(file) {
     bar.style.setProperty('--p', `${Number(bar.value) / 10}%`);
   });
   bar.addEventListener('change', () => { dragging = false; });
-  const box = el('div', { class: 'ap' }, btn, bar, time, a);
+  const vbtn = el('button', { type: 'button', class: 'ap-vol-btn', title: 'Mute or unmute', 'aria-label': 'Mute or unmute' }, svg(AP_VOL.muted || AP_VOL.p === 0 ? AP_SPK_OFF : AP_SPK));
+  const vbar = el('input', { type: 'range', class: 'ap-vol', min: 0, max: 100, step: 1, value: AP_VOL.p, 'aria-label': 'Volume of the sounds' });
+  vbar.style.setProperty('--p', AP_VOL.p + '%');
+  vbtn.addEventListener('click', () => { AP_VOL.muted = !AP_VOL.muted; applyApVolume(); });
+  vbar.addEventListener('input', () => { AP_VOL.p = Number(vbar.value); AP_VOL.muted = false; applyApVolume(); });
+  a.volume = apAmp();
+  const box = el('div', { class: 'ap' }, btn, bar, time, el('div', { class: 'ap-vol-group' }, vbtn, vbar), a);
   audioPlayers.set(file.id, box);
   return box;
 }
@@ -1769,6 +1855,54 @@ $('phonePhotos').addEventListener('change', () => {
   if (files.length) sendPhoneFiles(files).catch(toast);
 });
 
+// ---------- Voice message: record, then it goes into the chat like any file, and plays in the message ----------
+let rec = null; // { mr, stream, chunks, timer, chat, send }
+const two = (n) => String(n).padStart(2, '0');
+async function startRecording() {
+  if (rec || !S.active) return;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {
+    return toast('The microphone isn’t available. In Windows: Settings → Privacy → Microphone, let apps use it.');
+  }
+  const mime = ['audio/webm;codecs=opus', 'audio/webm'].find((x) => window.MediaRecorder?.isTypeSupported(x));
+  if (!mime) { stream.getTracks().forEach((t) => t.stop()); return toast('This system can’t record sound here.'); }
+  const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 });
+  const r = (rec = { mr, stream, chunks: [], t0: Date.now(), chat: S.active, send: false, timer: null });
+  mr.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data); };
+  mr.onstop = async () => {
+    clearInterval(r.timer);
+    r.stream.getTracks().forEach((t) => t.stop());
+    $('recBar').classList.add('hidden');
+    $('micBtn').classList.remove('rec');
+    if (rec === r) rec = null;
+    if (!r.send || !r.chunks.length) return;
+    const d = new Date();
+    const file = new File([new Blob(r.chunks, { type: mime })], `Voice message ${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}.weba`);
+    try {
+      const path = await uploadFile(file);
+      await invoke('send_paths', { paths: [path], chats: [r.chat], text: '' });
+    } catch (e) { toast(e); }
+  };
+  mr.start(250);
+  $('micBtn').classList.add('rec');
+  $('recBar').classList.remove('hidden');
+  const tick = () => {
+    const s = (Date.now() - r.t0) / 1000;
+    $('recTime').textContent = fmtTime(s);
+    if (s >= 300) stopRecording(true); // five minutes at most
+  };
+  tick();
+  r.timer = setInterval(tick, 250);
+}
+function stopRecording(send) {
+  if (!rec) return;
+  rec.send = send;
+  if (rec.mr.state !== 'inactive') rec.mr.stop();
+}
+$('micBtn').addEventListener('click', () => { if (rec) stopRecording(true); else startRecording(); });
+$('recSend').addEventListener('click', () => stopRecording(true));
+$('recCancel').addEventListener('click', () => stopRecording(false));
+
 $('attachBtn').addEventListener('click', () => {
   if (!S.active) return;
   if (document.documentElement.classList.contains('phone')) return $('phoneFiles').click();
@@ -1871,18 +2005,21 @@ function makePlayer(container, { file, chat, autoplay = true, stream = false, re
   let savedVol = 1;
   try { savedVol = Number(localStorage.getItem('uan.vol') ?? 1); } catch {}
   video.volume = isFinite(savedVol) ? Math.min(1, Math.max(0, savedVol)) : 1;
+  // The volume slider is a curve (position squared): the quiet end is spread out, so small volumes can be set finely.
+  const posOf = (v) => Math.round(Math.sqrt(v) * 100);
 
   const btn = (title, icon, cls = '') => el('button', { class: `pl-btn ${cls}`, type: 'button', title }, svg(icon));
   const playBtn = btn('Play / pause (Space)', PICON.play);
   const time = el('span', { class: 'pl-time', text: '0:00 / 0:00' });
   const seek = el('input', { type: 'range', class: 'pl-seek', min: 0, max: 1000, step: 1, value: 0, title: 'Seek (← →)' });
   const muteBtn = btn('Mute (M)', PICON.vol);
-  const vol = el('input', { type: 'range', class: 'pl-vol', min: 0, max: 100, value: Math.round(video.volume * 100), title: 'Volume' });
+  const vol = el('input', { type: 'range', class: 'pl-vol', min: 0, max: 100, value: posOf(video.volume), title: 'Volume' });
+  const audioBtn = el('button', { class: 'pl-btn pl-text hidden', type: 'button', title: 'Choose the sound track (language)', text: 'Audio' });
   const cc = el('button', { class: 'pl-btn pl-cc', type: 'button', text: 'CC' });
   const load = el('button', { class: 'pl-btn pl-text', type: 'button', title: 'Load a subtitle file from your PC (.srt or .vtt)', text: '+ Subtitles' });
   const fsBtn = btn('Full screen (F)', PICON.full, 'pl-fs');
   const spinner = el('div', { class: 'pl-spin hidden' });
-  const bar = el('div', { class: 'pl-bar' }, playBtn, time, seek, muteBtn, vol, cc, load, fsBtn);
+  const bar = el('div', { class: 'pl-bar' }, playBtn, time, seek, muteBtn, vol, cc, load, audioBtn, fsBtn);
   const root = el('div', { class: 'player' }, video, spinner, bar);
   container.replaceChildren(root);
 
@@ -1918,14 +2055,20 @@ function makePlayer(container, { file, chat, autoplay = true, stream = false, re
     if (video.duration) video.currentTime = (seek.value / 1000) * video.duration;
     refresh();
   });
-  const volIcon = () => setIcon(muteBtn, video.muted || video.volume === 0 ? PICON.mute : PICON.vol);
+  // With a picked sound track the film's own sound stays off; "muted" then belongs to the helper's sound.
+  const isMuted = () => (video._assist?.chosen ? video._assist.userMuted : video.muted);
+  const setMuted = (on) => {
+    if (video._assist?.chosen) { video._assist.userMuted = on; video._assist.volume?.(); } else video.muted = on;
+    volIcon();
+  };
+  const volIcon = () => setIcon(muteBtn, isMuted() || video.volume === 0 ? PICON.mute : PICON.vol);
   vol.addEventListener('input', () => {
-    video.volume = vol.value / 100;
-    video.muted = video.volume === 0;
+    video.volume = (vol.value / 100) ** 2;
+    setMuted(video.volume === 0);
     volIcon();
     try { localStorage.setItem('uan.vol', String(video.volume)); } catch {}
   });
-  muteBtn.onclick = () => { video.muted = !video.muted; volIcon(); };
+  muteBtn.onclick = () => setMuted(!isMuted());
   video.addEventListener('volumechange', volIcon);
 
   // Full screen: the player fills the screen and the window goes full screen too.
@@ -1965,6 +2108,31 @@ function makePlayer(container, { file, chat, autoplay = true, stream = false, re
   video.addEventListener('seeking', focus);
 
   setupSubs(video, file, cc, load, chat);
+
+  // A film with more than one sound track (languages): an "Audio" button lists them. The default one plays as usual;
+  // another one is decoded by the silent VLC and replaces it (the picture stays here).
+  if (/\.(mkv|webm|mka)$/i.test(file.name || '') || /matroska|webm/i.test(file.mime)) {
+    withTimeout(invoke('media_tracks', { file }), 15000).then((tracks) => {
+      if (!Array.isArray(tracks) || tracks.length < 2 || !video.isConnected) return;
+      audioBtn.classList.remove('hidden');
+      const defIdx = Math.max(0, tracks.findIndex((x) => x.default));
+      let cur = defIdx;
+      const lang = (c) => { try { return c && c !== 'und' ? new Intl.DisplayNames(['en'], { type: 'language' }).of(c) : ''; } catch { return c || ''; } };
+      const label = (tr, i) => [lang(tr.lang) || 'Track ' + (i + 1), tr.name && tr.name !== lang(tr.lang) ? tr.name : '', String(tr.codec || '').replace(/^A_/, '')].filter(Boolean).join(' · ');
+      const pick = async (i) => {
+        if (i === cur) return;
+        const was = cur;
+        cur = i;
+        if (i === defIdx) { if (video._assist?.chosen) video._assist.stop(); return; }
+        const ok = await startAudioAssist(video, file, () => { cur = defIdx; }, { track: i });
+        if (!ok) cur = was;
+      };
+      audioBtn.onclick = () => {
+        const r = audioBtn.getBoundingClientRect();
+        showMenu(r.left, Math.max(8, r.top - 12 - tracks.length * 34), tracks.map((tr, i) => ({ label: (i === cur ? '\u2022 ' : '   ') + label(tr, i), run: () => pick(i) })));
+      };
+    }).catch(() => {});
+  }
 
   // Remember where we are, and offer to continue from there next time.
   let lastSave = 0;
@@ -2018,7 +2186,7 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'arrowright') { e.preventDefault(); v.currentTime = Math.min(v.duration || 0, v.currentTime + 10); }
   else if (k === 'arrowleft') { e.preventDefault(); v.currentTime = Math.max(0, v.currentTime - 10); }
   else if (k === 'f') activePlayer.fullscreen();
-  else if (k === 'm') v.muted = !v.muted;
+  else if (k === 'm') activePlayer.root.querySelector('.pl-btn[title^="Mute"]')?.click();
   else if (k === 'c') activePlayer.root.querySelector('.pl-cc').click();
 });
 
@@ -2101,13 +2269,15 @@ async function openInVlc(file, why) {
 // Some films carry their sound in a format the built-in player can't decode (AC-3, DTS ...). Instead of opening VLC's
 // window, a silent VLC decodes just the sound and sends it back as an ordinary audio stream; it plays here, level
 // with the picture (restarted after a jump, nudged when it drifts). Returns true when it started.
-async function startAudioAssist(video, file, onFail) {
-  if (video._assist) return true;
+async function startAudioAssist(video, file, onFail, opts = {}) {
+  if (video._assist && opts.track == null) return true;
+  if (video._assist) video._assist.stop();
   if (!(await ensureVlc('This film’s sound is in a format the built-in player can’t decode. VLC (free) can decode it quietly in the background, so the film still plays here.'))) return false;
-  if (video._assist) return true;
   const a = new Audio();
   a.preload = 'auto';
-  const A = (video._assist = { audio: a, startAt: 0, lead: 3, ready: false, token: 0, failures: 0, iv: null, timer: null });
+  const chosen = opts.track != null; // a track the viewer picked: the film's own sound is switched off, this one replaces it
+  const A = (video._assist = { audio: a, startAt: 0, lead: 3, ready: false, token: 0, failures: 0, iv: null, timer: null, chosen, track: opts.track, userMuted: video.muted });
+  if (chosen) video.muted = true;
   const stop = () => {
     clearInterval(A.iv);
     clearTimeout(A.timer);
@@ -2116,6 +2286,7 @@ async function startAudioAssist(video, file, onFail) {
     a.removeAttribute('src');
     a.load();
     invoke('audio_assist_stop').catch(() => {});
+    if (A.chosen) video.muted = A.userMuted; // the film's own sound again
     if (video._assist === A) video._assist = null;
   };
   A.stop = stop;
@@ -2131,7 +2302,7 @@ async function startAudioAssist(video, file, onFail) {
     a.pause();
     A.startAt = Math.max(0, from + A.lead);
     try {
-      const url = await invoke('audio_assist_start', { url: httpUrl(file), start: A.startAt });
+      const url = await invoke('audio_assist_start', { url: httpUrl(file), start: A.startAt, track: A.track ?? null });
       if (mine !== A.token) return;
       // VLC opens its port a moment later: try a few times.
       let ok = false;
@@ -2172,9 +2343,10 @@ async function startAudioAssist(video, file, onFail) {
     if (Math.abs(diff) > 1.2) { launch(vt); return; }
     a.playbackRate = Math.abs(diff) > 0.12 ? 1 + Math.max(-0.05, Math.min(0.05, diff * 0.5)) : 1;
   };
-  const volume = () => { a.volume = video.volume; a.muted = video.muted; };
+  const volume = () => { a.volume = video.volume; a.muted = A.chosen ? A.userMuted : video.muted; };
   volume();
   video.addEventListener('volumechange', volume);
+  A.volume = volume;
   video.addEventListener('seeked', () => { clearTimeout(A.timer); A.timer = setTimeout(() => launch(video.currentTime), 250); });
   video.addEventListener('ended', stop);
   A.iv = setInterval(tick, 200);
@@ -2588,7 +2760,7 @@ function showMenu(x, y, items) {
   const m = $('ctxMenu');
   // An open dialog sits above everything else on the page, so the menu has to live inside it
   // (otherwise it shows up behind the dialog).
-  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  const host = document.fullscreenElement || [...document.querySelectorAll('dialog[open]')].pop() || document.body;
   if (m.parentElement !== host) host.append(m);
   m.replaceChildren(...items.filter(Boolean).map((it) => (it === '-'
     ? el('hr')
@@ -2918,6 +3090,8 @@ $('settingsBtn').addEventListener('click', async () => {
   renderThemeTiles();
   syncTune();
   renderUiStyles();
+  $('sZoom').value = String(Math.round(uiZoom * 100));
+  $('sZoomVal').textContent = Math.round(uiZoom * 100) + '%';
   renderIconTiles();
   renderAvatarTiles();
   $('sAutoDl').checked = S.me.autodl;
@@ -3723,22 +3897,27 @@ function renderTune() {
   const video = c.kind === 'video';
   const set = (key, v) => { c.tune = { ...(c.tune || {}), [key]: v }; applyTune(c); saveTune(c); };
   const row = (icon, label, ...ctl) => el('div', { class: 'wp-row' }, svg(TUNE_ICON[icon]), el('span', { class: 'wp-lbl', text: label }), ...ctl);
-  const slider = (key, icon, label, min, max) => {
-    const num = el('input', { type: 'number', class: 'wp-num', min, max, step: 1, value: t[key], 'aria-label': `${label} (number)` });
-    const input = el('input', { type: 'range', class: 'wp-range', min, max, step: 1, value: t[key], 'aria-label': label });
-    const clamp = (v) => Math.min(max, Math.max(min, Math.round(v)));
-    // The slider and the number box move each other; a number typed in is kept inside the allowed range.
-    input.addEventListener('input', () => { num.value = input.value; set(key, Number(input.value)); });
+  // Values go in tenths. The slider has a thousand steps, and for volume and blur it moves along a curve, so the small
+  // values (where the difference is biggest) can be set finely. The number box takes decimals, e.g. 2.5.
+  const slider = (key, icon, label, min, max, curve = false) => {
+    const tenth = (v) => Math.round(v * 10) / 10;
+    const clamp = (v) => Math.min(max, Math.max(min, tenth(v)));
+    const show = (v) => String(tenth(v));
+    const toPos = (v) => Math.round((curve ? Math.sqrt(Math.max(0, (v - min) / (max - min))) : (v - min) / (max - min)) * 1000);
+    const fromPos = (p) => min + (max - min) * (curve ? (p / 1000) ** 2 : p / 1000);
+    const num = el('input', { type: 'number', class: 'wp-num', min, max, step: 0.1, value: show(t[key]), 'aria-label': label + ' (number)' });
+    const input = el('input', { type: 'range', class: 'wp-range', min: 0, max: 1000, step: 1, value: toPos(t[key]), 'aria-label': label });
+    input.addEventListener('input', () => { const v = clamp(fromPos(Number(input.value))); num.value = show(v); set(key, v); });
     num.addEventListener('input', () => {
       if (num.value === '' || !Number.isFinite(Number(num.value))) return;
       const v = clamp(Number(num.value));
-      input.value = v;
+      input.value = toPos(v);
       set(key, v);
     });
     num.addEventListener('change', () => {
-      const v = num.value !== '' && Number.isFinite(Number(num.value)) ? clamp(Number(num.value)) : Number(input.value);
-      num.value = v;
-      input.value = v;
+      const v = num.value !== '' && Number.isFinite(Number(num.value)) ? clamp(Number(num.value)) : clamp(fromPos(Number(input.value)));
+      num.value = show(v);
+      input.value = toPos(v);
       set(key, v);
     });
     return row(icon, label, input, num);
@@ -3757,9 +3936,9 @@ function renderTune() {
       renderThemeTiles();
     });
     rows.push(row(c.sound ? 'sound' : 'mute', 'Sound', box));
-    rows.push(slider('vol', 'sound', 'Volume', 0, 100));
+    rows.push(slider('vol', 'sound', 'Volume', 0, 100, true));
   }
-  rows.push(slider('blur', 'blur', 'Blur', 0, 40));
+  rows.push(slider('blur', 'blur', 'Blur', 0, 40, true));
   rows.push(slider('bright', 'bright', 'Brightness', 20, 160));
   $('tuneRows').replaceChildren(...rows);
 }
@@ -4004,6 +4183,22 @@ const UI_STYLES = [
   { id: 'terminal', name: 'Terminal' },
   { id: 'soft', name: 'Soft' },
 ];
+// ---------- Interface size: the whole window's zoom, kept for next time ----------
+let uiZoom = (() => { try { const z = parseFloat(localStorage.getItem('uan.zoom') || '1'); return z >= 0.7 && z <= 1.6 ? z : 1; } catch { return 1; } })();
+function setZoom(z, save = true) {
+  uiZoom = Math.min(1.6, Math.max(0.7, Math.round(z * 20) / 20));
+  if (save) { try { if (uiZoom === 1) localStorage.removeItem('uan.zoom'); else localStorage.setItem('uan.zoom', String(uiZoom)); } catch {} }
+  invoke('win_ctl', { action: 'zoom:' + uiZoom }).catch(() => {});
+  if ($('sZoom')) { $('sZoom').value = String(Math.round(uiZoom * 100)); $('sZoomVal').textContent = Math.round(uiZoom * 100) + '%'; }
+}
+$('sZoom').addEventListener('input', () => setZoom(Number($('sZoom').value) / 100));
+$('sZoomReset').addEventListener('click', () => setZoom(1));
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.altKey) return;
+  if (e.key === '=' || e.key === '+') { e.preventDefault(); setZoom(uiZoom + 0.05); }
+  else if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(uiZoom - 0.05); }
+  else if (e.key === '0') { e.preventDefault(); setZoom(1); }
+});
 let uiStyle = (() => { try { const v = localStorage.getItem('uan.ui'); return UI_STYLES.some((u) => u.id === v) ? v : 'default'; } catch { return 'default'; } })();
 function applyUiStyle() {
   if (uiStyle === 'default') delete document.documentElement.dataset.ui;

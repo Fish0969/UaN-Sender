@@ -376,6 +376,7 @@ async fn check_update(app: AppHandle, profile: State<'_, Profile>) -> CmdResult<
     Ok(json!({
         "version": tag.trim_start_matches('v'),
         "page": rel["html_url"],
+        "notes": rel["body"].as_str().unwrap_or_default().chars().take(4000).collect::<String>(),
         "url": asset.as_ref().map(|a| a["browser_download_url"].clone()),
         "name": asset.as_ref().map(|a| a["name"].clone()),
         "size": asset.as_ref().map(|a| a["size"].clone()),
@@ -521,12 +522,12 @@ async fn vlc_command(vlc: State<'_, vlc::Vlc>, id: String, cmd: String, value: f
 
 /// Decodes a film's sound with a silent VLC and returns the address of the stream (see `vlc::Vlc::assist_start`).
 #[tauri::command]
-fn audio_assist_start(http: State<'_, HttpBase>, vlc: State<'_, vlc::Vlc>, url: String, start: f64) -> CmdResult<String> {
+fn audio_assist_start(http: State<'_, HttpBase>, vlc: State<'_, vlc::Vlc>, url: String, start: f64, track: Option<u32>) -> CmdResult<String> {
     // Only films served by UaN itself.
     if http.0.is_empty() || !url.starts_with(&format!("{}/", http.0)) {
         return Err("Unexpected address.".into());
     }
-    let port = vlc.assist_start(&url, start.max(0.0))?;
+    let port = vlc.assist_start(&url, start.max(0.0), track.filter(|t| *t < 64))?;
     Ok(format!("http://127.0.0.1:{port}/a.ogg"))
 }
 
@@ -557,7 +558,11 @@ fn win_ctl(window: tauri::WebviewWindow, action: String) -> CmdResult<Value> {
                 let on = !window.is_fullscreen().unwrap_or(false);
                 window.set_fullscreen(on).map_err(e)?
             }
-            _ => {}
+            _ => {
+                if let Some(z) = action.strip_prefix("zoom:").and_then(|z| z.parse::<f64>().ok()) {
+                    window.set_zoom(z.clamp(0.6, 2.0)).map_err(e)?;
+                }
+            }
         }
         Ok(json!({ "maximized": window.is_maximized().unwrap_or(false), "fullscreen": window.is_fullscreen().unwrap_or(false) }))
     }
@@ -786,7 +791,7 @@ fn theme_tune(profile: State<'_, Profile>, id: String, tune: serde_json::Map<Str
     let mut clean = serde_json::Map::new();
     for (key, lo, hi) in [("vol", 0.0, 100.0), ("bright", 20.0, 160.0), ("blur", 0.0, 40.0)] {
         if let Some(v) = tune.get(key).and_then(|v| v.as_f64()) {
-            clean.insert(key.into(), serde_json::json!(v.clamp(lo, hi).round()));
+            clean.insert(key.into(), serde_json::json!((v.clamp(lo, hi) * 10.0).round() / 10.0));
         }
     }
     t.tune = clean;
@@ -869,6 +874,18 @@ async fn audio_track(node: State<'_, Arc<Node>>, file: FileMeta) -> CmdResult<bo
     Ok(node::has_audio_track(&data))
 }
 
+/// The sound tracks of a film (MKV/WebM): language, name, codec, which one plays by default. Empty for other formats.
+#[tauri::command]
+async fn media_tracks(node: State<'_, Arc<Node>>, file: FileMeta) -> CmdResult<Vec<Value>> {
+    let head = file.size.min(2 * 1024 * 1024);
+    let data = node.read_range(&file, 0, head).await?;
+    Ok(node::mkv_audio_tracks(&data)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (number, lang, name, codec, default))| json!({ "index": i, "number": number, "lang": lang, "name": name, "codec": codec, "default": default }))
+        .collect())
+}
+
 #[tauri::command]
 async fn install_vlc() -> bool {
     tauri::async_runtime::spawn_blocking(vlc::install).await.unwrap_or(false)
@@ -922,6 +939,16 @@ fn pin_message(node: State<'_, Arc<Node>>, chat: String, id: String, pinned: boo
 #[tauri::command]
 fn pins(node: State<'_, Arc<Node>>, chat: String) -> Vec<String> {
     node.pins(&chat)
+}
+
+#[tauri::command]
+fn react(node: State<'_, Arc<Node>>, chat: String, id: String, emoji: String) -> CmdResult<()> {
+    node.react_message(&chat, &id, &emoji)
+}
+
+#[tauri::command]
+fn reactions(node: State<'_, Arc<Node>>, chat: String) -> Vec<Value> {
+    node.reactions(&chat)
 }
 
 #[tauri::command]
@@ -1380,6 +1407,9 @@ pub fn run() {
             vlc_command,
             vlc_close,
             open_vlc_site,
+            react,
+            reactions,
+            media_tracks,
             audio_assist_start,
             audio_assist_stop,
             win_ctl,

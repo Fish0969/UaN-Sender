@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT '', avatar TEXT, pv INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY, peer TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS pins (chat TEXT NOT NULL, msg_id TEXT NOT NULL, by TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, msg_id));
+CREATE TABLE IF NOT EXISTS reactions (chat TEXT NOT NULL, msg_id TEXT NOT NULL, by TEXT NOT NULL, emoji TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (msg_id, by));
 CREATE TABLE IF NOT EXISTS reads (chat TEXT NOT NULL, who TEXT NOT NULL, msg_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, who));
 ";
 
@@ -352,6 +353,15 @@ pub enum Req {
         msg_id: String,
         pinned: bool,
     },
+    /// Someone reacted to a message with an emoji (an empty emoji takes their reaction back).
+    React {
+        #[serde(default)]
+        group: Option<String>,
+        #[serde(default)]
+        channel: Option<String>,
+        msg_id: String,
+        emoji: String,
+    },
     /// A member asks the watch party's host to add a film to the playlist.
     PartyQueue { party_id: String, file: FileMeta },
     /// A member asks the group's creator to add a channel.
@@ -504,6 +514,7 @@ pub fn guess_mime(path: &Path) -> &'static str {
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "ogg" => "audio/ogg",
+        "weba" => "audio/webm",
         "m4a" => "audio/mp4",
         "flac" => "audio/flac",
         "pdf" => "application/pdf",
@@ -969,7 +980,7 @@ impl Node {
 
     /// Things a friend sends that our other devices should get too (in case the friend doesn't know them yet).
     fn mirrorable(req: &Req) -> bool {
-        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Thumb { .. } | Req::ClearGroup { .. })
+        matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::React { .. } | Req::Thumb { .. } | Req::ClearGroup { .. })
     }
 
     /// Passes something to our other devices (directly, or through the mailbox while they are off).
@@ -1022,6 +1033,12 @@ impl Node {
             Req::Pin { msg_id, pinned, .. } => {
                 if !chat.is_empty() {
                     self.apply_pin(chat, &msg_id, &me, pinned);
+                }
+                Ok(ok)
+            }
+            Req::React { msg_id, emoji, .. } => {
+                if !chat.is_empty() {
+                    self.apply_react(chat, &msg_id, &me, &emoji);
                 }
                 Ok(ok)
             }
@@ -1593,7 +1610,7 @@ impl Node {
         match req {
             Req::Dev { req, .. } => Self::mailbox_ok(req),
             Req::Mirror { req, .. } => Self::mailbox_ok(req) || matches!(**req, Req::MyProfile { .. } | Req::ClearGroup { .. }),
-            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Devices { .. } | Req::ClearGroup { .. } | Req::ModDelete { .. }),
+            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::React { .. } | Req::Devices { .. } | Req::ClearGroup { .. } | Req::ModDelete { .. }),
         }
     }
 
@@ -2338,6 +2355,15 @@ impl Node {
                 if let Some(chat) = chat {
                     self.apply_edit(&chat, &msg_id, text.as_deref(), sealed.as_deref());
                 }
+                Ok(ok)
+            }
+            Req::React { group, channel, msg_id, emoji } => {
+                let chat = self.chat_of(peer, group.as_deref())?;
+                let chat = match (&group, &channel) {
+                    (Some(g), Some(c)) => chat_id(g, Some(c)),
+                    _ => chat,
+                };
+                self.apply_react(&chat, &msg_id, peer, &emoji);
                 Ok(ok)
             }
             Req::Pin { group, channel, msg_id, pinned } => {
@@ -3241,6 +3267,45 @@ impl Node {
         Ok(())
     }
 
+    // ----- Reactions: one emoji per person per message -----
+
+    fn apply_react(&self, chat: &str, id: &str, by: &str, emoji: &str) {
+        let emoji: String = emoji.trim().chars().take(8).collect();
+        {
+            let db = self.db.lock().unwrap();
+            let exists: bool = db.query_row("SELECT 1 FROM messages WHERE id = ?1 AND chat = ?2", [id, chat], |_| Ok(())).optional().ok().flatten().is_some();
+            if !exists {
+                return;
+            }
+            if emoji.is_empty() {
+                let _ = db.execute("DELETE FROM reactions WHERE msg_id = ?1 AND by = ?2", [id, by]);
+            } else {
+                let _ = db.execute("INSERT OR REPLACE INTO reactions (chat, msg_id, by, emoji, ts) VALUES (?1, ?2, ?3, ?4, ?5)", params![chat, id, by, emoji, now()]);
+            }
+        }
+        self.emit("reaction", json!({ "chat": chat, "id": id, "by": by, "emoji": emoji }));
+    }
+
+    /// Reacts to a message (or, with an empty emoji, takes your reaction back), for everyone in the chat.
+    pub fn react_message(self: &Arc<Self>, chat: &str, id: &str, emoji: &str) -> Result<(), String> {
+        let (group, targets) = self.chat_targets(chat)?;
+        let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
+        self.apply_react(chat, id, &self.me_s.clone(), emoji);
+        let req = Req::React { group, channel, msg_id: id.to_string(), emoji: emoji.trim().chars().take(8).collect() };
+        self.mirror(&self.me_s.clone(), chat, &req);
+        for t in targets {
+            self.deliver(&t, &req);
+        }
+        Ok(())
+    }
+
+    pub fn reactions(&self, chat: &str) -> Vec<Value> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("SELECT msg_id, by, emoji FROM reactions WHERE chat = ?1").unwrap();
+        let rows = stmt.query_map([chat], |r| Ok(json!({ "id": r.get::<_, String>(0)?, "by": r.get::<_, String>(1)?, "emoji": r.get::<_, String>(2)? }))).unwrap();
+        rows.filter_map(Result::ok).collect()
+    }
+
     pub fn pins(&self, chat: &str) -> Vec<String> {
         let db = self.db.lock().unwrap();
         let mut stmt = db.prepare("SELECT msg_id FROM pins WHERE chat = ?1 ORDER BY ts DESC").unwrap();
@@ -3533,6 +3598,7 @@ impl Node {
         {
             let db = self.db.lock().unwrap();
             let _ = db.execute("DELETE FROM messages WHERE id = ?1", [id]);
+            let _ = db.execute("DELETE FROM reactions WHERE msg_id = ?1", [id]);
             if let Some(f) = &file {
                 // Keep the preview while another message still shows the same file (sent to several chats).
                 let still: i64 = db
@@ -5303,6 +5369,103 @@ async fn serve_media_http(node: Arc<Node>, mut sock: tokio::net::TcpStream, secr
         }
         w.flush().await?;
     }
+}
+
+/// The sound tracks of an MKV/WebM film, read from its first MB: (number, language, name, codec, is default).
+pub fn mkv_audio_tracks(data: &[u8]) -> Vec<(u64, String, String, String, bool)> {
+    // An element id: 1 to 4 bytes, the marker bits stay in.
+    fn id_at(d: &[u8], p: usize) -> Option<(u32, usize)> {
+        let b = *d.get(p)?;
+        let len = b.leading_zeros() as usize + 1;
+        if len > 4 || p + len > d.len() {
+            return None;
+        }
+        Some((d[p..p + len].iter().fold(0u32, |a, &x| (a << 8) | x as u32), len))
+    }
+    // A size: 1 to 8 bytes, the marker bit comes off. None = unknown size.
+    fn size_at(d: &[u8], p: usize) -> Option<(Option<u64>, usize)> {
+        let b = *d.get(p)?;
+        let len = b.leading_zeros() as usize + 1;
+        if len > 8 || p + len > d.len() {
+            return None;
+        }
+        let mut v = (b as u64) & ((1u64 << (8 - len)) - 1);
+        let mut all_ones = v == (1u64 << (8 - len)) - 1;
+        for &x in &d[p + 1..p + len] {
+            v = (v << 8) | x as u64;
+            all_ones &= x == 0xff;
+        }
+        Some((if all_ones { None } else { Some(v) }, len))
+    }
+    fn uint(d: &[u8]) -> u64 {
+        d.iter().fold(0u64, |a, &x| (a << 8) | x as u64)
+    }
+    fn text(d: &[u8]) -> String {
+        String::from_utf8_lossy(d).trim_end_matches('\0').trim().to_string()
+    }
+    // Walks the children of one element: calls `f(id, body)` for each; stops at the end or at what doesn't fit.
+    fn children(d: &[u8], f: &mut dyn FnMut(u32, &[u8]) -> bool) {
+        let mut p = 0;
+        while p < d.len() {
+            let Some((id, il)) = id_at(d, p) else { return };
+            let Some((size, sl)) = size_at(d, p + il) else { return };
+            let start = p + il + sl;
+            let end = match size {
+                Some(s) => start.saturating_add(s as usize).min(d.len()),
+                None => d.len(),
+            };
+            if start > d.len() || !f(id, &d[start..end]) {
+                return;
+            }
+            p = end;
+        }
+    }
+    const SEGMENT: u32 = 0x18538067;
+    const TRACKS: u32 = 0x1654AE6B;
+    const CLUSTER: u32 = 0x1F43B675;
+    const ENTRY: u32 = 0xAE;
+    let mut out = Vec::new();
+    if !data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        return out;
+    }
+    children(data, &mut |id, body| {
+        if id == SEGMENT {
+            children(body, &mut |id, body| {
+                if id == CLUSTER {
+                    return false; // the tracks come before the first cluster
+                }
+                if id == TRACKS {
+                    children(body, &mut |id, body| {
+                        if id == ENTRY {
+                            let (mut number, mut kind, mut lang, mut name, mut codec, mut default) = (0u64, 0u64, String::new(), String::new(), String::new(), true);
+                            children(body, &mut |id, v| {
+                                match id {
+                                    0xD7 => number = uint(v),
+                                    0x83 => kind = uint(v),
+                                    0x86 => codec = text(v),
+                                    0x22B59C => { if lang.is_empty() { lang = text(v) } }
+                                    0x22B59D => lang = text(v),
+                                    0x536E => name = text(v),
+                                    0x88 => default = uint(v) != 0,
+                                    _ => {}
+                                }
+                                true
+                            });
+                            if kind == 2 {
+                                out.push((number, lang, name, codec, default));
+                            }
+                        }
+                        true
+                    });
+                    return false;
+                }
+                true
+            });
+            return false;
+        }
+        true
+    });
+    out
 }
 
 /// Whether a film's container lists a sound track, from its first and last few MB (MKV/WebM, MP4/MOV, AVI).

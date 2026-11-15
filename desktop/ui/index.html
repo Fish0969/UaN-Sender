@@ -133,6 +133,12 @@
           <button type="button" class="icon" id="replyCancel" title="Cancel"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         </div>
         <div id="mentionPop" class="mention-pop hidden"></div>
+        <div id="recBar" class="rec-bar hidden">
+          <span class="rec-dot"></span>
+          <span class="grow"><b id="recTime">0:00</b> Recording a voice message…</span>
+          <button type="button" class="small" id="recCancel">Cancel</button>
+          <button type="button" class="small accent" id="recSend">Send</button>
+        </div>
         <form id="composer" class="composer">
           <button type="button" class="icon" id="attachBtn" title="Send files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
@@ -141,6 +147,7 @@
             <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>
           </button>
           <input id="msgInput" placeholder="Message" autocomplete="off" maxlength="5000">
+          <button type="button" class="icon" id="micBtn" title="Record a voice message" aria-label="Record a voice message"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
           <button class="accent" id="sendBtn" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
         </form>
         <div id="drop" class="drop hidden">Drop to send</div>
@@ -381,6 +388,9 @@
             <div class="group">
               <div class="tiles ui-styles" id="sUiStyles"></div>
               <div class="note">How the panels, buttons and corners look. Your theme (colours and background) stays as it is, except in <b>Terminal</b>, which has its own green colours. <b>Default</b> is the usual look: pick it any time to go back.</div>
+              <div class="sub-title">Interface size</div>
+              <div class="zoom-row"><input type="range" id="sZoom" min="70" max="160" step="5" aria-label="Interface size"><output id="sZoomVal"></output><button type="button" class="small" id="sZoomReset">Reset</button></div>
+              <div class="note">Makes everything bigger or smaller (also Ctrl and + / − / 0).</div>
             </div>
           </section>
           <section class="s-page hidden" data-page="privacy">
@@ -432,6 +442,7 @@
                 <div class="about-btns">
                   <button type="button" id="sUpdCheck">Check for updates</button>
                   <button type="button" id="sUpdNow" class="accent hidden">Update now</button>
+                  <button type="button" id="sNotes" class="hidden">What’s new</button>
                   <button type="button" id="sGithub" title="Opens UaN's page on GitHub: downloads, release notes and the source">GitHub page</button>
                 </div>
               </div>
