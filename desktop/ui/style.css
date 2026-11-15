@@ -1250,12 +1250,13 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 
 
 /* ---- a sound in a message: volume ---- */
-.ap { flex-wrap: wrap; }
-.ap-vol-group { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
+.ap { flex-wrap: nowrap; }
+.ap-vol-group { display: flex; align-items: center; flex: none; }
 .ap-vol-btn { width: 26px; height: 26px; min-height: 0; padding: 0; border: 0; background: transparent; box-shadow: none; display: grid; place-items: center; color: var(--muted); }
 .ap-vol-btn:hover { color: var(--text); background: var(--hover); }
 .ap-vol-btn svg { width: 16px; height: 16px; }
-.ap-vol { -webkit-appearance: none; appearance: none; width: 64px; height: 18px; margin: 0; background: transparent; cursor: pointer; }
+.ap-vol { -webkit-appearance: none; appearance: none; width: 0; opacity: 0; height: 18px; margin: 0; background: transparent; cursor: pointer; transition: width .18s ease, opacity .15s ease, margin .18s ease; }
+.ap-vol-group:hover .ap-vol, .ap-vol-group:focus-within .ap-vol { width: 64px; opacity: 1; margin-left: 4px; }
 .ap-vol::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--p, 80%), color-mix(in srgb, var(--text) 22%, transparent) var(--p, 80%)); }
 .ap-vol::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 10px; height: 10px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--accent); }
 
@@ -1275,7 +1276,7 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .zoom-row output { min-width: 42px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .upd-notes { align-self: flex-start; height: auto; margin-top: 2px; font-size: 11.5px; }
 
-.ap-bar { min-width: 110px; }
+.ap-bar { min-width: 60px; }
 
 /* ---- the history of the versions ---- */
 .history { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 4px; }
@@ -1288,3 +1289,21 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .history .hnow { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
 .history ul { margin: 0; padding: 0 14px 10px 36px; color: var(--text); }
 .history li { margin: 3px 0; color: var(--muted); }
+
+/* ---- profiles ---- */
+.bio-label textarea { width: 100%; resize: vertical; min-height: 64px; padding: 8px 10px; font: inherit; color: var(--text); background: var(--input, var(--card)); border: 1px solid var(--border); border-radius: var(--r-ctl, 9px); }
+.profile-dlg { width: min(400px, 92vw); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
+.pf-top { display: flex; align-items: flex-start; gap: 14px; }
+.pf-top .avatar { width: 72px; height: 72px; font-size: 30px; flex: none; }
+.pf-name { font-size: 20px; font-weight: 700; word-break: break-word; }
+.pf-status { color: var(--muted); margin-top: 2px; }
+.pf-online { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.pf-sec { margin: 16px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.pf-bio { white-space: pre-wrap; word-break: break-word; padding: 10px 12px; border-radius: var(--r-ctl, 9px); background: var(--card); border: 1px solid var(--border); min-height: 20px; }
+.pf-bio.empty { color: var(--muted); font-style: italic; }
+.pf-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin-top: 14px; font-size: 13px; }
+.pf-facts dt, .pf-facts .k { color: var(--muted); }
+.pf-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+.avatar[data-uid] { cursor: pointer; }
+.sender[data-uid] { cursor: pointer; }
+.sender[data-uid]:hover { text-decoration: underline; }

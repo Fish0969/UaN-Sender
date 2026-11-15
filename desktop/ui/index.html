@@ -360,6 +360,8 @@
                 <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming, Watching a film, Away"></label>
               </div>
             </div>
+            <label class="bio-label">About you<textarea id="sBio" maxlength="300" rows="3" placeholder="Say something about yourself. Your friends see this on your profile."></textarea></label>
+            <div class="note" id="sBioCount"></div>
             <div class="note avatar-links"><button type="button" class="link" id="sAvatarPick">Upload your own…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
             <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
           </section>
@@ -552,6 +554,17 @@
         <button type="button" id="pwCancel">Cancel</button>
         <button class="accent" id="pwOk">OK</button>
       </div>
+    </form>
+  </dialog>
+  <dialog id="profileDlg" class="profile-dlg">
+    <form method="dialog">
+      <div class="pf-top"><div id="pfAvatar"></div>
+        <div class="grow"><div class="pf-name" id="pfName"></div><div class="pf-status" id="pfStatus"></div><div class="pf-online" id="pfOnline"></div></div>
+        <button class="icon" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="pf-sec">About</div>
+      <div class="pf-bio" id="pfBio"></div>
+      <div class="pf-facts" id="pfFacts"></div>
+      <div class="pf-actions" id="pfActions"></div>
     </form>
   </dialog>
   <dialog id="pinsDlg" class="wide-dlg">

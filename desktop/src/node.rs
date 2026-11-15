@@ -308,6 +308,8 @@ pub enum Req {
         status: String,
         #[serde(default)]
         avatar: Option<String>,
+        #[serde(default)]
+        bio: Option<String>,
         pv: i64,
     },
     /// A phone asks the PC for a copy of the account (with proof that it knows the pairing code).
@@ -781,6 +783,13 @@ impl Node {
         let _ = db.execute("ALTER TABLE messages ADD COLUMN sealed TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN reply TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN edited INTEGER", []);
+        let _ = db.execute("ALTER TABLE profiles ADD COLUMN bio TEXT", []);
+        let _ = db.execute("ALTER TABLE profiles ADD COLUMN joined INTEGER", []);
+        // When this account began: the earliest thing we know of (older versions never wrote it down).
+        let _ = db.execute(
+            "INSERT OR IGNORE INTO kv (k, v) SELECT 'joined', CAST(COALESCE((SELECT MIN(t) FROM (SELECT MIN(ts) AS t FROM messages UNION ALL SELECT MIN(created_at) FROM contacts)), strftime('%s','now') * 1000) AS TEXT)",
+            [],
+        );
         let _ = db.execute("ALTER TABLE groups ADD COLUMN admins TEXT", []);
         let _ = db.execute("ALTER TABLE groups ADD COLUMN avatar TEXT", []);
         // Locked channels ask for their password every time: no channel key survives a restart.
@@ -1093,10 +1102,13 @@ impl Node {
                 self.clear_local(&chat_id(&group_id, channel.as_deref()), before);
                 Ok(ok)
             }
-            Req::MyProfile { name, status, avatar, pv } => {
+            Req::MyProfile { name, status, avatar, bio, pv } => {
                 if pv > self.my_pv() && !name.trim().is_empty() {
                     self.set_kv("name", &name.chars().take(32).collect::<String>());
                     self.set_kv("status", &status.chars().take(60).collect::<String>());
+                    if let Some(b) = bio {
+                        self.set_kv("bio", &b.chars().take(300).collect::<String>());
+                    }
                     match avatar.filter(|a| a.starts_with("data:image/") && a.len() <= 200_000) {
                         Some(a) => self.set_kv("avatar", &a),
                         None => {
@@ -1306,7 +1318,7 @@ impl Node {
     }
 
     pub fn my_profile(&self) -> Value {
-        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv() })
+        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
     }
 
     fn my_pv(&self) -> i64 {
@@ -1318,11 +1330,11 @@ impl Node {
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
-        self.set_profile(name, None, None)
+        self.set_profile(name, None, None, None)
     }
 
     /// Name, status line ("Gaming 🎮") and profile picture (a small data: URL made by the window).
-    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>) -> Result<(), String> {
+    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 32 {
             return Err("Pick a name of 1–32 characters.".into());
@@ -1331,6 +1343,10 @@ impl Node {
         if let Some(st) = status {
             let st: String = st.trim().chars().take(60).collect();
             self.set_kv("status", &st);
+        }
+        if let Some(b) = bio {
+            let b: String = b.trim().chars().take(300).collect();
+            self.set_kv("bio", &b);
         }
         if let Some(a) = avatar {
             if a.is_empty() {
@@ -1343,7 +1359,7 @@ impl Node {
             }
         }
         self.set_kv("pv", &now().to_string());
-        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), pv: self.my_pv() });
+        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), bio: self.kv("bio"), pv: self.my_pv() });
         // Let everyone know.
         let req = self.ping_req();
         for p in self.known_peers() {
@@ -1381,10 +1397,12 @@ impl Node {
         tauri::async_runtime::spawn(async move {
             if let Ok(v) = me.request(&peer, &Req::Profile).await {
                 let avatar = v["avatar"].as_str().filter(|a| a.starts_with("data:image/") && a.len() <= 200_000);
+                let bio: Option<String> = v["bio"].as_str().map(|b| b.chars().take(300).collect());
+                let joined = v["joined"].as_i64();
                 let _ = me.db.lock().unwrap().execute(
-                    "INSERT INTO profiles (id, status, avatar, pv) VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, avatar = excluded.avatar, pv = excluded.pv",
-                    params![peer, v["status"].as_str().unwrap_or(""), avatar, v["pv"].as_i64().unwrap_or(pv)],
+                    "INSERT INTO profiles (id, status, avatar, pv, bio, joined) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, avatar = excluded.avatar, pv = excluded.pv, bio = COALESCE(excluded.bio, bio), joined = COALESCE(excluded.joined, joined)",
+                    params![peer, v["status"].as_str().unwrap_or(""), avatar, v["pv"].as_i64().unwrap_or(pv), bio, joined],
                 );
                 if let Some(n) = v["name"].as_str() {
                     me.update_name(&peer, n);
@@ -2189,7 +2207,7 @@ impl Node {
                 }
                 Req::Profile => {
                     let p = self.my_profile();
-                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"] }))
+                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "joined": p["joined"] }))
                 }
                 _ => Err("Not allowed.".into()),
             };
@@ -2217,7 +2235,7 @@ impl Node {
                     return Err("Not allowed.".into());
                 }
                 let p = self.my_profile();
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"] }))
+                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "joined": p["joined"] }))
             }
             Req::FriendRequest { name } => {
                 match self.contact_status(peer).as_deref() {
@@ -2927,16 +2945,17 @@ impl Node {
         let my_mode = self.my_mode(); // (reads the database, so before it is locked below)
         let db = self.db.lock().unwrap();
         let mut stmt = db
-            .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
+            .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status, p.bio, p.joined, c.created_at FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
             .unwrap();
-        let rows: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<i64>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
         let (mut friends, mut incoming, mut outgoing) = (vec![], vec![], vec![]);
-        for (id, name, status, last, avatar, mood) in rows {
-            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default() });
+        for (id, name, status, last, avatar, mood, bio, joined, since) in rows {
+            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "since": since });
             match status.as_str() {
                 "friend" => friends.push(item),
                 "incoming" => incoming.push(item),
@@ -2968,13 +2987,13 @@ impl Node {
                 })
                 .collect();
             let mut ms = db
-                .prepare("SELECT m.member_id, m.name, p.avatar, p.status FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
+                .prepare("SELECT m.member_id, m.name, p.avatar, p.status, p.bio, p.joined FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
                 .unwrap();
             let members: Vec<Value> = ms
-                .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?)))
+                .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<i64>>(5)?)))
                 .unwrap()
                 .filter_map(Result::ok)
-                .map(|(mid, mname, avatar, mood)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default() }))
+                .map(|(mid, mname, avatar, mood, bio, joined)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined }))
                 .collect();
             groups.push(json!({ "id": id, "name": name, "owner": owner, "admins": admins, "avatar": gavatar, "members": members, "lastAt": last, "channels": channels }));
         }

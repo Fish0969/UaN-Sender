@@ -1,5 +1,11 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.15', items: [
+    'Real profiles: write a short About text in Settings → Profile; a profile shows it, and since when the person is on UaN.',
+    'Click a person’s picture or name (in a group chat or a member list) to open their profile.',
+    '@mentions find a name anywhere in it: “ruben” finds TsaRuben, and the best match is on top.',
+    'The volume of a sound sits next to the play bar instead of on a row of its own; it opens when you point at the speaker.',
+  ] },
   { v: '1.9.14', items: [
     'Voice messages are gone again.',
     'Interface size is sharp at every size (the page itself is scaled, so the text is drawn again at the new size).',

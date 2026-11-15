@@ -89,11 +89,12 @@ function hue(s) {
   for (const ch of s) h = (h * 31 + ch.codePointAt(0)) % 360;
   return h;
 }
-function avatar(name, { online = false, group = false, seed, src, mode } = {}) {
+function avatar(name, { online = false, group = false, seed, src, mode, uid } = {}) {
   const a = el('div', { class: 'avatar' + (online ? ' online' : '') + (group ? ' group' : '') + (src ? ' has-img' : '') + (mode && mode !== 'online' ? ` mode-${mode}` : '') });
   if (src) a.append(el('img', { src, alt: '' }));
   else a.textContent = (name || '?')[0];
   a.style.setProperty('--h', hue(seed || name || '?'));
+  if (uid) a.dataset.uid = uid;
   return a;
 }
 function setAvatar(node, name, opts = {}) {
@@ -593,7 +594,7 @@ function renderChannels() {
     $('sideGroupText').textContent = g.name;
     $('chanList').replaceChildren(...channelsOf(g).map((ch) => channelItem(g, ch)));
     $('memberList').replaceChildren(...g.members.map((m) => el('li', {},
-      avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar }),
+      avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar, uid: m.id }),
       el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name }))));
   }
   // Legacy layout: tabs above the messages.
@@ -1010,7 +1011,7 @@ function messageNode(m, run = true, block = null) {
   // Seen heads always sit right before the time; the actions are on the outer side.
   const meta = el('div', { class: 'meta' + (edited || pin ? ' keep-fixed' : '') + (seen ? ' keep-seen' : '') }, m.mine ? [del, ...acts, pin, edited, seen, time] : [seen, time, edited, pin, ...acts, del]);
   const theirsInGroup = group && !m.mine;
-  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
+  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
     + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
@@ -1019,7 +1020,7 @@ function messageNode(m, run = true, block = null) {
   else {
     const who = senderOf(m);
     node = el('div', attrs,
-      run ? avatar(who.name, { seed: m.sender, src: who.src }) : el('span', { class: 'av-gap' }),
+      run ? avatar(who.name, { seed: m.sender, src: who.src, uid: m.sender }) : el('span', { class: 'av-gap' }),
       el('div', { class: 'msg-body' }, body));
   }
   attachMenu(node, m, items);
@@ -1343,8 +1344,74 @@ $('pinsBtn').addEventListener('click', async () => {
   $('pinsDlg').showModal();
 });
 
+// ---------- Profile card: click a person's picture or name ----------
+const joinFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+function personInfo(id) {
+  if (id === S.me.id) {
+    const p = S.me.profile || {};
+    return { id, name: S.me.name, status: p.status || '', avatar: p.avatar, bio: p.bio || '', joined: p.joined, me: true };
+  }
+  const f = friendById(id);
+  let m = null;
+  for (const g of S.groups) { m = g.members.find((x) => x.id === id); if (m) break; }
+  const base = f || m;
+  if (!base) return null;
+  const alt = m || {};
+  return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, since: f?.since, online: base.online, friend: !!f };
+}
+function openProfile(id) {
+  const p = personInfo(id);
+  if (!p) return;
+  $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
+  $('pfName').textContent = p.me ? `${p.name} (you)` : p.name;
+  $('pfStatus').textContent = p.status || '';
+  const link = S.links?.[id];
+  $('pfOnline').textContent = p.me ? '' : p.online ? (link ? (link.direct ? 'Online · direct connection' : 'Online · via relay') : 'Online') : 'Offline';
+  $('pfBio').textContent = p.bio || (p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : 'Nothing here yet.');
+  $('pfBio').classList.toggle('empty', !p.bio);
+  const facts = [];
+  if (p.joined) facts.push(['On UaN since', joinFmt.format(p.joined)]);
+  if (p.since) facts.push(['Friends since', joinFmt.format(p.since)]);
+  $('pfFacts').replaceChildren(...facts.flatMap(([k, v]) => [el('span', { class: 'k', text: k }), el('span', { text: v })]));
+  $('pfActions').replaceChildren(
+    p.me ? el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })
+      : p.friend ? el('button', { type: 'button', class: 'small accent', text: 'Message', onclick: () => { $('profileDlg').close(); openChat(p.id); } }) : null);
+  $('profileDlg').showModal();
+}
+document.addEventListener('click', (e) => {
+  const t = e.target.closest?.('[data-uid]');
+  if (!t || !t.dataset.uid) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openProfile(t.dataset.uid);
+}, true);
+
 // ---------- @mentions: suggestions while typing in a group ----------
 let mentionSel = 0;
+// Lower case, accents off: "Árvíz" and "arviz" are the same.
+const fold = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+// How well a name fits what was typed: 0 = not at all. The better the fit, the higher.
+function matchScore(name, q) {
+  const n = fold(name);
+  if (n === q) return 1000;
+  if (n.startsWith(q)) return 900 - n.length;
+  // the start of a word or of a capital letter inside the name: "TsaRuben" has "tsa" and "ruben"
+  const starts = new Set([0]);
+  for (let i = 1; i < name.length; i++) {
+    const c = name[i], p = name[i - 1];
+    if (/[^\p{L}\p{N}]/u.test(p) || (c !== c.toLowerCase() && p === p.toLowerCase())) starts.add(i);
+  }
+  let best = 0;
+  const at = n.indexOf(q);
+  if (at >= 0) best = starts.has(at) ? 800 - at : 600 - at;
+  if (best) return best - n.length / 100;
+  // letters in order, with gaps ("tsrb")
+  let qi = 0, gaps = 0, last = -1;
+  for (let i = 0; i < n.length && qi < q.length; i++) {
+    if (n[i] === q[qi]) { if (last >= 0 && i - last > 1) gaps++; last = i; qi++; }
+  }
+  return qi === q.length ? Math.max(1, 300 - gaps * 20 - n.length) : 0;
+}
 function mentionCandidates() {
   const input = $('msgInput');
   const g = groupOf(S.active);
@@ -1352,8 +1419,13 @@ function mentionCandidates() {
   const upto = input.value.slice(0, input.selectionStart);
   const mt = upto.match(/(^|\s)@([\p{L}\p{N}_.-]*)$/u);
   if (!mt) return null;
-  const q = mt[2].toLowerCase();
-  const list = g.members.filter((x) => x.id !== S.me.id && x.name.toLowerCase().startsWith(q)).slice(0, 8);
+  const q = fold(mt[2]);
+  const list = g.members.filter((x) => x.id !== S.me.id)
+    .map((x) => ({ x, s: q ? matchScore(x.name, q) : 1 }))
+    .filter((r) => r.s > 0)
+    .sort((a, b) => b.s - a.s || a.x.name.localeCompare(b.x.name))
+    .slice(0, 8)
+    .map((r) => r.x);
   return list.length ? { list, start: upto.length - mt[2].length - 1 } : null;
 }
 function renderMentions() {
@@ -2860,7 +2932,7 @@ function openGroupInfo(id = groupDlgId) {
     const isAdmin = admins.includes(m.id);
     const canRemove = manager && m.id !== S.me.id && m.id !== g.owner && (owner || !isAdmin);
     return el('li', {},
-      avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar }),
+      avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar, uid: m.id }),
       el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name + (m.status ? ` · ${m.status}` : '') }),
       m.id === g.owner ? el('span', { class: 'tag', text: 'owner' }) : isAdmin ? el('span', { class: 'tag', text: 'co-owner' }) : null,
       owner && m.id !== S.me.id ? el('button', { type: 'button', class: 'small', text: isAdmin ? 'Remove co-owner' : 'Make co-owner',
@@ -3037,6 +3109,8 @@ $('settingsBtn').addEventListener('click', async () => {
   pendingAvatar = null;
   $('sName').value = S.me.name;
   $('sStatus').value = S.me.profile?.status || '';
+  $('sBio').value = S.me.profile?.bio || '';
+  $('sBioCount').textContent = `${$('sBio').value.length} / 300${S.me.profile?.joined ? ' · On UaN since ' + joinFmt.format(S.me.profile.joined) : ''}`;
   renderAvatarPick();
   $('sTheme').value = theme.mode;
   renderSwatches();
@@ -3119,13 +3193,15 @@ $('sRestore').addEventListener('click', async () => {
     await invoke('import_backup', { password });
   } catch (e) { toast(e); }
 });
+$('sBio').addEventListener('input', () => { $('sBioCount').textContent = `${$('sBio').value.length} / 300${S.me.profile?.joined ? ' · On UaN since ' + joinFmt.format(S.me.profile.joined) : ''}`; });
 $('sGithub').addEventListener('click', () => invoke('open_github').catch(() => {}));
 $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
     const status = $('sStatus').value.trim();
-    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || pendingAvatar !== null) {
-      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar });
+    const bio = $('sBio').value.trim();
+    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null) {
+      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio });
     }
     if ($('sMailbox').value.trim() !== (S.me.mailbox || '')) {
       await invoke('set_mailbox', { url: $('sMailbox').value });
