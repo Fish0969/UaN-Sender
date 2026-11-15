@@ -156,7 +156,7 @@ document.addEventListener('contextmenu', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F11') { e.preventDefault(); winCtl('fullscreen'); return; }
-  if (e.ctrlKey && e.key.toLowerCase() === 'f' && S.me?.name) { e.preventDefault(); openSearch(); return; }
+  if (e.ctrlKey && e.key.toLowerCase() === 'f' && S.me?.name) { e.preventDefault(); openSearch(S.active || ''); return; }
   if (e.key === 'F5' || (e.ctrlKey && ['r', 'p', 'g', 'u'].includes(e.key.toLowerCase()))) e.preventDefault();
   if ($('viewer').classList.contains('hidden')) return;
   if (e.key === 'Escape') closeViewer();
@@ -495,7 +495,8 @@ function renderLists() {
   const pins = pinned();
   const pinFirst = (kind) => (a, b) => (pins[kind].includes(b.id) - pins[kind].includes(a.id)) || (pins[kind].indexOf(a.id) - pins[kind].indexOf(b.id)) || byRecent(a, b);
   const pinMark = (kind, id) => (pins[kind].includes(id) ? el('span', { class: 'pin-dot', title: 'Pinned to the top' }, svg(ICON.pin)) : null);
-  $('groupList').replaceChildren(...[...S.groups].sort(pinFirst('g')).map((g) => {
+  const found = (arr) => (findQ ? arr.filter((x) => matchScore(x.name, findQ) > 0) : arr);
+  $('groupList').replaceChildren(...found([...S.groups]).sort(pinFirst('g')).map((g) => {
     const n = unreadIn(g.id);
     const online = g.members.filter((m) => m.online || m.id === S.me.id).length;
     return el('li', { class: 'friend' + (groupIdOf(S.active) === g.id ? ' active' : '') + (n ? ' has-unread' : ''), onclick: () => openGroup(g.id), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
@@ -507,7 +508,7 @@ function renderLists() {
   }));
   $('noGroups').classList.toggle('hidden', S.groups.length > 0);
 
-  $('friendList').replaceChildren(...[...S.friends].sort(pinFirst('f')).map((f) => el('li', {
+  $('friendList').replaceChildren(...found([...S.friends]).sort(pinFirst('f')).map((f) => el('li', {
     class: 'friend' + (S.active === f.id ? ' active' : '') + (S.unread.get(f.id) ? ' has-unread' : ''), onclick: () => openChat(f.id),
     oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, friendMenu(f)); },
     title: f.status || '',
@@ -889,10 +890,12 @@ function msgMenu(m, items) {
     { label: many ? 'Delete these…' : 'Delete…', danger: true, run: () => deleteMessage(many ? items : m) },
   ];
 }
+let ctxTarget = null; // the message whose menu is open (Shift+Delete deletes it right away)
 function attachMenu(node, m, items) {
   const open = (x, y, target) => {
     const print = target.closest?.('.print');
     const pm = print && items.find((i) => i.id === print.dataset.id);
+    ctxTarget = pm ? { m: pm, items: [pm] } : { m, items };
     showMenu(x, y, pm ? printMenu(pm) : msgMenu(m, items));
   };
   node.addEventListener('contextmenu', (e) => {
@@ -932,6 +935,7 @@ function formatText(text) {
 }
 function mentionsMe(text) {
   if (!text || !S.me?.name) return false;
+  if (/(^|[^\p{L}\p{N}])@everyone(?![\p{L}\p{N}])/iu.test(text)) return true;
   const me = '@' + S.me.name.toLowerCase();
   const t = text.toLowerCase();
   let i = t.indexOf(me);
@@ -1347,10 +1351,34 @@ $('pinsBtn').addEventListener('click', async () => {
 
 // ---------- Profile card: click a person's picture or name ----------
 const joinFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+// ---- profile backgrounds: ready-made ones, a colour, or your own picture
+const BANNERS = [
+  { id: 'aurora', name: 'Aurora', css: 'linear-gradient(120deg,#0f766e,#2563eb 50%,#7c3aed)' },
+  { id: 'sunset', name: 'Sunset', css: 'linear-gradient(120deg,#f97316,#ec4899 55%,#6d28d9)' },
+  { id: 'ocean', name: 'Ocean', css: 'linear-gradient(160deg,#38bdf8,#1e3a8a)' },
+  { id: 'forest', name: 'Forest', css: 'linear-gradient(135deg,#22c55e,#064e3b)' },
+  { id: 'candy', name: 'Candy', css: 'linear-gradient(120deg,#f9a8d4,#a5b4fc 55%,#99f6e4)' },
+  { id: 'ember', name: 'Ember', css: 'radial-gradient(circle at 20% 20%,#fde047,#f97316 40%,#7f1d1d)' },
+  { id: 'midnight', name: 'Midnight', css: 'radial-gradient(circle at 80% 10%,#6366f1,#0f172a 60%)' },
+  { id: 'mono', name: 'Mono', css: 'linear-gradient(135deg,#64748b,#0f172a)' },
+  { id: 'rainbow', name: 'Rainbow', css: 'linear-gradient(90deg,#ef4444,#f59e0b,#84cc16,#06b6d4,#8b5cf6)' },
+  { id: 'stripes', name: 'Stripes', css: 'repeating-linear-gradient(45deg,#7c3aed 0 14px,#6d28d9 14px 28px)' },
+  { id: 'dots', name: 'Dots', css: 'radial-gradient(rgba(255,255,255,.45) 2px,transparent 2px) 0 0/16px 16px,linear-gradient(135deg,#0ea5e9,#14b8a6)' },
+  { id: 'grid', name: 'Grid', css: 'linear-gradient(rgba(255,255,255,.14) 1px,transparent 1px) 0 0/20px 20px,linear-gradient(90deg,rgba(255,255,255,.14) 1px,transparent 1px) 0 0/20px 20px,linear-gradient(135deg,#1e293b,#475569)' },
+];
+function bannerStyle(spec, seed) {
+  if (spec && spec.startsWith('data:image/')) return 'url("' + spec + '") center / cover';
+  if (spec && spec.startsWith('g:')) { const b = BANNERS.find((x) => 'g:' + x.id === spec); if (b) return b.css; }
+  if (spec && /^c:#[0-9a-fA-F]{6}$/.test(spec)) { const c = spec.slice(2); return 'linear-gradient(135deg,' + c + ',color-mix(in srgb,' + c + ' 55%,#000))'; }
+  const h = hue(seed || '?');
+  return 'linear-gradient(135deg,hsl(' + h + ' 50% 40%),hsl(' + ((h + 50) % 360) + ' 50% 24%))';
+}
+
+// ---- profile card: click a person's picture or name
 function personInfo(id) {
   if (id === S.me.id) {
     const p = S.me.profile || {};
-    return { id, name: S.me.name, status: p.status || '', avatar: p.avatar, bio: p.bio || '', joined: p.joined, me: true };
+    return { id, name: S.me.name, status: p.status || '', avatar: p.avatar, bio: p.bio || '', joined: p.joined, banner: p.banner || '', me: true };
   }
   const f = friendById(id);
   let m = null;
@@ -1358,24 +1386,26 @@ function personInfo(id) {
   const base = f || m;
   if (!base) return null;
   const alt = m || {};
-  return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, since: f?.since, online: base.online, friend: !!f };
+  return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, banner: base.banner || alt.banner || '', since: f?.since, online: base.online, friend: !!f };
 }
 function openProfile(id) {
   const p = personInfo(id);
   if (!p) return;
+  $('pfBanner').style.background = bannerStyle(p.banner, p.id);
   $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
-  $('pfName').textContent = p.me ? `${p.name} (you)` : p.name;
+  $('pfName').textContent = p.me ? p.name + ' (you)' : p.name;
   $('pfStatus').textContent = p.status || '';
   const link = S.links?.[id];
   $('pfOnline').textContent = p.me ? 'This is how others see your profile' : p.online ? (link ? (link.direct ? 'Online · direct connection' : 'Online · via relay') : 'Online') : 'Offline';
-  $('pfBio').textContent = p.bio || (p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : 'Nothing here yet.');
+  $('pfAboutBox').classList.toggle('hidden', !p.bio && !p.me);
+  $('pfBio').textContent = p.bio || 'You have not written anything about yourself yet (Settings → Profile).';
   $('pfBio').classList.toggle('empty', !p.bio);
   const facts = [];
-  if (p.since) facts.push(['Friends since', joinFmt.format(p.since)]);
+  if (p.friend && p.since) facts.push(['Friends since', joinFmt.format(p.since)]);
+  if (p.joined) facts.push(['Join date', joinFmt.format(p.joined)]);
   $('pfFacts').replaceChildren(...facts.flatMap(([k, v]) => [el('span', { class: 'k', text: k }), el('span', { text: v })]));
   $('pfActions').replaceChildren(
-    p.me ? el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })
-      : p.friend ? el('button', { type: 'button', class: 'small accent', text: 'Message', onclick: () => { $('profileDlg').close(); openChat(p.id); } }) : null);
+    ...(p.me ? [el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })] : []));
   $('profileDlg').showModal();
 }
 document.addEventListener('click', (e) => {
@@ -1420,8 +1450,9 @@ function mentionCandidates() {
   const mt = upto.match(/(^|\s)@([\p{L}\p{N}_.-]*)$/u);
   if (!mt) return null;
   const q = fold(mt[2]);
-  const list = g.members.filter((x) => x.id !== S.me.id)
-    .map((x) => ({ x, s: q ? matchScore(x.name, q) : 1 }))
+  const pool = [{ id: '*everyone', name: 'everyone', everyone: true }, ...g.members.filter((x) => x.id !== S.me.id)];
+  const list = pool
+    .map((x) => ({ x, s: q ? matchScore(x.name, q) : (x.everyone ? 2 : 1) }))
     .filter((r) => r.s > 0)
     .sort((a, b) => b.s - a.s || a.x.name.localeCompare(b.x.name))
     .slice(0, 8)
@@ -1434,7 +1465,9 @@ function renderMentions() {
   if (!c) return;
   mentionSel = Math.min(mentionSel, c.list.length - 1);
   $('mentionPop').replaceChildren(...c.list.map((x, i) => el('button', { type: 'button', class: i === mentionSel ? 'on' : '', onmousedown: (e) => { e.preventDefault(); insertMention(x.name); } },
-    avatar(x.name, { seed: x.id, src: x.avatar }), el('span', { text: x.name }))));
+    x.everyone ? avatar('@', { group: true, seed: 'everyone' }) : avatar(x.name, { seed: x.id, src: x.avatar }),
+    el('span', { text: x.name }),
+    x.everyone ? el('span', { class: 'mention-all-note', text: 'notifies the whole group' }) : null)));
 }
 function insertMention(name) {
   const c = mentionCandidates();
@@ -1562,10 +1595,19 @@ $('msgInput').addEventListener('input', () => {
 });
 
 // Delete a message: just for you, or (your own) for everyone in the chat.
-function deleteMessage(arg) {
+function deleteMessage(arg, now = false) {
   const items = Array.isArray(arg) ? arg : [arg];
   // The group's owner and co-owners may delete anyone's message for everyone.
   const mine = items.every((x) => x.mine) || isManager(groupOf(items[0].chat));
+  if (now && mine) {
+    // Shift+Delete: no questions asked, it goes for everyone.
+    (async () => {
+      for (const x of items) {
+        try { await invoke('delete_message', { id: x.id, everyone: true }); } catch (e) { toast(e); break; }
+      }
+    })();
+    return;
+  }
   const files = items.some((x) => x.file);
   const d = $('delDlg');
   $('delAll').classList.toggle('hidden', !mine);
@@ -1586,6 +1628,24 @@ function deleteMessage(arg) {
   }, { once: true });
   d.showModal();
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Delete' || !e.shiftKey || e.target.closest?.('input, textarea, select')) return;
+  let target = null;
+  if (!$('ctxMenu').classList.contains('hidden') && ctxTarget) target = ctxTarget;
+  else {
+    const node = [...document.querySelectorAll('.msg:hover')].pop();
+    if (node) {
+      const ids = (node.dataset.ids || node.dataset.id || '').split(' ');
+      const items = (S.msgs.get(S.active) || []).filter((x) => ids.includes(x.id));
+      if (items.length) target = { m: items[0], items };
+    }
+  }
+  if (!target) return;
+  e.preventDefault();
+  hideMenu();
+  deleteMessage(target.items.length > 1 ? target.items : target.m, true);
+});
 
 function removeMessage(id, chat) {
   const list = S.msgs.get(chat);
@@ -2800,7 +2860,7 @@ function showMenu(x, y, items) {
   m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
   m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
 }
-function hideMenu() { $('ctxMenu').classList.add('hidden'); }
+function hideMenu() { $('ctxMenu').classList.add('hidden'); ctxTarget = null; }
 document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxMenu')) hideMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMenu(); });
 window.addEventListener('blur', hideMenu);
@@ -3134,6 +3194,8 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sZoomVal').textContent = Math.round(uiZoom * 100) + '%';
   renderIconTiles();
   renderAvatarTiles();
+  pendingBanner = null;
+  renderBannerTiles();
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
@@ -3208,8 +3270,8 @@ $('settingsForm').addEventListener('submit', async (e) => {
   try {
     const status = $('sStatus').value.trim();
     const bio = $('sBio').value.trim();
-    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null) {
-      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio });
+    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null || pendingBanner !== null) {
+      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio, banner: pendingBanner });
     }
     if ($('sMailbox').value.trim() !== (S.me.mailbox || '')) {
       await invoke('set_mailbox', { url: $('sMailbox').value });
@@ -3231,7 +3293,7 @@ function chatLabel(chat) {
   return chatInfo(chat)?.name || (isGroup(chat) ? 'Old group' : 'Former friend');
 }
 
-function openSearch() {
+function openSearch(scope = S.active || '') {
   const people = new Map();
   for (const f of S.friends) people.set(f.id, f.name);
   for (const g of S.groups) for (const m of g.members) if (m.id !== S.me.id) people.set(m.id, m.name);
@@ -3245,11 +3307,17 @@ function openSearch() {
     ...S.groups.map((g) => el('option', { value: `g:${g.id}`, text: `In ${g.name}` })),
     ...S.friends.map((f) => el('option', { value: f.id, text: `With ${f.name}` })),
   );
-  $('sChat').value = S.active || '';
-  $('searchDlg').showModal();
+  $('sChat').value = scope;
+  updateSearchTitle();
+  $('searchPanel').classList.remove('hidden');
   $('sq').focus();
   $('sq').select();
   runSearch();
+}
+function closeSearch() { $('searchPanel').classList.add('hidden'); }
+function updateSearchTitle() {
+  const c = $('sChat').value;
+  $('spTitle').textContent = c ? 'Search in ' + chatLabel(c) : 'Search everywhere';
 }
 
 let searchTimer;
@@ -3277,24 +3345,39 @@ async function runSearch() {
   const results = await invoke('search', { query: q, kind: $('sKind').value, from: $('sFrom').value, chat: $('sChat').value, since });
   $('sCount').textContent = results.length >= 300 ? 'Showing the newest 300 matches' : `${results.length} match${results.length === 1 ? '' : 'es'}`;
   $('sResults').replaceChildren(...results.map((m) => {
-    const ext = m.file ? (m.file.name.includes('.') ? m.file.name.split('.').pop() : 'file').slice(0, 4) : 'msg';
+    const ext = m.file ? (m.file.name.includes('.') ? m.file.name.split('.').pop() : 'file').slice(0, 4) : '';
     const main = m.file
-      ? el('div', { class: 'result-text' }, highlight(m.file.name, q), el('span', { class: 'sub', text: `  ·  ${fmtBytes(m.file.size)}` }))
+      ? el('div', { class: 'result-text' }, highlight(m.file.name, q), el('span', { class: 'sub', text: '  ·  ' + fmtBytes(m.file.size) }))
       : highlight(m.text || '', q);
+    const who = m.mine ? { name: S.me.name, src: S.me.profile?.avatar } : senderOf(m);
     return el('div', {
       class: 'result',
-      onclick: () => { $('searchDlg').close(); openChat(m.chat, m.id); },
+      onclick: () => { if (document.documentElement.classList.contains('phone')) closeSearch(); openChat(m.chat, m.id); },
     },
-    el('div', { class: 'ext', text: ext }),
-    el('div', { class: 'grow' },
-      el('div', { class: 'result-meta', text: `${chatLabel(m.chat)} · ${m.mine ? 'You' : m.senderName} · ${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` }),
+    m.file ? el('div', { class: 'ext', text: ext }) : avatar(who.name, { seed: m.sender, src: who.src }),
+    el('div', { class: 'grow', style: 'min-width:0' },
+      el('div', { class: 'result-meta' }, el('b', { text: m.mine ? 'You' : who.name }), ' · ' + chatLabel(m.chat) + ' · ' + dayFmt.format(m.ts) + ' ' + timeFmt.format(m.ts)),
       main,
       m.file && m.text ? el('div', { class: 'sub ellipsis', text: m.text }) : null));
   }));
 }
 
-$('searchBtn').addEventListener('click', openSearch);
-$('searchClose').addEventListener('click', () => $('searchDlg').close());
+$('chatSearchBtn').addEventListener('click', () => openSearch(S.active || ''));
+$('searchClose').addEventListener('click', closeSearch);
+$('searchPanel').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); } });
+$('sChat').addEventListener('change', updateSearchTitle);
+
+// The magnifier at the top: find a group or a friend in the lists.
+let findQ = '';
+function showFinder(on) {
+  $('findForm').classList.toggle('hidden', !on);
+  if (on) { $('findInput').focus(); $('findInput').select(); } else if (findQ) { findQ = ''; $('findInput').value = ''; renderLists(); }
+}
+$('searchBtn').addEventListener('click', () => showFinder($('findForm').classList.contains('hidden')));
+$('findClose').addEventListener('click', () => showFinder(false));
+$('findForm').addEventListener('submit', (e) => { e.preventDefault(); const f = $('groupList').firstElementChild || $('friendList').firstElementChild; f?.click(); });
+$('findInput').addEventListener('input', () => { findQ = fold($('findInput').value.trim()); renderLists(); });
+$('findInput').addEventListener('keydown', (e) => { if (e.key === 'Escape') showFinder(false); });
 $('searchForm').addEventListener('submit', (e) => e.preventDefault());
 $('sq').addEventListener('input', scheduleSearch);
 for (const id of ['sKind', 'sFrom', 'sChat', 'sSince']) $(id).addEventListener('change', runSearch);
@@ -4376,6 +4459,42 @@ function drawAvatar(canvas, a) {
   c.fillRect(0, 0, n, n);
   c.drawImage(layer, 0, 0);
 }
+let pendingBanner = null; // null = unchanged, '' = none
+function renderBannerPick() {
+  const cur = pendingBanner === null ? (S.me.profile?.banner || '') : pendingBanner;
+  $('sBannerPrev').style.background = bannerStyle(cur, S.me.id);
+  for (const b of $('sBanners').querySelectorAll('[data-spec]')) b.classList.toggle('on', b.dataset.spec === cur);
+}
+function renderBannerTiles() {
+  const mk = (spec, title) => {
+    const b = el('button', { type: 'button', class: 'banner-tile', title, 'data-spec': spec, onclick: () => { pendingBanner = spec; renderBannerPick(); } });
+    b.style.background = bannerStyle(spec, S.me.id);
+    return b;
+  };
+  const pic = el('button', { type: 'button', class: 'banner-tile banner-more', title: 'Use your own picture', text: 'Picture', onclick: () => { $('bannerFile').value = ''; $('bannerFile').click(); } });
+  const col = el('label', { class: 'banner-tile banner-more', title: 'Pick any colour' }, 'Colour',
+    el('input', { type: 'color', value: '#5b6cf0', oninput: (e) => { pendingBanner = 'c:' + e.target.value; renderBannerPick(); } }));
+  $('sBanners').replaceChildren(mk('', 'Default (your colour)'), ...BANNERS.map((b) => mk('g:' + b.id, b.name)), pic, col);
+  renderBannerPick();
+}
+$('bannerFile').addEventListener('change', async () => {
+  const file = $('bannerFile').files[0];
+  if (!file) return;
+  try {
+    const img = await createImageBitmap(file);
+    const W = 720, H = 240;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const r = Math.max(W / img.width, H / img.height), sw = W / r, sh = H / r;
+    canvas.getContext('2d').drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, W, H);
+    let q = 0.82, out = canvas.toDataURL('image/jpeg', q);
+    while (out.length > 190000 && q > 0.3) { q -= 0.1; out = canvas.toDataURL('image/jpeg', q); }
+    pendingBanner = out;
+    renderBannerPick();
+  } catch {
+    $('sError').textContent = 'That file isn’t a picture UaN can read.';
+  }
+});
 function renderAvatarTiles() {
   const letterTile = el('button', { type: 'button', id: 'sLetterTile', class: 'letter-tile', title: 'Your first letter (the default)', onclick: () => { pendingAvatar = ''; renderAvatarPick(); } });
   $('sAvatars').replaceChildren(letterTile, ...AVATARS.map((a) => {

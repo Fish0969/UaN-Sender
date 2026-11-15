@@ -310,6 +310,8 @@ pub enum Req {
         avatar: Option<String>,
         #[serde(default)]
         bio: Option<String>,
+        #[serde(default)]
+        banner: Option<String>,
         pv: i64,
     },
     /// A phone asks the PC for a copy of the account (with proof that it knows the pairing code).
@@ -785,6 +787,7 @@ impl Node {
         let _ = db.execute("ALTER TABLE messages ADD COLUMN edited INTEGER", []);
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN bio TEXT", []);
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN joined INTEGER", []);
+        let _ = db.execute("ALTER TABLE profiles ADD COLUMN banner TEXT", []);
         // When this account began: the earliest thing we know of (older versions never wrote it down).
         let _ = db.execute(
             "INSERT OR IGNORE INTO kv (k, v) SELECT 'joined', CAST(COALESCE((SELECT MIN(t) FROM (SELECT MIN(ts) AS t FROM messages UNION ALL SELECT MIN(created_at) FROM contacts)), strftime('%s','now') * 1000) AS TEXT)",
@@ -1102,12 +1105,20 @@ impl Node {
                 self.clear_local(&chat_id(&group_id, channel.as_deref()), before);
                 Ok(ok)
             }
-            Req::MyProfile { name, status, avatar, bio, pv } => {
+            Req::MyProfile { name, status, avatar, bio, banner, pv } => {
                 if pv > self.my_pv() && !name.trim().is_empty() {
                     self.set_kv("name", &name.chars().take(32).collect::<String>());
                     self.set_kv("status", &status.chars().take(60).collect::<String>());
                     if let Some(b) = bio {
                         self.set_kv("bio", &b.chars().take(500).collect::<String>());
+                    }
+                    if let Some(b) = banner {
+                        match clean_banner(&b) {
+                            Some(v) => self.set_kv("banner", &v),
+                            None => {
+                                let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'banner'", []);
+                            }
+                        }
                     }
                     match avatar.filter(|a| a.starts_with("data:image/") && a.len() <= 200_000) {
                         Some(a) => self.set_kv("avatar", &a),
@@ -1318,7 +1329,7 @@ impl Node {
     }
 
     pub fn my_profile(&self) -> Value {
-        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
+        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
     }
 
     fn my_pv(&self) -> i64 {
@@ -1330,11 +1341,11 @@ impl Node {
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
-        self.set_profile(name, None, None, None)
+        self.set_profile(name, None, None, None, None)
     }
 
     /// Name, status line ("Gaming 🎮") and profile picture (a small data: URL made by the window).
-    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>) -> Result<(), String> {
+    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>, banner: Option<&str>) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 32 {
             return Err("Pick a name of 1–32 characters.".into());
@@ -1348,6 +1359,16 @@ impl Node {
             let b: String = b.trim().chars().take(500).collect();
             self.set_kv("bio", &b);
         }
+        if let Some(b) = banner {
+            if b.is_empty() {
+                let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'banner'", []);
+            } else {
+                match clean_banner(b) {
+                    Some(v) => self.set_kv("banner", &v),
+                    None => return Err("That background is not allowed or too big.".into()),
+                }
+            }
+        }
         if let Some(a) = avatar {
             if a.is_empty() {
                 let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'avatar'", []);
@@ -1359,7 +1380,7 @@ impl Node {
             }
         }
         self.set_kv("pv", &now().to_string());
-        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), bio: self.kv("bio"), pv: self.my_pv() });
+        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), bio: self.kv("bio"), banner: Some(self.kv("banner").unwrap_or_default()), pv: self.my_pv() });
         // Let everyone know.
         let req = self.ping_req();
         for p in self.known_peers() {
@@ -1399,10 +1420,11 @@ impl Node {
                 let avatar = v["avatar"].as_str().filter(|a| a.starts_with("data:image/") && a.len() <= 200_000);
                 let bio: Option<String> = v["bio"].as_str().map(|b| b.chars().take(500).collect());
                 let joined = v["joined"].as_i64();
+                let banner = v["banner"].as_str().and_then(clean_banner);
                 let _ = me.db.lock().unwrap().execute(
-                    "INSERT INTO profiles (id, status, avatar, pv, bio, joined) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, avatar = excluded.avatar, pv = excluded.pv, bio = COALESCE(excluded.bio, bio), joined = COALESCE(excluded.joined, joined)",
-                    params![peer, v["status"].as_str().unwrap_or(""), avatar, v["pv"].as_i64().unwrap_or(pv), bio, joined],
+                    "INSERT INTO profiles (id, status, avatar, pv, bio, joined, banner) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, avatar = excluded.avatar, pv = excluded.pv, bio = COALESCE(excluded.bio, bio), joined = COALESCE(excluded.joined, joined), banner = excluded.banner",
+                    params![peer, v["status"].as_str().unwrap_or(""), avatar, v["pv"].as_i64().unwrap_or(pv), bio, joined, banner],
                 );
                 if let Some(n) = v["name"].as_str() {
                     me.update_name(&peer, n);
@@ -2207,7 +2229,7 @@ impl Node {
                 }
                 Req::Profile => {
                     let p = self.my_profile();
-                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "joined": p["joined"] }))
+                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "joined": p["joined"] }))
                 }
                 _ => Err("Not allowed.".into()),
             };
@@ -2235,7 +2257,7 @@ impl Node {
                     return Err("Not allowed.".into());
                 }
                 let p = self.my_profile();
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "joined": p["joined"] }))
+                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "joined": p["joined"] }))
             }
             Req::FriendRequest { name } => {
                 match self.contact_status(peer).as_deref() {
@@ -2317,7 +2339,7 @@ impl Node {
                         None => name.clone(),
                     };
                     // Muted chats stay quiet, unless you are @mentioned (or someone answers you).
-                    let mentioned = text.as_deref().is_some_and(|t| self.mentions_me(t)) || msg.reply.as_ref().is_some_and(|r| self.is_my_message(&r.id));
+                    let mentioned = text.as_deref().is_some_and(|t| self.mentions_me(t) || (msg.group.is_some() && mentions_everyone(t))) || msg.reply.as_ref().is_some_and(|r| self.is_my_message(&r.id));
                     if !self.is_muted(&chat) || mentioned {
                         self.notify(if mentioned && msg.group.is_some() { &title } else { &title }, &body);
                     }
@@ -2945,17 +2967,17 @@ impl Node {
         let my_mode = self.my_mode(); // (reads the database, so before it is locked below)
         let db = self.db.lock().unwrap();
         let mut stmt = db
-            .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status, p.bio, p.joined, c.created_at FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
+            .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status, p.bio, p.joined, c.created_at, p.banner FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
             .unwrap();
         #[allow(clippy::type_complexity)]
-        let rows: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<i64>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)))
+        let rows: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<i64>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
         let (mut friends, mut incoming, mut outgoing) = (vec![], vec![], vec![]);
-        for (id, name, status, last, avatar, mood, bio, joined, since) in rows {
-            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "since": since });
+        for (id, name, status, last, avatar, mood, bio, joined, since, banner) in rows {
+            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "since": since, "banner": banner });
             match status.as_str() {
                 "friend" => friends.push(item),
                 "incoming" => incoming.push(item),
@@ -2987,13 +3009,13 @@ impl Node {
                 })
                 .collect();
             let mut ms = db
-                .prepare("SELECT m.member_id, m.name, p.avatar, p.status, p.bio, p.joined FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
+                .prepare("SELECT m.member_id, m.name, p.avatar, p.status, p.bio, p.joined, p.banner FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
                 .unwrap();
             let members: Vec<Value> = ms
-                .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<i64>>(5)?)))
+                .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<i64>>(5)?, r.get::<_, Option<String>>(6)?)))
                 .unwrap()
                 .filter_map(Result::ok)
-                .map(|(mid, mname, avatar, mood, bio, joined)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined }))
+                .map(|(mid, mname, avatar, mood, bio, joined, banner)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "banner": banner }))
                 .collect();
             groups.push(json!({ "id": id, "name": name, "owner": owner, "admins": admins, "avatar": gavatar, "members": members, "lastAt": last, "channels": channels }));
         }
@@ -5538,4 +5560,33 @@ fn collect_files(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String, u64)>, d
             }
         }
     }
+}
+
+/// A profile background: a small picture (data: URL), a ready-made one ("g:name") or a colour ("c:#rrggbb").
+fn clean_banner(b: &str) -> Option<String> {
+    let ok = if b.starts_with("data:image/") {
+        b.len() <= 200_000
+    } else if let Some(id) = b.strip_prefix("g:") {
+        !id.is_empty() && id.len() <= 24 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    } else if let Some(hex) = b.strip_prefix("c:#") {
+        hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit())
+    } else {
+        false
+    };
+    ok.then(|| b.to_string())
+}
+
+/// "@everyone" in a group message notifies all the members, also in muted chats.
+fn mentions_everyone(text: &str) -> bool {
+    let t = text.to_lowercase();
+    let key = "@everyone";
+    let mut from = 0;
+    while let Some(i) = t[from..].find(key) {
+        let end = from + i + key.len();
+        if t[end..].chars().next().is_none_or(|c| !c.is_alphanumeric()) {
+            return true;
+        }
+        from = end;
+    }
+    false
 }

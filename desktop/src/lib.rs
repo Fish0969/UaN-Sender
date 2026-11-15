@@ -174,8 +174,8 @@ fn set_name(node: State<'_, Arc<Node>>, name: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn set_profile(node: State<'_, Arc<Node>>, name: String, status: String, avatar: Option<String>, bio: Option<String>) -> CmdResult<()> {
-    node.set_profile(&name, Some(&status), avatar.as_deref(), bio.as_deref())
+fn set_profile(node: State<'_, Arc<Node>>, name: String, status: String, avatar: Option<String>, bio: Option<String>, banner: Option<String>) -> CmdResult<()> {
+    node.set_profile(&name, Some(&status), avatar.as_deref(), bio.as_deref(), banner.as_deref())
 }
 
 #[tauri::command]

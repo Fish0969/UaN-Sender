@@ -46,13 +46,17 @@
           <div id="meStatus" class="sub ellipsis"></div>
           <div id="meProfile" class="sub hidden"></div>
         </div>
-        <button class="icon" id="searchBtn" title="Search messages and files (Ctrl+F)">
+        <button class="icon" id="searchBtn" title="Find a group or a friend">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         </button>
         <button class="icon" id="settingsBtn" title="Settings">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
         </button>
       </div>
+      <form id="findForm" class="add find hidden">
+        <input id="findInput" placeholder="Find a group or a friend" autocomplete="off" spellcheck="false">
+        <button type="button" class="icon" id="findClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </form>
       <div id="updateBar" class="update-bar hidden"></div>
       <form id="addForm" class="add">
         <input id="addInput" placeholder="Paste a friend code" required spellcheck="false" autocomplete="off">
@@ -95,6 +99,35 @@
     </aside>
 
     <section class="content">
+      <aside id="searchPanel" class="search-panel hidden" aria-label="Search">
+        <form id="searchForm">
+          <div class="sp-head"><strong id="spTitle">Search</strong><button type="button" class="icon sp-close" id="searchClose" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+          <div class="sp-input"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="sq" placeholder="Search messages and files…" autocomplete="off" spellcheck="false"></div>
+          <div class="sp-filters">
+            <label>Where<select id="sChat"></select></label>
+            <label>Type<select id="sKind">
+              <option value="">Everything</option>
+              <option value="text">Messages only</option>
+              <option value="files">All files</option>
+              <option value="video">Videos</option>
+              <option value="image">Images</option>
+              <option value="audio">Audio</option>
+              <option value="document">Documents</option>
+              <option value="archive">Archives (zip, rar…)</option>
+            </select></label>
+            <label>From<select id="sFrom"></select></label>
+            <label>When<select id="sSince">
+              <option value="0">Any time</option>
+              <option value="1">Today</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="365">Last year</option>
+            </select></label>
+          </div>
+          <div id="sCount" class="note"></div>
+          <div id="sResults" class="results"></div>
+        </form>
+      </aside>
       <div id="empty" class="empty">
         <img src="icon.png" alt="">
         <p>Pick a friend or group to start chatting.<br>Drop any file into a chat to send it, any size (up to 4 TB).</p>
@@ -109,6 +142,7 @@
               <div id="chatStatus" class="sub ellipsis"></div>
             </div>
           </button>
+          <button class="icon" id="chatSearchBtn" title="Search in this chat (Ctrl+F)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
           <button class="icon pins-btn hidden" id="pinsBtn" title="Pinned messages"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4Z"/><path d="M12 14v6"/></svg><span id="pinsCount"></span></button>
           <button class="icon" id="galleryBtn" title="Photos, videos and files in this chat">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -204,6 +238,7 @@
   <div id="ctxMenu" class="menu hidden"></div>
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
   <input type="file" id="avatarFile" accept="image/*" hidden>
+  <input type="file" id="bannerFile" accept="image/*" hidden>
   <input type="file" id="phoneFiles" multiple hidden>
   <input type="file" id="themeFile" accept=".html,.htm,video/*,image/*" hidden>
   <input type="file" id="phonePhotos" accept="image/*,video/*" multiple hidden>
@@ -282,39 +317,6 @@
     </form>
   </dialog>
 
-  <!-- Search -->
-  <dialog id="searchDlg" class="wide-dlg">
-    <form id="searchForm" method="dialog">
-      <div class="search-row">
-        <input id="sq" placeholder="Search text, file names, extensions (e.g. .mkv), people…" autocomplete="off" spellcheck="false">
-        <button type="button" class="icon" id="searchClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-      </div>
-      <div class="filters">
-        <select id="sKind">
-          <option value="">Everything</option>
-          <option value="text">Messages only</option>
-          <option value="files">All files</option>
-          <option value="video">Videos</option>
-          <option value="image">Images</option>
-          <option value="audio">Audio</option>
-          <option value="document">Documents</option>
-          <option value="archive">Archives (zip, rar…)</option>
-        </select>
-        <select id="sFrom"></select>
-        <select id="sChat"></select>
-        <select id="sSince">
-          <option value="0">Any time</option>
-          <option value="1">Today</option>
-          <option value="7">Last 7 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="365">Last year</option>
-        </select>
-      </div>
-      <div id="sCount" class="note"></div>
-      <div id="sResults" class="results"></div>
-    </form>
-  </dialog>
-
   <!-- Watch together setup -->
   <dialog id="partyDlg">
     <form id="partySetupForm" method="dialog">
@@ -363,6 +365,9 @@
             <label class="bio-label">About you<textarea id="sBio" maxlength="500" rows="4" placeholder="Say something about yourself. Your friends see this on your profile."></textarea></label>
             <div class="note" id="sBioCount"></div>
             <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
+            <div class="sub-title">Profile background</div>
+            <div class="banner-prev" id="sBannerPrev"></div>
+            <div class="tiles banners" id="sBanners"></div>
           </section>
           <section class="s-page hidden" data-page="look">
             <h3 class="s-title">Appearance</h3>
@@ -557,13 +562,14 @@
   </dialog>
   <dialog id="profileDlg" class="profile-dlg">
     <form method="dialog">
-      <div class="pf-top"><div id="pfAvatar"></div>
-        <div class="grow"><div class="pf-name" id="pfName"></div><div class="pf-status" id="pfStatus"></div><div class="pf-online" id="pfOnline"></div></div>
-        <button class="icon" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-      <div class="pf-sec">About</div>
-      <div class="pf-bio" id="pfBio"></div>
-      <div class="pf-facts" id="pfFacts"></div>
-      <div class="pf-actions" id="pfActions"></div>
+      <div class="pf-banner" id="pfBanner"><button class="icon pf-close" value="close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="pf-body">
+        <div class="pf-top"><div id="pfAvatar"></div>
+          <div class="grow"><div class="pf-name" id="pfName"></div><div class="pf-status" id="pfStatus"></div><div class="pf-online" id="pfOnline"></div></div></div>
+        <div id="pfAboutBox"><div class="pf-sec">About</div><div class="pf-bio" id="pfBio"></div></div>
+        <div class="pf-facts" id="pfFacts"></div>
+        <div class="pf-actions" id="pfActions"></div>
+      </div>
     </form>
   </dialog>
   <dialog id="pinsDlg" class="wide-dlg">

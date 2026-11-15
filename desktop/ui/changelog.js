@@ -1,5 +1,14 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.17', items: [
+    'Profile background: pick a ready-made one (Aurora, Sunset, Dots, Grid …), any colour, or your own picture in Settings → Profile.',
+    'The profile card is cleaner: About is just the text, the Message button is gone, and the Join date sits under Friends since (people who are not your friends show only the Join date).',
+    '@everyone notifies everybody in the group, also in muted chats. It shows up in the suggestions.',
+    'Shift+Delete on a message (or on its open right-click menu) deletes it for everyone at once, with no question.',
+    'Search is a panel on the right, with a clear Close button and Esc. The search button next to the pins searches this chat; each result shows who wrote it.',
+    'The magnifier at the top finds groups and friends in your lists.',
+    'Your own profile at the top is set apart from the lists by a thin line.',
+  ] },
   { v: '1.9.16', items: [
     'Click the name at the top of a private chat to see the person’s profile; right-click it for Mute, Clear messages and Remove friend.',
     'Click your own name to see your profile the way others see it.',

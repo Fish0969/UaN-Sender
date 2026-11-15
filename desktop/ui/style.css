@@ -1311,3 +1311,50 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .tiles.avatars button.letter-tile { display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 16px; border: 0; }
 .history .hnote { margin: 0; padding: 12px 14px 12px 34px; border: 1px solid var(--border); border-radius: var(--r-ctl, 9px); background: var(--card); }
 .history .hnote li { margin: 4px 0; color: var(--text); }
+
+/* ---- separate your own profile from the lists ---- */
+.me { border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.find { margin: 0 8px 6px; }
+
+/* ---- profile card with a background ---- */
+.profile-dlg { padding: 0; overflow: hidden; }
+.pf-banner { position: relative; height: 108px; background-size: cover; background-position: center; }
+.pf-close { position: absolute; top: 8px; right: 8px; background: rgba(0, 0, 0, .4); color: #fff; border-radius: 50%; }
+.pf-body { padding: 0 22px 20px; }
+.pf-top { display: flex; align-items: flex-start; gap: 14px; margin-top: -38px; }
+.pf-top .avatar { width: 76px; height: 76px; font-size: 32px; flex: none; border: 4px solid var(--dialog, var(--panel)); box-sizing: border-box; }
+.pf-top .grow { margin-top: 44px; min-width: 0; }
+.pf-bio { white-space: pre-wrap; word-break: break-word; padding: 0; border: 0; background: none; min-height: 0; line-height: 1.45; }
+.pf-bio.empty { color: var(--muted); font-style: italic; }
+.pf-sec { margin: 18px 0 6px; }
+.pf-actions:empty { display: none; }
+.pf-facts:empty { display: none; }
+
+/* ---- profile background in Settings ---- */
+.banner-prev { height: 84px; border-radius: var(--r-ctl, 9px); margin: 6px 0 8px; background-size: cover; background-position: center; border: 1px solid var(--border); }
+.tiles.banners { display: flex; flex-wrap: wrap; gap: 6px; }
+.tiles.banners .banner-tile { width: 54px; height: 30px; padding: 0; border-radius: 7px; border: 2px solid transparent; position: relative; display: grid; place-items: center; font-size: 11px; overflow: hidden; background-size: cover; background-position: center; }
+.tiles.banners .banner-tile.on { border-color: var(--accent); }
+.tiles.banners .banner-more { width: auto; padding: 0 10px; background: var(--card); color: var(--text); border-color: var(--border); }
+.banner-more input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
+
+/* ---- search: a panel on the right ---- */
+.search-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(410px, 100%); z-index: 25; display: flex; flex-direction: column; background: var(--dialog, var(--panel)); border-left: 1px solid var(--border); box-shadow: -14px 0 34px -14px rgba(0, 0, 0, .55); }
+.search-panel.hidden { display: none; }
+.search-panel form { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 14px 14px 0; gap: 10px; }
+.sp-head { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
+.sp-close { width: 34px; height: 34px; }
+.sp-input { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 40px; border: 1px solid var(--border); border-radius: var(--r-ctl, 9px); background: var(--card); }
+.sp-input svg { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; }
+.sp-input input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; height: 100%; padding: 0; box-shadow: none; }
+.sp-input:focus-within { border-color: var(--accent); }
+.sp-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sp-filters label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); min-width: 0; }
+.sp-filters select { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); width: 100%; min-width: 0; }
+.search-panel .results { flex: 1; overflow-y: auto; border: 0; background: none; margin: 0 -14px; border-radius: 0; border-top: 1px solid var(--border); }
+.search-panel .result { align-items: flex-start; padding: 10px 14px; }
+.search-panel .result .avatar { width: 34px; height: 34px; font-size: 14px; flex: none; }
+.search-panel .result-meta { font-size: 12px; }
+.search-panel .result-meta b { color: var(--text); font-weight: 600; }
+.search-panel .result-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-word; margin-top: 2px; }
+.mention-all-note { color: var(--muted); font-size: 12px; margin-left: auto; }

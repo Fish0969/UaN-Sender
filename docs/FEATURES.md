@@ -32,6 +32,9 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
 - **Reactions.** Hover a message and press the smiley: 👍 ❤️ 😂 😮 😢 🙏. Your reaction shows under the message with the others'; click yours again to take it back.
 - **Sounds in messages.** An audio file (mp3 …) plays inside the message, with a play button, a bar to jump around, and a speaker you point at to set the volume (shared by all sounds).
+- **Profile background.** Pick a ready-made background (gradients, stripes, dots, a grid), any colour, or your own picture in *Settings → Profile*. It shows on your profile card for everyone.
+- **Search.** The button next to the pins searches the open chat (Ctrl+F too) in a panel on the right: filter by type, person and time; each result shows who wrote it. The magnifier at the top finds a group or a friend in your lists.
+- **Delete quickly.** Shift+Delete on a message, or on its open right-click menu, deletes it for everyone at once.
 - **Profiles.** Write an *About* text in *Settings → Profile*. Click anyone's picture or name (or your own, to see how others see you) to see their profile: picture, status, About and since when you are friends. In a private chat, click the name at the top for the profile and right-click it for Mute, Clear and Remove friend.
 - **Sound tracks of a film.** A film (mkv) with more than one language gets an **Audio** button in the player; the default track plays as usual, another one is decoded by a silent VLC.
 - **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)
@@ -44,7 +47,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   Anyone in the group can add their friends; new members see the earlier messages too. Clear a chat's
   messages for yourself, or (the group's creator) for everyone.
 - **Messages.** Reply to a message (it is quoted above your answer), edit your own, pin important ones to
-  the top of the chat, and write **bold**, *italic*, ~~strike~~ or `code`. In groups, @Name mentions someone; the suggestions match any part of a name ("ruben" finds TsaRuben), best match first.
+  the top of the chat, and write **bold**, *italic*, ~~strike~~ or `code`. In groups, @Name mentions someone and @everyone notifies the whole group; the suggestions match any part of a name ("ruben" finds TsaRuben), best match first.
 - **Quiet when you want.** Mute a chat, group or channel (an @mention or an answer to you still comes through).
   Click your picture to be Online, Away or Do not disturb (no notifications at all).
 - **Folders.** Send a whole folder (paperclip, *Send a folder…*, or drop it in): first you see which kinds of files are
