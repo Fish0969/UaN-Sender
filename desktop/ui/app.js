@@ -198,6 +198,7 @@ async function enterMain() {
 
 // ---------- Updates: one click replaces the installed version ----------
 let lastUpdate = null;
+let lastUpdateFailed = false;
 // One click: downloads the new version and switches over by itself (the buttons are the ones to disable meanwhile).
 async function installUpdate(u, btns) {
   if (!u.url) return toast('No download for this system in that release yet.');
@@ -218,12 +219,14 @@ async function installUpdate(u, btns) {
 }
 function renderUpdateState() {
   const u = lastUpdate;
-  $('sUpdState').textContent = u ? `UaN ${u.version} is available` : 'No newer version found.';
+  $('sUpdState').textContent = u ? `UaN ${u.version} is available` : lastUpdateFailed ? 'Couldn’t check (no internet, or GitHub didn’t answer). Try again in a moment.' : 'You have the newest version.';
   $('sUpdNow').classList.toggle('hidden', !u);
 }
 async function checkUpdate() {
-  const u = await invoke('check_update').catch(() => null);
+  let failed = false;
+  const u = await invoke('check_update').catch(() => { failed = true; return null; });
   lastUpdate = u;
+  lastUpdateFailed = failed;
   const bar = $('updateBar');
   bar.classList.toggle('hidden', !u);
   if (u) {
@@ -643,6 +646,7 @@ async function openChat(chat, focusId) {
   if (S.active !== chat) {
     cancelReply();
     relock(S.active);
+    stopInlineAudio();
   }
   S.active = chat;
   S.unread.delete(chat);
@@ -1303,12 +1307,14 @@ function markRead() {
 }
 window.addEventListener('focus', markRead);
 document.addEventListener('visibilitychange', markRead);
-// Nothing moves on screen while the window is hidden.
+// Nothing moves on screen while the window is hidden. When you only click out of UaN (it stays visible),
+// the background keeps moving but its sound is off until you come back.
 function onStage() {
-  const away = document.hidden || !document.hasFocus();
-  document.documentElement.classList.toggle('paused', away);
+  const hidden = document.hidden;
+  document.documentElement.classList.toggle('paused', hidden);
   const v = typeof backdrop !== 'undefined' ? backdrop?.video : null;
-  if (v) { if (away) v.pause(); else v.play().catch(() => {}); }
+  if (v) { if (hidden) v.pause(); else v.play().catch(() => {}); }
+  if (typeof backdrop !== 'undefined' && backdrop?.c) applyTune(backdrop.c);
 }
 document.addEventListener('visibilitychange', onStage);
 window.addEventListener('blur', onStage);
@@ -1390,6 +1396,57 @@ function removeMessage(id, chat) {
   if (chat === S.active) renderMessages(true);
 }
 
+// A small player inside the message, like a voice message in Messenger: play or pause, a bar to jump around, the time.
+// It keeps playing while new messages arrive (the same player is put back into the message each time).
+const audioPlayers = new Map(); // file id -> player
+const AP_PLAY = '<path d="M8 5v14l11-7Z"/>';
+const AP_PAUSE = '<rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/>';
+function audioPlayer(file) {
+  const have = audioPlayers.get(file.id);
+  if (have) return have;
+  const a = el('audio', { class: 'ap-audio', preload: 'none' });
+  a.src = mediaUrl(file);
+  const btn = el('button', { type: 'button', class: 'ap-btn', title: 'Play', 'aria-label': 'Play' }, svg(AP_PLAY));
+  const bar = el('input', { type: 'range', class: 'ap-bar', min: 0, max: 1000, step: 1, value: 0, 'aria-label': 'Position in the sound' });
+  const time = el('span', { class: 'ap-time', text: '0:00' });
+  let dragging = false;
+  const show = () => {
+    const d = Number.isFinite(a.duration) ? a.duration : 0;
+    if (!dragging) bar.value = d ? String(Math.round((a.currentTime / d) * 1000)) : '0';
+    bar.style.setProperty('--p', `${Number(bar.value) / 10}%`);
+    time.textContent = d ? `${fmtTime(a.currentTime)} / ${fmtTime(d)}` : fmtTime(a.currentTime);
+  };
+  const icon = (playing) => { btn.replaceChildren(svg(playing ? AP_PAUSE : AP_PLAY)); btn.title = btn.ariaLabel = playing ? 'Pause' : 'Play'; };
+  btn.addEventListener('click', () => { if (a.paused) a.play().catch(() => {}); else a.pause(); });
+  a.addEventListener('play', () => icon(true));
+  a.addEventListener('pause', () => icon(false));
+  a.addEventListener('ended', () => { icon(false); a.currentTime = 0; show(); });
+  a.addEventListener('timeupdate', show);
+  a.addEventListener('loadedmetadata', show);
+  a.addEventListener('error', async () => {
+    icon(false);
+    const reach = await reachability(file);
+    toast(reach !== 'ok'
+      ? (file.owner === S.me.id ? 'UaN can’t read this file from your disk any more.' : 'Can’t reach this sound right now: the sender’s PC is off, or UaN isn’t running on it.')
+      : 'UaN can’t play this sound format. Download it to open it with another player.');
+  });
+  bar.addEventListener('pointerdown', () => { dragging = true; });
+  bar.addEventListener('input', () => {
+    const d = Number.isFinite(a.duration) ? a.duration : 0;
+    if (d) a.currentTime = (Number(bar.value) / 1000) * d;
+    bar.style.setProperty('--p', `${Number(bar.value) / 10}%`);
+  });
+  bar.addEventListener('change', () => { dragging = false; });
+  const box = el('div', { class: 'ap' }, btn, bar, time, a);
+  audioPlayers.set(file.id, box);
+  return box;
+}
+// One sound at a time: starting one stops the others.
+document.addEventListener('play', (e) => {
+  if (e.target.classList?.contains('ap-audio')) document.querySelectorAll('audio.ap-audio').forEach((x) => { if (x !== e.target) x.pause(); });
+}, true);
+function stopInlineAudio() { document.querySelectorAll('audio.ap-audio').forEach((x) => x.pause()); }
+
 function fileCard(file, chat, thumb) {
   let preview = null;
   if (thumb?.img && (IMAGE.test(file.mime) || /^video\//i.test(file.mime))) {
@@ -1401,6 +1458,8 @@ function fileCard(file, chat, thumb) {
       video && thumb.dur ? el('span', { class: 'dur', text: fmtTime(thumb.dur) }) : null);
   } else if (IMAGE.test(file.mime) && file.size <= INLINE_IMAGE_LIMIT) {
     preview = el('img', { src: mediaUrl(file), alt: '', loading: 'lazy', onclick: () => openViewer(file), onload: keepBottom, onerror: (e) => e.target.remove() });
+  } else if (/^audio\//i.test(file.mime)) {
+    preview = audioPlayer(file);
   } else if (PLAYABLE.test(file.mime)) {
     preview = el('button', { class: 'play', type: 'button', title: 'Play here without downloading', onclick: () => openViewer(file) },
       svg(ICON.bigplay), el('span', { text: file.mime.startsWith('audio') ? 'Listen' : 'Watch now' }));
@@ -2709,6 +2768,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sReceipts').checked = S.me.receipts;
   $('sHeads').checked = onlineHeads();
   renderThemeTiles();
+  syncTune();
   renderIconTiles();
   renderAvatarTiles();
   $('sAutoDl').checked = S.me.autodl;
@@ -2733,7 +2793,6 @@ function showSettingsPage(name) {
   document.querySelectorAll('.s-tab').forEach((b) => b.classList.toggle('on', b.dataset.page === name));
   document.querySelectorAll('.s-page').forEach((p) => p.classList.toggle('hidden', p.dataset.page !== name));
   $('settingsDlg').querySelector('.s-pages').scrollTop = 0;
-  if (name !== 'look') closeTune();
 }
 document.querySelectorAll('.s-tab').forEach((b) => b.addEventListener('click', () => showSettingsPage(b.dataset.page)));
 $('sCancel').addEventListener('click', () => $('settingsDlg').close());
@@ -3439,7 +3498,7 @@ function setBackdrop(c) {
   backdrop?.node.remove();
   const node = el('div', { class: 'backdrop', 'aria-hidden': 'true' });
   document.body.prepend(node);
-  backdrop = { id: c.id, node, video: null };
+  backdrop = { id: c.id, node, video: null, c };
   if (c.kind === 'video') {
     const v = el('video', { src: themeFileUrl(c), loop: true, playsinline: true, preload: 'auto' });
     v.muted = !c.sound;
@@ -3447,7 +3506,7 @@ function setBackdrop(c) {
     v.disablePictureInPicture = true;
     backdrop.video = v;
     node.append(v);
-    if (!document.hidden && document.hasFocus()) v.play().catch(() => {});
+    if (!document.hidden) v.play().catch(() => {});
   } else if (c.kind === 'image') {
     node.append(el('img', { src: themeFileUrl(c), alt: '' }));
   } else {
@@ -3463,15 +3522,26 @@ function setBackdrop(c) {
 // ---------- Adjusting your own theme: sound on/off, volume, blur, brightness ----------
 const TUNE_DEFAULT = { vol: 60, bright: 100, blur: 0 };
 const tuneOf = (c) => ({ ...TUNE_DEFAULT, ...(c?.tune || {}) });
+// Something else is playing (the film viewer, a watch party, a sound in a message): the background stays quiet.
+function mediaBusy() {
+  if (!$('viewer').classList.contains('hidden') || !$('party').classList.contains('hidden')) return true;
+  return [...document.querySelectorAll('video, audio')].some((m) => m !== backdrop?.video && !m.paused && !m.ended);
+}
+function syncBackdropSound() { if (backdrop?.c) applyTune(backdrop.c); }
+for (const ev of ['play', 'pause', 'ended']) document.addEventListener(ev, syncBackdropSound, true);
+new MutationObserver(syncBackdropSound).observe($('viewer'), { attributes: true, attributeFilter: ['class'] });
+new MutationObserver(syncBackdropSound).observe($('party'), { attributes: true, attributeFilter: ['class'] });
 function applyTune(c) {
   if (!backdrop || backdrop.id !== c.id) return;
+  backdrop.c = c;
   const t = tuneOf(c);
   const s = backdrop.node.style;
   s.setProperty('--bb', String(t.bright / 100));
   s.setProperty('--bblur', `${t.blur}px`);
   if (backdrop.video) {
     backdrop.video.volume = Math.min(1, Math.max(0, t.vol / 100));
-    backdrop.video.muted = !c.sound || t.vol === 0;
+    // The sound only plays while UaN is the window you are using.
+    backdrop.video.muted = !c.sound || t.vol === 0 || document.hidden || !document.hasFocus() || mediaBusy();
   }
 }
 let tuneSaveTimer = null;
@@ -3548,6 +3618,11 @@ function openTune(c) {
   placeTune();
   $('themeTune').classList.remove('hidden');
   renderTune();
+}
+// The adjust panel is shown by itself whenever the theme in use is one of your own (the X hides it until you pick a theme again).
+function syncTune() {
+  const c = theme.mode.startsWith('custom:') ? customThemes.find((x) => `custom:${x.id}` === theme.mode) : null;
+  if (c) openTune(c); else closeTune();
 }
 function closeTune() {
   tuning = null;
@@ -3722,7 +3797,14 @@ async function loadCustomThemes() {
   } catch {}
   if (theme.mode.startsWith('custom:') && !customThemes.some((c) => `custom:${c.id}` === theme.mode)) setTheme('dark');
   else applyTheme();
-  if ($('settingsDlg').open) renderThemeTiles();
+  if ($('settingsDlg').open) {
+    renderThemeTiles();
+    // The themes were read again: the panel works on the fresh copy of the theme.
+    if (tuning) {
+      const fresh = customThemes.find((x) => x.id === tuning.id);
+      if (fresh) { tuning = fresh; renderTune(); } else closeTune();
+    }
+  }
 }
 $('themeFile').addEventListener('change', async () => {
   const f = $('themeFile').files[0];
@@ -3841,7 +3923,7 @@ function setTheme(id) {
   applyTheme();
   renderSwatches();
   renderThemeTiles();
-  if (!theme.mode.startsWith('custom:')) closeTune();
+  syncTune();
 }
 function renderSwatches() {
   const t = themeById(theme.mode);
