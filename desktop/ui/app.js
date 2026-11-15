@@ -2714,9 +2714,6 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
-  $('sCode').textContent = S.me.code;
-  $('sCode').classList.add('hidden');
-  $('sShowCode').textContent = 'Show friend code';
   $('sError').textContent = '';
   $('sVersion').textContent = `UaN ${S.me.version}`;
   $('sAboutVer').textContent = `UaN ${S.me.version}`;
@@ -2781,10 +2778,7 @@ $('sRestore').addEventListener('click', async () => {
     await invoke('import_backup', { password });
   } catch (e) { toast(e); }
 });
-$('sShowCode').addEventListener('click', () => {
-  const hidden = $('sCode').classList.toggle('hidden');
-  $('sShowCode').textContent = hidden ? 'Show friend code' : 'Hide friend code';
-});
+$('sGithub').addEventListener('click', () => invoke('open_github').catch(() => {}));
 $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3543,33 +3537,17 @@ function renderTune() {
   rows.push(slider('bright', 'bright', 'Brightness', 20, 160));
   $('tuneRows').replaceChildren(...rows);
 }
+// The panel opens in the Appearance page itself, right under the theme tiles (above the colours),
+// and the settings stay where they are, in the middle.
 function placeTune() {
   const panel = $('themeTune');
-  const dlg = $('settingsDlg');
-  // Wide window: the panel sits beside the settings (settings move left), so you see the background change.
-  // Narrow window: it opens right under the theme tiles.
-  const wide = innerWidth >= 16 + 760 + 12 + 300 + 16;
-  if (wide) { if (panel.parentElement !== dlg) dlg.append(panel); } else if (panel.previousElementSibling !== $('sThemes')) $('sThemes').after(panel);
-  panel.classList.toggle('side', wide);
-  dlg.classList.toggle('tuning', wide);
-  alignTune();
+  if (panel.previousElementSibling !== $('sThemes')) $('sThemes').after(panel);
 }
-// The panel sits right next to the settings, level with their top edge.
-function alignTune() {
-  const panel = $('themeTune');
-  if (!panel.classList.contains('side')) { panel.style.left = panel.style.top = ''; return; }
-  const r = $('settingsDlg').getBoundingClientRect();
-  panel.style.left = `${Math.round(r.right + 12)}px`;
-  panel.style.top = `${Math.max(16, Math.round(r.top))}px`;
-}
-addEventListener('resize', () => { if (tuning) placeTune(); });
 function openTune(c) {
   tuning = c;
   placeTune();
   $('themeTune').classList.remove('hidden');
   renderTune();
-  alignTune();
-  requestAnimationFrame(alignTune); // once the settings have moved to their place
 }
 function closeTune() {
   tuning = null;
@@ -3603,20 +3581,32 @@ const b64u = {
   },
 };
 const pipeBytes = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
-const SHARE_EMBED_LIMIT = 4 * 1024 * 1024; // smaller themes travel inside the code; bigger ones are sent as a file
+const SHARE_EMBED_LIMIT = 700; // bytes: only a tiny theme travels inside the code, any other one is sent as a file
 const MIME_EXT = { 'text/html': 'html', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/x-matroska': 'mkv', 'video/quicktime': 'mov', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
+const KIND_LETTER = { html: 'h', video: 'v', image: 'i' };
+const LETTER_KIND = { h: 'html', v: 'video', i: 'image' };
+// A short code (about 80 characters): UAN-T + [2, name, kind, light or dark, accent, size, volume, brightness, blur, sound],
+// and for a tiny theme also its file after a dot.
 async function themeShareCode(c) {
-  const head = { v: 1, n: c.name, k: c.kind, b: c.base || 'dark', a: c.accent || null, m: c.mime, s: c.size, t: tuneOf(c), snd: !!c.sound };
+  const t = tuneOf(c);
+  const head = [2, c.name, KIND_LETTER[c.kind], c.base === 'light' ? 'l' : 'd', c.accent ? c.accent.slice(1) : 0, c.size, t.vol, t.bright, t.blur, c.sound ? 1 : 0];
   let body = '';
-  const embed = c.size <= SHARE_EMBED_LIMIT;
-  if (embed) {
-    const r = await fetch(themeFileUrl(c));
-    if (!r.ok) throw new Error('Couldn’t read the theme file.');
-    let bytes = new Uint8Array(await r.arrayBuffer());
-    if (typeof CompressionStream === 'function' && c.kind === 'html') { bytes = await pipeBytes(bytes, new CompressionStream('deflate-raw')); head.z = 1; }
-    body = b64u.enc(bytes);
+  if (c.size <= 8192) {
+    const r = await fetch(themeFileUrl(c)).catch(() => null);
+    if (r?.ok) {
+      let bytes = new Uint8Array(await r.arrayBuffer());
+      let z = 0;
+      if (typeof CompressionStream === 'function') {
+        const packed = await pipeBytes(bytes, new CompressionStream('deflate-raw'));
+        if (packed.length < bytes.length) { bytes = packed; z = 1; }
+      }
+      if (bytes.length <= SHARE_EMBED_LIMIT) {
+        head.push((c.file || '').split('.').pop() || 'html', z);
+        body = b64u.enc(bytes);
+      }
+    }
   }
-  return { code: `UANTHEME1.${b64u.enc(new TextEncoder().encode(JSON.stringify(head)))}.${body}`, embedded: embed };
+  return { code: `UAN-T${b64u.enc(new TextEncoder().encode(JSON.stringify(head)))}${body ? `.${body}` : ''}`, embedded: !!body };
 }
 async function copyThemeCode(c) {
   try {
@@ -3624,7 +3614,7 @@ async function copyThemeCode(c) {
     await navigator.clipboard.writeText(code);
     toast(embedded
       ? 'Share code copied. Whoever pastes it in UaN gets this theme with your settings.'
-      : 'Share code copied (the settings). This theme is big, so also send them the file: right-click the theme → Send to friends…');
+      : 'Share code copied. It holds the settings; send the theme file too (right-click the theme → Send to friends…).');
   } catch (e) {
     toast(e.message || e);
   }
@@ -3635,38 +3625,57 @@ function cleanTune(t) {
   for (const [k, [lo, hi]] of Object.entries(lim)) if (Number.isFinite(Number(t?.[k]))) out[k] = Math.min(hi, Math.max(lo, Math.round(Number(t[k]))));
   return out;
 }
+// Reads a share code: the short one, or the first, longer format (still understood).
+function parseThemeCode(text) {
+  const s = String(text).trim();
+  let m = s.match(/UAN-T([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]*))?/);
+  if (m) {
+    let a = null;
+    try { a = JSON.parse(new TextDecoder().decode(b64u.dec(m[1]))); } catch {}
+    if (Array.isArray(a) && a[0] === 2 && typeof a[1] === 'string' && LETTER_KIND[a[2]]) {
+      return { name: a[1].slice(0, 24), kind: LETTER_KIND[a[2]], base: a[3] === 'l' ? 'light' : 'dark', accent: /^[0-9a-f]{6}$/i.test(String(a[4])) ? `#${a[4]}` : null,
+        size: Number(a[5]) || 0, t: { vol: a[6], bright: a[7], blur: a[8] }, snd: !!a[9], ext: typeof a[10] === 'string' ? a[10].replace(/[^a-z0-9]/gi, '').slice(0, 5) : '', z: !!a[11], body: m[2] || '' };
+    }
+  }
+  m = s.match(/UANTHEME1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)/);
+  if (m) {
+    try {
+      const h = JSON.parse(new TextDecoder().decode(b64u.dec(m[1])));
+      if (h && typeof h.n === 'string' && ['html', 'video', 'image'].includes(h.k)) {
+        return { name: h.n.slice(0, 24), kind: h.k, base: h.b === 'light' ? 'light' : 'dark', accent: /^#[0-9a-f]{6}$/i.test(h.a || '') ? h.a : null,
+          size: Number(h.s) || 0, t: h.t, snd: !!h.snd, ext: MIME_EXT[h.m] || '', z: !!h.z, body: m[2] || '' };
+      }
+    } catch {}
+  }
+  return null;
+}
 let pendingCode = null; // a code whose theme file we still need
 async function applyThemeCode(head, theme) {
   await invoke('theme_tune', { id: theme.id, tune: cleanTune(head.t) });
-  if (head.snd !== undefined && !!theme.sound !== !!head.snd && theme.kind === 'video') await invoke('theme_sound', { id: theme.id, on: !!head.snd }).catch(() => {});
+  if (theme.kind === 'video' && !!theme.sound !== !!head.snd) await invoke('theme_sound', { id: theme.id, on: !!head.snd }).catch(() => {});
   await loadCustomThemes();
   setTheme(`custom:${theme.id}`);
   toast(`Theme added: ${theme.name}.`);
 }
 async function importThemeCode(text) {
-  const m = String(text).trim().match(/UANTHEME1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)/);
-  if (!m) throw new Error('That isn’t a UaN theme code.');
-  let head;
-  try { head = JSON.parse(new TextDecoder().decode(b64u.dec(m[1]))); } catch { throw new Error('That theme code is damaged.'); }
-  if (!head || typeof head.n !== 'string' || !['html', 'video', 'image'].includes(head.k)) throw new Error('That theme code is damaged.');
-  const name = head.n.slice(0, 24);
-  const base = head.b === 'light' ? 'light' : 'dark';
-  const accent = /^#[0-9a-f]{6}$/i.test(head.a || '') ? head.a : null;
-  if (m[2]) {
+  const p = parseThemeCode(text);
+  if (!p) throw new Error('That isn’t a UaN theme code.');
+  const { name, base, accent } = p;
+  if (p.body) {
     toast('Adding the theme…');
-    let bytes = b64u.dec(m[2]);
-    if (head.z) bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'));
-    const ext = MIME_EXT[head.m] || (head.k === 'html' ? 'html' : head.k === 'video' ? 'mp4' : 'png');
-    const path = await uploadFile(new File([bytes], `${name.replace(/[\\/:*?"<>|]/g, '') || 'theme'}.${ext}`, { type: head.m }));
+    let bytes = b64u.dec(p.body);
+    if (p.z) bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'));
+    const ext = p.ext || (p.kind === 'html' ? 'html' : p.kind === 'video' ? 'mp4' : 'png');
+    const path = await uploadFile(new File([bytes], `${name.replace(/[\/:*?"<>|]/g, '') || 'theme'}.${ext}`));
     const t = await invoke('theme_add', { path, name, base, accent });
-    return applyThemeCode(head, t);
+    return applyThemeCode(p, t);
   }
   // Only the settings are in the code: use the same theme file if it is already here.
-  const have = customThemes.find((c) => c.kind === head.k && c.size === head.s);
-  if (have) return applyThemeCode(head, have);
-  pendingCode = { head, name, base, accent };
-  const mb = Math.max(1, Math.round(head.s / 1048576));
-  if (await ask(`This code only holds the settings of “${name}” (the theme itself is ${mb} MB, too big for a code). Pick the file your friend sent you, and UaN applies their settings to it.`, 'Choose the file…')) {
+  const have = customThemes.find((c) => c.kind === p.kind && c.size === p.size);
+  if (have) return applyThemeCode(p, have);
+  pendingCode = { head: p, name, base, accent };
+  const mb = Math.max(1, Math.round(p.size / 1048576));
+  if (await ask(`This code holds the settings of “${name}”. The theme file itself (about ${mb} MB) is not in the code: pick the file your friend sent you, and UaN applies their settings to it.`, 'Choose the file…')) {
     $('themeCodeFile').click();
   } else {
     pendingCode = null;

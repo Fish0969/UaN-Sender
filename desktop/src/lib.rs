@@ -520,6 +520,14 @@ fn open_vlc_site() {
     let _ = std::process::Command::new(opener).arg(url).spawn();
 }
 
+/// Opens UaN's page on GitHub in the browser.
+#[tauri::command]
+fn open_github() {
+    let url = "https://github.com/Fish0969/UaN-Sender";
+    let opener = if cfg!(windows) { "explorer" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(url).spawn();
+}
+
 #[tauri::command]
 fn clear_chat(node: State<'_, Arc<Node>>, chat: String, everyone: bool) -> CmdResult<()> {
     node.clear_chat(&chat, everyone)
@@ -1316,6 +1324,7 @@ pub fn run() {
             vlc_command,
             vlc_close,
             open_vlc_site,
+            open_github,
             install_vlc,
             audio_track,
             delete_message,

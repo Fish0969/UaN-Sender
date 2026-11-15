@@ -329,7 +329,7 @@
   <dialog id="settingsDlg">
     <form id="settingsForm" method="dialog" class="s-shell">
       <nav class="s-nav" aria-label="Settings">
-        <h2>Settings</h2>
+        <h2 tabindex="-1" autofocus>Settings</h2>
         <button type="button" class="s-tab on" data-page="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Profile</span></button>
         <button type="button" class="s-tab" data-page="look"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.2-1-1.6-1-2.7 0-1 .8-1.5 1.8-1.5H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg><span>Appearance</span></button>
         <button type="button" class="s-tab" data-page="privacy"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6Z"/><path d="m9 12 2 2 4-4"/></svg><span>Privacy</span></button>
@@ -337,7 +337,6 @@
         <button type="button" class="s-tab" data-page="mailbox"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Offline mailbox</span></button>
         <button type="button" class="s-tab" data-page="backup"><svg viewBox="0 0 24 24"><path d="M4 7h16v4H4ZM6 11v8h12v-8M10 15h4"/></svg><span>Backup</span></button>
         <button type="button" class="s-tab" data-page="devices"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg><span>Phone</span></button>
-        <button type="button" class="s-tab" data-page="account"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M14 9l2 2"/></svg><span>Friend code</span></button>
         <button type="button" class="s-tab" data-page="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>About &amp; updates</span></button>
         <span class="grow"></span>
         <div class="app-version" id="sVersion"></div>
@@ -410,14 +409,6 @@
               <div class="note" id="sLinkNote">Your phone gets your friends, groups and messages, and keeps working when this PC is off.</div>
             </div>
           </section>
-          <section class="s-page hidden" data-page="account">
-            <h3 class="s-title">Friend code</h3>
-            <div class="group">
-              <div class="code-box hidden" id="sCode"></div>
-              <button type="button" class="link" id="sShowCode">Show friend code</button>
-              <div class="note">Your identity lives on this PC only. There is no password and no account to lose to a server.</div>
-            </div>
-          </section>
           <section class="s-page hidden" data-page="about">
             <h3 class="s-title">About &amp; updates</h3>
             <div class="group">
@@ -426,6 +417,7 @@
                 <div class="about-btns">
                   <button type="button" id="sUpdCheck">Check for updates</button>
                   <button type="button" id="sUpdNow" class="accent hidden">Update now</button>
+                  <button type="button" id="sGithub" title="Opens UaN's page on GitHub: downloads, release notes and the source">GitHub page</button>
                 </div>
               </div>
               <div class="note">When a new version is out, UaN shows it in the sidebar. One click downloads it and UaN restarts by itself, nothing to install.</div>
@@ -462,7 +454,7 @@
     <form method="dialog" id="themeCodeForm">
       <h2>Add a theme from a code</h2>
       <p class="sub">Paste the share code your friend copied.</p>
-      <textarea id="themeCodeText" rows="4" spellcheck="false" placeholder="UANTHEME1.…"></textarea>
+      <textarea id="themeCodeText" rows="4" spellcheck="false" placeholder="UAN-T…"></textarea>
       <div id="themeCodeError" class="error"></div>
       <div class="actions">
         <button type="button" id="themeCodeCancel">Cancel</button>
