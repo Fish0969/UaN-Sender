@@ -3438,8 +3438,6 @@ function applyTune(c) {
   const s = backdrop.node.style;
   s.setProperty('--bb', String(t.bright / 100));
   s.setProperty('--bblur', `${t.blur}px`);
-  // Blurring fades the picture's edges into the dark; zooming in a little keeps them out of sight.
-  s.setProperty('--bz', String(1 + t.blur / 120));
   if (backdrop.video) {
     backdrop.video.volume = Math.min(1, Math.max(0, t.vol / 100));
     backdrop.video.muted = !c.sound || t.vol === 0;
@@ -3499,16 +3497,28 @@ function placeTune() {
   const dlg = $('settingsDlg');
   // Wide window: the panel sits beside the settings (settings move left), so you see the background change.
   // Narrow window: it opens right under the theme tiles.
-  const wide = innerWidth >= 460 + 260 + 48;
+  const wide = innerWidth >= 16 + 460 + 12 + 300 + 16;
   if (wide) { if (panel.parentElement !== dlg) dlg.append(panel); } else if (panel.previousElementSibling !== $('sThemes')) $('sThemes').after(panel);
   panel.classList.toggle('side', wide);
   dlg.classList.toggle('tuning', wide);
+  alignTune();
 }
+// The panel sits right next to the settings, level with their top edge.
+function alignTune() {
+  const panel = $('themeTune');
+  if (!panel.classList.contains('side')) { panel.style.left = panel.style.top = ''; return; }
+  const r = $('settingsDlg').getBoundingClientRect();
+  panel.style.left = `${Math.round(r.right + 12)}px`;
+  panel.style.top = `${Math.max(16, Math.round(r.top))}px`;
+}
+addEventListener('resize', () => { if (tuning) placeTune(); });
 function openTune(c) {
   tuning = c;
   placeTune();
   $('themeTune').classList.remove('hidden');
   renderTune();
+  alignTune();
+  requestAnimationFrame(alignTune); // once the settings have moved to their place
 }
 function closeTune() {
   tuning = null;
@@ -3580,8 +3590,6 @@ async function applyThemeCode(head, theme) {
   if (head.snd !== undefined && !!theme.sound !== !!head.snd && theme.kind === 'video') await invoke('theme_sound', { id: theme.id, on: !!head.snd }).catch(() => {});
   await loadCustomThemes();
   setTheme(`custom:${theme.id}`);
-  const c = customThemes.find((x) => x.id === theme.id);
-  if (c && $('settingsDlg').open) openTune(c);
   toast(`Theme added: ${theme.name}.`);
 }
 async function importThemeCode(text) {
@@ -3683,9 +3691,6 @@ async function themeAdded(t) {
   }
   await loadCustomThemes();
   setTheme(`custom:${t.id}`);
-  // A new theme opens its adjust panel right away (volume, brightness, position, zoom, share code).
-  const added = customThemes.find((x) => x.id === t.id);
-  if (added && $('settingsDlg').open) openTune(added);
   toast(`Theme added: ${t.name}.`);
 }
 async function removeTheme(c) {
