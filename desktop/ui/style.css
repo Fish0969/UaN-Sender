@@ -1149,19 +1149,19 @@ html.chrome.fullscreen .party-invite { top: 20px; }
 html[data-ui="glass"] { --r-panel: 28px; --r-ctl: 15px; --r-print: 16px; --gap: 12px; --border: color-mix(in srgb, var(--text) 18%, transparent);
   --lift: 0 18px 50px -18px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 1px rgba(255, 255, 255, .1); }
 html[data-ui="glass"] body { background: var(--bg-image, radial-gradient(70% 60% at 12% 8%, color-mix(in srgb, var(--accent) 42%, transparent), transparent 70%), radial-gradient(60% 60% at 92% 92%, color-mix(in srgb, var(--mine, var(--accent)) 46%, transparent), transparent 70%), var(--bg)); }
-html[data-ui="glass"] .side, html[data-ui="glass"] .content { background: color-mix(in srgb, var(--side) 36%, transparent); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); }
-html[data-ui="glass"] .chat-head, html[data-ui="glass"] .composer { background: color-mix(in srgb, var(--panel) 30%, transparent); }
-html[data-ui="glass"] .bubble { -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); }
-html[data-ui="glass"] .msg.theirs .bubble { background: color-mix(in srgb, var(--theirs) 48%, transparent); }
-html[data-ui="glass"] button:not(.ap-btn):not(.tb-btn):not(.s-tab):not(.tune-x):not(.add-theme):not(.custom-tile):not(.rail-btn):not(.swatch):not(.accent) { background: color-mix(in srgb, var(--card) 38%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2); }
+html[data-ui="glass"] .side, html[data-ui="glass"] .content { background: color-mix(in srgb, var(--side) 16%, transparent); -webkit-backdrop-filter: blur(7px) saturate(1.5); backdrop-filter: blur(7px) saturate(1.5); }
+html[data-ui="glass"] .chat-head, html[data-ui="glass"] .composer { background: color-mix(in srgb, var(--panel) 12%, transparent); }
+html[data-ui="glass"] .bubble { -webkit-backdrop-filter: blur(5px) saturate(1.3); backdrop-filter: blur(5px) saturate(1.3); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); }
+html[data-ui="glass"] .msg.theirs .bubble { background: color-mix(in srgb, var(--theirs) 30%, transparent); }
+html[data-ui="glass"] button:not(.ap-btn):not(.tb-btn):not(.s-tab):not(.tune-x):not(.add-theme):not(.custom-tile):not(.rail-btn):not(.swatch):not(.accent) { background: color-mix(in srgb, var(--card) 24%, transparent); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); }
 html[data-ui="glass"] button.accent { background: color-mix(in srgb, var(--accent) 82%, transparent); }
 html[data-ui="glass"] .tb-btn { background: transparent; }
 html[data-ui="glass"] .tb-btn:hover { background: var(--hover); }
 html[data-ui="glass"] .tb-close:hover { background: #e5484d; }
-html[data-ui="glass"] input { background: color-mix(in srgb, var(--card) 40%, transparent); }
+html[data-ui="glass"] input { background: color-mix(in srgb, var(--card) 24%, transparent); }
 html[data-ui="glass"] .list li.active, html[data-ui="glass"] .list li.active:hover { background: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, .08)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); }
-html[data-ui="glass"] dialog, html[data-ui="glass"] .menu, html[data-ui="glass"] .party-invite { background: color-mix(in srgb, var(--dialog, var(--panel)) 58%, transparent); -webkit-backdrop-filter: blur(34px) saturate(1.7); backdrop-filter: blur(34px) saturate(1.7); border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .3); }
-html[data-ui="glass"] .titlebar { background: color-mix(in srgb, var(--side) 30%, transparent); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); }
+html[data-ui="glass"] dialog, html[data-ui="glass"] .menu, html[data-ui="glass"] .party-invite { background: color-mix(in srgb, var(--dialog, var(--panel)) 42%, transparent); -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6); border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .3); }
+html[data-ui="glass"] .titlebar { background: color-mix(in srgb, var(--side) 12%, transparent); -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5); }
 html[data-ui="glass"] .s-nav { background: color-mix(in srgb, var(--bg, #000) 20%, transparent); }
 
 /* --- Pixel: square corners, thick edges, hard shadows, a console font --- */
@@ -1170,8 +1170,9 @@ html[data-ui="pixel"] body { font-family: "Lucida Console", "Courier New", Conso
 html[data-ui="pixel"] *, html[data-ui="pixel"] *::before, html[data-ui="pixel"] *::after { border-radius: 0 !important; transition: none !important; }
 html[data-ui="pixel"] .side, html[data-ui="pixel"] .content { border-width: 3px; border-color: var(--text); }
 html[data-ui="pixel"] button, html[data-ui="pixel"] input, html[data-ui="pixel"] select, html[data-ui="pixel"] textarea { border: 2px solid color-mix(in srgb, var(--text) 75%, transparent); box-shadow: 3px 3px 0 rgba(0, 0, 0, .5); }
-html[data-ui="pixel"] button { white-space: nowrap; font-size: 12px; letter-spacing: -.2px; padding-left: 8px; padding-right: 8px; }
-html[data-ui="pixel"] .dock button, html[data-ui="pixel"] .code-row button { font-size: 11px; padding-left: 4px; padding-right: 4px; }
+html[data-ui="pixel"] button { white-space: nowrap; font-size: 12px; letter-spacing: -.2px; }
+html[data-ui="pixel"] .dock button, html[data-ui="pixel"] .code-row button { font-size: 11px; }
+html[data-ui="pixel"] .tiles button, html[data-ui="pixel"] .swatch, html[data-ui="pixel"] .avatar-pick, html[data-ui="pixel"] .rail-btn, html[data-ui="pixel"] .custom-tile, html[data-ui="pixel"] .add-theme, html[data-ui="pixel"] .ap-btn, html[data-ui="pixel"] .s-tab { box-shadow: none; }
 html[data-ui="pixel"] button:active { transform: translate(3px, 3px); box-shadow: none; }
 html[data-ui="pixel"] .tb-btn, html[data-ui="pixel"] .s-tab, html[data-ui="pixel"] .tune-x { box-shadow: none; border: 0; }
 html[data-ui="pixel"] button.icon, html[data-ui="pixel"] button.tiny, html[data-ui="pixel"] button.link { box-shadow: none; }
@@ -1188,3 +1189,61 @@ html[data-ui="flat"] .main { padding: 0; }
 html[data-ui="flat"] .side, html[data-ui="flat"] .content { border-width: 0 1px 0 0; box-shadow: none; }
 html[data-ui="flat"] .content { border-width: 0; }
 html[data-ui="flat"] .list li { border-radius: 6px; }
+
+
+/* ===== Retro: grey bevels like a classic desktop ===== */
+html[data-ui="retro"] { --r-panel: 0px; --r-ctl: 0px; --r-print: 0px; --gap: 6px; --border: #404040; --lift: none; --ease: steps(2, end); }
+html[data-ui="retro"] body { font-family: Tahoma, "MS Sans Serif", "Segoe UI", sans-serif; font-size: 13px; -webkit-font-smoothing: none; }
+html[data-ui="retro"] *, html[data-ui="retro"] *::before, html[data-ui="retro"] *::after { border-radius: 0 !important; transition: none !important; }
+html[data-ui="retro"] .side, html[data-ui="retro"] .content, html[data-ui="retro"] dialog, html[data-ui="retro"] .menu, html[data-ui="retro"] .party-invite { border: 2px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px #808080, inset 1px 1px #dfdfdf; }
+html[data-ui="retro"] button, html[data-ui="retro"] .bubble { border: 2px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px #808080, inset 1px 1px #dfdfdf; }
+html[data-ui="retro"] button:active { border-color: #404040 #fff #fff #404040; box-shadow: inset 1px 1px #808080; }
+html[data-ui="retro"] input, html[data-ui="retro"] select, html[data-ui="retro"] textarea { border: 2px solid; border-color: #404040 #fff #fff #404040; box-shadow: inset 1px 1px #808080; }
+html[data-ui="retro"] .tb-btn, html[data-ui="retro"] .s-tab, html[data-ui="retro"] .tune-x, html[data-ui="retro"] .tiles button, html[data-ui="retro"] .swatch, html[data-ui="retro"] .avatar-pick, html[data-ui="retro"] .rail-btn, html[data-ui="retro"] .custom-tile, html[data-ui="retro"] .add-theme, html[data-ui="retro"] .ap-btn { box-shadow: none; }
+html[data-ui="retro"] .titlebar { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; border-bottom: 2px solid #404040; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-ui="retro"] .titlebar .tb-btn { color: #fff; }
+html[data-ui="retro"] .list li.active { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* ===== Neon: glowing edges in the colour of your theme ===== */
+html[data-ui="neon"] { --r-panel: 14px; --r-ctl: 9px; --r-print: 10px; --gap: 10px; --border: color-mix(in srgb, var(--accent) 55%, transparent);
+  --lift: 0 0 22px color-mix(in srgb, var(--accent) 32%, transparent), inset 0 0 18px color-mix(in srgb, var(--accent) 10%, transparent); }
+html[data-ui="neon"] .side, html[data-ui="neon"] .content, html[data-ui="neon"] dialog, html[data-ui="neon"] .menu, html[data-ui="neon"] .party-invite { border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 34%, transparent), inset 0 0 16px color-mix(in srgb, var(--accent) 9%, transparent); }
+html[data-ui="neon"] button:not(.tb-btn):not(.s-tab):not(.tune-x):not(.swatch):not(.avatar-pick):not(.ap-btn) { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+html[data-ui="neon"] button:hover:not(.tb-btn):not(.s-tab):not(.tune-x) { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent); }
+html[data-ui="neon"] button.accent, html[data-ui="neon"] .ap-btn { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 65%, transparent); }
+html[data-ui="neon"] .bubble { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+html[data-ui="neon"] .msg.mine .bubble { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 40%, transparent); }
+html[data-ui="neon"] h2, html[data-ui="neon"] .s-title, html[data-ui="neon"] .tb-title { text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 80%, transparent); }
+html[data-ui="neon"] .titlebar { border-bottom: 1px solid color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 30%, transparent); }
+html[data-ui="neon"] .list li.active { box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* ===== Terminal: green on black, a console font, scan lines (own colours) ===== */
+html[data-ui="terminal"] { --r-panel: 0px; --r-ctl: 0px; --r-print: 0px; --gap: 8px; --lift: none;
+  --text: #9dffb4 !important; --muted: #4fae6a !important; --border: #1f7a3a !important; --accent: #39ff7a !important; --accent-hover: #6bff9c !important; --on-accent: #001a08 !important;
+  --bg: #020a05 !important; --side: rgba(2, 14, 7, .9) !important; --panel: rgba(1, 10, 5, .86) !important; --card: rgba(4, 22, 10, .9) !important; --theirs: rgba(4, 22, 10, .9) !important;
+  --mine: #0c5a26 !important; --dialog: #03120a !important; --hover: rgba(57, 255, 122, .1) !important; --active: rgba(57, 255, 122, .18) !important; }
+html[data-ui="terminal"] body { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 12.5px; -webkit-font-smoothing: none; }
+html[data-ui="terminal"] *, html[data-ui="terminal"] *::before, html[data-ui="terminal"] *::after { border-radius: 0 !important; }
+html[data-ui="terminal"] body::after { content: ""; position: fixed; inset: 0; z-index: 3; pointer-events: none; background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, .2) 0 1px, transparent 1px 3px); }
+html[data-ui="terminal"] .side, html[data-ui="terminal"] .content, html[data-ui="terminal"] dialog, html[data-ui="terminal"] .menu { border: 1px solid #1f7a3a; box-shadow: 0 0 18px rgba(57, 255, 122, .12); }
+html[data-ui="terminal"] button, html[data-ui="terminal"] input, html[data-ui="terminal"] select, html[data-ui="terminal"] .bubble { border: 1px solid #1f7a3a; }
+html[data-ui="terminal"] button { white-space: nowrap; }
+html[data-ui="terminal"] .titlebar { background: #020a05; border-bottom: 1px solid #1f7a3a; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-ui="terminal"] .list li.active { box-shadow: inset 0 0 0 1px #39ff7a; }
+
+/* ===== Soft: pillowy, raised shapes with soft shadows ===== */
+html[data-ui="soft"] { --r-panel: 30px; --r-ctl: 18px; --r-print: 20px; --gap: 14px; --border: transparent;
+  --lift: 12px 12px 28px rgba(0, 0, 0, .34), -6px -6px 18px rgba(255, 255, 255, .06); }
+html[data-ui="soft"] .side, html[data-ui="soft"] .content { border: 0; box-shadow: 12px 12px 28px rgba(0, 0, 0, .34), -6px -6px 18px rgba(255, 255, 255, .06); }
+html[data-ui="soft"] button:not(.tb-btn):not(.s-tab):not(.tune-x):not(.swatch):not(.avatar-pick):not(.ap-btn):not(.add-theme):not(.custom-tile):not(.rail-btn):not(.link) { border: 0; box-shadow: 5px 5px 12px rgba(0, 0, 0, .3), -3px -3px 9px rgba(255, 255, 255, .06); }
+html[data-ui="soft"] button:active:not(.tb-btn):not(.s-tab) { box-shadow: inset 3px 3px 8px rgba(0, 0, 0, .35), inset -2px -2px 6px rgba(255, 255, 255, .05); }
+html[data-ui="soft"] input, html[data-ui="soft"] select, html[data-ui="soft"] textarea { border: 0; box-shadow: inset 3px 3px 8px rgba(0, 0, 0, .32), inset -2px -2px 6px rgba(255, 255, 255, .05); }
+html[data-ui="soft"] .bubble { border: 0; box-shadow: 4px 4px 10px rgba(0, 0, 0, .26), -2px -2px 7px rgba(255, 255, 255, .05); }
+html[data-ui="soft"] dialog, html[data-ui="soft"] .menu { border: 0; box-shadow: 16px 16px 40px rgba(0, 0, 0, .5), -6px -6px 20px rgba(255, 255, 255, .05); }
+html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
+
+/* the little previews on the Interface style page */
+.ui-styles [data-ui-id="retro"] .uis-prev i { border-radius: 0; border: 2px solid; border-color: #fff #404040 #404040 #fff; background: #c0c0c0; }
+.ui-styles [data-ui-id="neon"] .uis-prev i { border-radius: 8px; border: 1px solid var(--accent); background: transparent; box-shadow: 0 0 8px var(--accent), inset 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }
+.ui-styles [data-ui-id="terminal"] .uis-prev i { border-radius: 0; border: 1px solid #39ff7a; background: #02140a; }
+.ui-styles [data-ui-id="soft"] .uis-prev i { border-radius: 12px; border: 0; background: color-mix(in srgb, var(--text) 10%, transparent); box-shadow: 3px 3px 6px rgba(0, 0, 0, .35), -2px -2px 5px rgba(255, 255, 255, .08); }

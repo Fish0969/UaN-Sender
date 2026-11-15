@@ -3999,6 +3999,10 @@ const UI_STYLES = [
   { id: 'glass', name: 'Liquid glass' },
   { id: 'pixel', name: 'Pixel' },
   { id: 'flat', name: 'Flat' },
+  { id: 'retro', name: 'Retro' },
+  { id: 'neon', name: 'Neon' },
+  { id: 'terminal', name: 'Terminal' },
+  { id: 'soft', name: 'Soft' },
 ];
 let uiStyle = (() => { try { const v = localStorage.getItem('uan.ui'); return UI_STYLES.some((u) => u.id === v) ? v : 'default'; } catch { return 'default'; } })();
 function applyUiStyle() {

@@ -76,9 +76,10 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   The background changes while you drag. *Reset* goes back to the defaults.
 - **Settings in pages.** The pages are listed on the left (Profile, Appearance, Interface style, Privacy, Downloads &
   start-up, Offline mailbox, Backup, Phone, About & updates), the page itself on the right. The installed version is shown at the bottom.
-- **Interface style.** Besides the colours of a theme you can change the shape and feel of the whole app: **Liquid glass**
-  (frosted, translucent panels), **Pixel** (square corners, thick edges, hard shadows) or **Flat**. **Default** is the usual
-  look and is what everyone starts with; pick it any time to go back.
+- **Interface style.** Besides the colours of a theme you can change the shape and feel of the whole app:
+  **Liquid glass** (see-through frosted panels, your background shows through), **Pixel**, **Flat**, **Retro** (grey bevels),
+  **Neon** (glowing edges), **Terminal** (green on black, with its own colours) or **Soft** (raised, pillowy shapes).
+  **Default** is the usual look and is what everyone starts with; pick it any time to go back.
 - **Title bar and full screen (Windows).** UaN draws its own title bar in the colours of your theme. **F11** shows the app full screen and back.
 - **Groups.** The owner can name **co-owners**. Owners and co-owners can rename the group, add and remove people, manage
   channels, change the group picture, clear the chat for everyone and delete anyone's message; only the owner deletes
