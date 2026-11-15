@@ -262,6 +262,12 @@ async function installUpdate(u, btns) {
     toast(err);
   }
 }
+function renderHistory() {
+  const now = S.me?.version;
+  $('sHistory').replaceChildren(...CHANGELOG.map((c, i) => el('details', i === 0 ? { open: '' } : {},
+    el('summary', {}, el('span', { class: 'hv', text: 'UaN ' + c.v }), c.v === now ? el('span', { class: 'hnow', text: 'installed' }) : null),
+    el('ul', {}, ...c.items.map((t) => el('li', { text: t }))))));
+}
 function renderUpdateState() {
   const u = lastUpdate;
   $('sUpdState').textContent = u ? `UaN ${u.version} is available` : lastUpdateFailed ? 'Couldn’t check (no internet, or GitHub didn’t answer). Try again in a moment.' : 'You have the newest version.';
@@ -1855,54 +1861,6 @@ $('phonePhotos').addEventListener('change', () => {
   if (files.length) sendPhoneFiles(files).catch(toast);
 });
 
-// ---------- Voice message: record, then it goes into the chat like any file, and plays in the message ----------
-let rec = null; // { mr, stream, chunks, timer, chat, send }
-const two = (n) => String(n).padStart(2, '0');
-async function startRecording() {
-  if (rec || !S.active) return;
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {
-    return toast('The microphone isn’t available. In Windows: Settings → Privacy → Microphone, let apps use it.');
-  }
-  const mime = ['audio/webm;codecs=opus', 'audio/webm'].find((x) => window.MediaRecorder?.isTypeSupported(x));
-  if (!mime) { stream.getTracks().forEach((t) => t.stop()); return toast('This system can’t record sound here.'); }
-  const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 });
-  const r = (rec = { mr, stream, chunks: [], t0: Date.now(), chat: S.active, send: false, timer: null });
-  mr.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data); };
-  mr.onstop = async () => {
-    clearInterval(r.timer);
-    r.stream.getTracks().forEach((t) => t.stop());
-    $('recBar').classList.add('hidden');
-    $('micBtn').classList.remove('rec');
-    if (rec === r) rec = null;
-    if (!r.send || !r.chunks.length) return;
-    const d = new Date();
-    const file = new File([new Blob(r.chunks, { type: mime })], `Voice message ${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}.weba`);
-    try {
-      const path = await uploadFile(file);
-      await invoke('send_paths', { paths: [path], chats: [r.chat], text: '' });
-    } catch (e) { toast(e); }
-  };
-  mr.start(250);
-  $('micBtn').classList.add('rec');
-  $('recBar').classList.remove('hidden');
-  const tick = () => {
-    const s = (Date.now() - r.t0) / 1000;
-    $('recTime').textContent = fmtTime(s);
-    if (s >= 300) stopRecording(true); // five minutes at most
-  };
-  tick();
-  r.timer = setInterval(tick, 250);
-}
-function stopRecording(send) {
-  if (!rec) return;
-  rec.send = send;
-  if (rec.mr.state !== 'inactive') rec.mr.stop();
-}
-$('micBtn').addEventListener('click', () => { if (rec) stopRecording(true); else startRecording(); });
-$('recSend').addEventListener('click', () => stopRecording(true));
-$('recCancel').addEventListener('click', () => stopRecording(false));
-
 $('attachBtn').addEventListener('click', () => {
   if (!S.active) return;
   if (document.documentElement.classList.contains('phone')) return $('phoneFiles').click();
@@ -3101,6 +3059,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sVersion').textContent = `UaN ${S.me.version}`;
   $('sAboutVer').textContent = `UaN ${S.me.version}`;
   renderUpdateState();
+  renderHistory();
   // The phone page carries the name the app gives it; pages that don't exist here (no mailbox on a phone) get no tab.
   const devLabel = $('sDevicesTitle').textContent || 'Phone';
   document.querySelector('.s-tab[data-page="devices"] span').textContent = devLabel;
@@ -4188,10 +4147,11 @@ let uiZoom = (() => { try { const z = parseFloat(localStorage.getItem('uan.zoom'
 function setZoom(z, save = true) {
   uiZoom = Math.min(1.6, Math.max(0.7, Math.round(z * 20) / 20));
   if (save) { try { if (uiZoom === 1) localStorage.removeItem('uan.zoom'); else localStorage.setItem('uan.zoom', String(uiZoom)); } catch {} }
-  invoke('win_ctl', { action: 'zoom:' + uiZoom }).catch(() => {});
+  document.documentElement.style.zoom = uiZoom === 1 ? '' : String(uiZoom);
   if ($('sZoom')) { $('sZoom').value = String(Math.round(uiZoom * 100)); $('sZoomVal').textContent = Math.round(uiZoom * 100) + '%'; }
 }
-$('sZoom').addEventListener('input', () => setZoom(Number($('sZoom').value) / 100));
+$('sZoom').addEventListener('input', () => { $('sZoomVal').textContent = $('sZoom').value + '%'; });
+$('sZoom').addEventListener('change', () => setZoom(Number($('sZoom').value) / 100));
 $('sZoomReset').addEventListener('click', () => setZoom(1));
 document.addEventListener('keydown', (e) => {
   if (!e.ctrlKey || e.altKey) return;

@@ -133,12 +133,6 @@
           <button type="button" class="icon" id="replyCancel" title="Cancel"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         </div>
         <div id="mentionPop" class="mention-pop hidden"></div>
-        <div id="recBar" class="rec-bar hidden">
-          <span class="rec-dot"></span>
-          <span class="grow"><b id="recTime">0:00</b> Recording a voice message…</span>
-          <button type="button" class="small" id="recCancel">Cancel</button>
-          <button type="button" class="small accent" id="recSend">Send</button>
-        </div>
         <form id="composer" class="composer">
           <button type="button" class="icon" id="attachBtn" title="Send files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5 12.4 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l8-7.9"/></svg>
@@ -147,7 +141,6 @@
             <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>
           </button>
           <input id="msgInput" placeholder="Message" autocomplete="off" maxlength="5000">
-          <button type="button" class="icon" id="micBtn" title="Record a voice message" aria-label="Record a voice message"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
           <button class="accent" id="sendBtn" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
         </form>
         <div id="drop" class="drop hidden">Drop to send</div>
@@ -447,6 +440,8 @@
                 </div>
               </div>
               <div class="note">When a new version is out, UaN shows it in the sidebar. One click downloads it and UaN restarts by itself, nothing to install.</div>
+              <div class="sub-title">What came in each version</div>
+              <div id="sHistory" class="history"></div>
             </div>
           </section>
         </div>
@@ -582,6 +577,7 @@
     </form>
   </dialog>
 
+  <script src="changelog.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

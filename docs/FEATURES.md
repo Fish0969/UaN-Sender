@@ -30,9 +30,8 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
 - **Open in VLC.** If a film's picture can't play inside UaN, it opens in VLC by itself, streamed without
   downloading. *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
-- **Voice messages.** The microphone button next to the message box records (up to 5 minutes); *Send* puts it in the chat, where it plays like any sound.
 - **Reactions.** Hover a message and press the smiley: 👍 ❤️ 😂 😮 😢 🙏. Your reaction shows under the message with the others'; click yours again to take it back.
-- **Sounds in messages.** An audio file (mp3, voice message …) plays inside the message, with a play button, a bar to jump around, and a volume control that all sounds share.
+- **Sounds in messages.** An audio file (mp3 …) plays inside the message, with a play button, a bar to jump around, and a volume control that all sounds share.
 - **Sound tracks of a film.** A film (mkv) with more than one language gets an **Audio** button in the player; the default track plays as usual, another one is decoded by a silent VLC.
 - **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)
   for everyone. Deleting a file for everyone also stops sharing it, stops friends' downloads of it and removes the
@@ -85,6 +84,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   **Neon** (glowing edges), **Terminal** (green on black, with its own colours) or **Soft** (raised, pillowy shapes).
   **Default** is the usual look and is what everyone starts with; pick it any time to go back.
 - **Interface size.** *Settings → Interface style → Interface size* (or Ctrl and + / − / 0) makes the whole app bigger or smaller.
+- **Version history.** *Settings → About & updates* lists what came in each version, and it stays in the app.
 - **Title bar and full screen (Windows).** UaN draws its own title bar in the colours of your theme. **F11** shows the app full screen and back.
 - **Groups.** The owner can name **co-owners**. Owners and co-owners can rename the group, add and remove people, manage
   channels, change the group picture, clear the chat for everyone and delete anyone's message; only the owner deletes

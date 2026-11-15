@@ -1,0 +1,62 @@
+// What came in which version. Newest first. (Shown in Settings → About & updates.)
+const CHANGELOG = [
+  { v: '1.9.14', items: [
+    'Voice messages are gone again.',
+    'Interface size is sharp at every size (the page itself is scaled, so the text is drawn again at the new size).',
+    'About & updates shows what came in each version.',
+  ] },
+  { v: '1.9.13', items: [
+    'Voice messages (taken out again in 1.9.14).',
+    'Reactions: answer a message with 👍 ❤️ 😂 😮 😢 or 🙏.',
+    'Sounds in messages have a volume control.',
+    'Finer theme settings: volume, blur and brightness go in tenths, with a gentle curve for small values.',
+    'Films (mkv) with more than one language get an Audio button.',
+    'Interface size: make the whole app bigger or smaller (also Ctrl and + / − / 0).',
+    'The update card shows what is new.',
+  ] },
+  { v: '1.9.12', items: [
+    'The Pixel style no longer shifts the small icons.',
+    'Liquid glass is see-through: your background shows through the panels.',
+    'Four more interface styles: Retro, Neon, Terminal and Soft.',
+  ] },
+  { v: '1.9.11', items: [
+    'A film whose sound the player can’t decode now plays inside UaN: a silent VLC decodes the sound in the background.',
+    'UaN draws its own title bar in the colours of your theme (Windows); F11 shows the app full screen.',
+    'Interface styles: Default, Liquid glass, Pixel and Flat.',
+    'Group pictures sit level with their name in the list.',
+    'Theme share codes were taken out.',
+  ] },
+  { v: '1.9.10', items: [
+    'The settings of your own theme show up by themselves in Appearance.',
+    'Click out of UaN and the moving background keeps going, without sound; it is also quiet while a film or sound plays.',
+    'A sound (mp3 …) plays right in the message.',
+    'Check for updates tells “no internet” from “you have the newest version”.',
+  ] },
+  { v: '1.9.9', items: [
+    'A new page for UaN on GitHub, with pictures.',
+    'Settings are pages with a list on the left.',
+    'A button to open UaN’s GitHub page.',
+  ] },
+  { v: '1.9.7', items: [
+    'Settings as pages, number boxes next to the theme sliders, a new update card and the About & updates page.',
+  ] },
+  { v: '1.9.6', items: ['Blur no longer zooms the picture in; theme settings open next to the Settings.'] },
+  { v: '1.9.5', items: ['The installed version is shown at the bottom of the Settings.'] },
+  { v: '1.9.4', items: [
+    'Watch together starts again (it had stopped working in 1.7.0).',
+    'A folder with thousands of files opens fast and no longer freezes the app.',
+    'Films whose picture can’t play inside UaN open in VLC by themselves.',
+    'Settings for your own theme: sound, volume, blur, brightness.',
+  ] },
+  { v: '1.9.3', items: ['Watch-together invitations you can see, file types when sending a folder, co-owners of a group, a gallery of each chat.'] },
+  { v: '1.9.2', items: ['Film folders open, arrows in the viewer, invitations arrive, your own themes.'] },
+  { v: '1.9.1', items: ['Deleted files stop downloading, folder previews and per-file download.'] },
+  { v: '1.9.0', items: ['A new look; the phone signs in to the PC account.'] },
+  { v: '1.7.0', items: ['Backup and restore, reply, edit, pin, bold and italic, @mentions, mute, Away and Do not disturb, sending folders, watch-party chat and playlist.'] },
+  { v: '1.6.x', items: ['Channels in groups (also locked with a password); a new layout, later back to the classic one.'] },
+  { v: '1.5.x', items: ['Updates replace the program in place; a Christmas theme with snow; clear chats, typing and seen; 16 themes, app icons and ready-made pictures.'] },
+  { v: '1.4.x', items: ['Delete messages; watch together: stream it or download the whole film first; whether you have a direct or a relay connection.'] },
+  { v: '1.3.x', items: ['Open films in VLC, in sync with watch together; one-click VLC install.'] },
+  { v: '1.2.0', items: ['Previews for photos and videos, automatic downloads, small files through the mailbox when the sender is offline.'] },
+  { v: '1.1.x', items: ['The first versions: chat, files of any size, watch together, one-click updates.'] },
+];
