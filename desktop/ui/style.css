@@ -1307,3 +1307,7 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .avatar[data-uid] { cursor: pointer; }
 .sender[data-uid] { cursor: pointer; }
 .sender[data-uid]:hover { text-decoration: underline; }
+
+.tiles.avatars button.letter-tile { display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 16px; border: 0; }
+.history .hnote { margin: 0; padding: 12px 14px 12px 34px; border: 1px solid var(--border); border-radius: var(--r-ctl, 9px); background: var(--card); }
+.history .hnote li { margin: 4px 0; color: var(--text); }

@@ -264,10 +264,9 @@ async function installUpdate(u, btns) {
   }
 }
 function renderHistory() {
-  const now = S.me?.version;
-  $('sHistory').replaceChildren(...CHANGELOG.map((c, i) => el('details', i === 0 ? { open: '' } : {},
-    el('summary', {}, el('span', { class: 'hv', text: 'UaN ' + c.v }), c.v === now ? el('span', { class: 'hnow', text: 'installed' }) : null),
-    el('ul', {}, ...c.items.map((t) => el('li', { text: t }))))));
+  const c = CHANGELOG.find((x) => x.v === S.me?.version) || CHANGELOG[0];
+  $('sHistoryTitle').textContent = `What is new in ${c.v}`;
+  $('sHistory').replaceChildren(el('ul', { class: 'hnote' }, ...c.items.map((t) => el('li', { text: t }))));
 }
 function renderUpdateState() {
   const u = lastUpdate;
@@ -398,6 +397,8 @@ function renderMe() {
   setAvatar($('meAvatar'), S.me.name, { seed: S.me.id, src: S.me.profile?.avatar, online: true, mode: S.me.mode });
   $('meAvatar').title = MODE_NAMES[S.me.mode] || 'Online';
   $('meAvatar').onclick = modeMenu;
+  $('meName').onclick = () => openProfile(S.me.id);
+  $('meName').title = 'See your profile as others see it';
   $('meStatus').textContent = S.me.profile?.status || '';
   $('meProfile').classList.toggle('hidden', !S.me.profileName);
   $('meProfile').textContent = S.me.profileName ? `Test profile: ${S.me.profileName}` : '';
@@ -1366,11 +1367,10 @@ function openProfile(id) {
   $('pfName').textContent = p.me ? `${p.name} (you)` : p.name;
   $('pfStatus').textContent = p.status || '';
   const link = S.links?.[id];
-  $('pfOnline').textContent = p.me ? '' : p.online ? (link ? (link.direct ? 'Online · direct connection' : 'Online · via relay') : 'Online') : 'Offline';
+  $('pfOnline').textContent = p.me ? 'This is how others see your profile' : p.online ? (link ? (link.direct ? 'Online · direct connection' : 'Online · via relay') : 'Online') : 'Offline';
   $('pfBio').textContent = p.bio || (p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : 'Nothing here yet.');
   $('pfBio').classList.toggle('empty', !p.bio);
   const facts = [];
-  if (p.joined) facts.push(['On UaN since', joinFmt.format(p.joined)]);
   if (p.since) facts.push(['Friends since', joinFmt.format(p.since)]);
   $('pfFacts').replaceChildren(...facts.flatMap(([k, v]) => [el('span', { class: 'k', text: k }), el('span', { text: v })]));
   $('pfActions').replaceChildren(
@@ -2909,8 +2909,13 @@ $('chatTitle').addEventListener('click', () => {
   const info = chatInfo(S.active);
   if (!info) return;
   if (info.group) return openGroupInfo(info.group.id);
-  const r = $('chatTitle').getBoundingClientRect();
-  showMenu(r.left, r.bottom + 2, friendMenu(info.friend).slice(2));
+  openProfile(info.friend.id);
+});
+$('chatTitle').addEventListener('contextmenu', (e) => {
+  const info = chatInfo(S.active);
+  if (!info || info.group) return;
+  e.preventDefault();
+  showMenu(e.clientX, e.clientY, friendMenu(info.friend).slice(2));
 });
 
 let groupDlgId = null;
@@ -3023,7 +3028,10 @@ function renderAvatarPick() {
   const btn = $('sAvatarBtn');
   const src = pendingAvatar === null ? S.me.profile?.avatar : pendingAvatar;
   btn.style.background = `hsl(${hue(S.me.id)} 45% 48%)`;
-  btn.replaceChildren(src ? el('img', { src, alt: '' }) : ($('sName').value || S.me.name || '?')[0].toUpperCase());
+  const letter = ($('sName').value || S.me.name || '?')[0].toUpperCase();
+  btn.replaceChildren(src ? el('img', { src, alt: '' }) : letter);
+  const lt = $('sLetterTile');
+  if (lt) { lt.textContent = letter; lt.style.background = `hsl(${hue(S.me.id)} 45% 48%)`; }
 }
 
 // ---------- One account on a PC and a phone ----------
@@ -3110,7 +3118,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sName').value = S.me.name;
   $('sStatus').value = S.me.profile?.status || '';
   $('sBio').value = S.me.profile?.bio || '';
-  $('sBioCount').textContent = `${$('sBio').value.length} / 300${S.me.profile?.joined ? ' · On UaN since ' + joinFmt.format(S.me.profile.joined) : ''}`;
+  $('sBioCount').textContent = `${$('sBio').value.length} / 500`;
   renderAvatarPick();
   $('sTheme').value = theme.mode;
   renderSwatches();
@@ -3193,7 +3201,7 @@ $('sRestore').addEventListener('click', async () => {
     await invoke('import_backup', { password });
   } catch (e) { toast(e); }
 });
-$('sBio').addEventListener('input', () => { $('sBioCount').textContent = `${$('sBio').value.length} / 300${S.me.profile?.joined ? ' · On UaN since ' + joinFmt.format(S.me.profile.joined) : ''}`; });
+$('sBio').addEventListener('input', () => { $('sBioCount').textContent = `${$('sBio').value.length} / 500`; });
 $('sGithub').addEventListener('click', () => invoke('open_github').catch(() => {}));
 $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -3739,8 +3747,6 @@ async function pickAvatar() {
   $('avatarFile').click();
 }
 $('sAvatarBtn').addEventListener('click', pickAvatar);
-$('sAvatarPick').addEventListener('click', pickAvatar);
-$('sAvatarRemove').addEventListener('click', () => { pendingAvatar = ''; renderAvatarPick(); });
 $('sName').addEventListener('input', renderAvatarPick);
 $('avatarFile').addEventListener('change', async () => {
   const file = $('avatarFile').files[0];
@@ -3932,15 +3938,14 @@ function renderTune() {
   const video = c.kind === 'video';
   const set = (key, v) => { c.tune = { ...(c.tune || {}), [key]: v }; applyTune(c); saveTune(c); };
   const row = (icon, label, ...ctl) => el('div', { class: 'wp-row' }, svg(TUNE_ICON[icon]), el('span', { class: 'wp-lbl', text: label }), ...ctl);
-  // Values go in tenths. The slider has a thousand steps, and for volume and blur it moves along a curve, so the small
-  // values (where the difference is biggest) can be set finely. The number box takes decimals, e.g. 2.5.
+  // Whole numbers only. For volume and blur the slider moves along a curve, so the small values are easy to hit.
   const slider = (key, icon, label, min, max, curve = false) => {
-    const tenth = (v) => Math.round(v * 10) / 10;
-    const clamp = (v) => Math.min(max, Math.max(min, tenth(v)));
-    const show = (v) => String(tenth(v));
+    const whole = (v) => Math.round(v);
+    const clamp = (v) => Math.min(max, Math.max(min, whole(v)));
+    const show = (v) => String(whole(v));
     const toPos = (v) => Math.round((curve ? Math.sqrt(Math.max(0, (v - min) / (max - min))) : (v - min) / (max - min)) * 1000);
     const fromPos = (p) => min + (max - min) * (curve ? (p / 1000) ** 2 : p / 1000);
-    const num = el('input', { type: 'number', class: 'wp-num', min, max, step: 0.1, value: show(t[key]), 'aria-label': label + ' (number)' });
+    const num = el('input', { type: 'number', class: 'wp-num', min, max, step: 1, value: show(t[key]), 'aria-label': label + ' (number)' });
     const input = el('input', { type: 'range', class: 'wp-range', min: 0, max: 1000, step: 1, value: toPos(t[key]), 'aria-label': label });
     input.addEventListener('input', () => { const v = clamp(fromPos(Number(input.value))); num.value = show(v); set(key, v); });
     num.addEventListener('input', () => {
@@ -4372,7 +4377,8 @@ function drawAvatar(canvas, a) {
   c.drawImage(layer, 0, 0);
 }
 function renderAvatarTiles() {
-  $('sAvatars').replaceChildren(...AVATARS.map((a) => {
+  const letterTile = el('button', { type: 'button', id: 'sLetterTile', class: 'letter-tile', title: 'Your first letter (the default)', onclick: () => { pendingAvatar = ''; renderAvatarPick(); } });
+  $('sAvatars').replaceChildren(letterTile, ...AVATARS.map((a) => {
     const canvas = el('canvas', { width: 72, height: 72 });
     drawAvatar(canvas, a);
     return el('button', { type: 'button', title: a.name, onclick: () => {
@@ -4383,6 +4389,7 @@ function renderAvatarTiles() {
       renderAvatarPick();
     } }, canvas);
   }));
+  renderAvatarPick();
 }
 
 // ---------- Subtitles: off by default, one click to turn on ----------

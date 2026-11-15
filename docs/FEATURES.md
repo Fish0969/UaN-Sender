@@ -32,7 +32,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
 - **Reactions.** Hover a message and press the smiley: 👍 ❤️ 😂 😮 😢 🙏. Your reaction shows under the message with the others'; click yours again to take it back.
 - **Sounds in messages.** An audio file (mp3 …) plays inside the message, with a play button, a bar to jump around, and a speaker you point at to set the volume (shared by all sounds).
-- **Profiles.** Write an *About* text in *Settings → Profile*. Click anyone's picture or name to see their profile: picture, status, About, when they joined UaN and since when you are friends.
+- **Profiles.** Write an *About* text in *Settings → Profile*. Click anyone's picture or name (or your own, to see how others see you) to see their profile: picture, status, About and since when you are friends. In a private chat, click the name at the top for the profile and right-click it for Mute, Clear and Remove friend.
 - **Sound tracks of a film.** A film (mkv) with more than one language gets an **Audio** button in the player; the default track plays as usual, another one is decoded by a silent VLC.
 - **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)
   for everyone. Deleting a file for everyone also stops sharing it, stops friends' downloads of it and removes the
@@ -85,7 +85,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   **Neon** (glowing edges), **Terminal** (green on black, with its own colours) or **Soft** (raised, pillowy shapes).
   **Default** is the usual look and is what everyone starts with; pick it any time to go back.
 - **Interface size.** *Settings → Interface style → Interface size* (or Ctrl and + / − / 0) makes the whole app bigger or smaller.
-- **Version history.** *Settings → About & updates* lists what came in each version, and it stays in the app.
+- **Version history.** *Settings → About & updates* shows what the newest update brought.
 - **Title bar and full screen (Windows).** UaN draws its own title bar in the colours of your theme. **F11** shows the app full screen and back.
 - **Groups.** The owner can name **co-owners**. Owners and co-owners can rename the group, add and remove people, manage
   channels, change the group picture, clear the chat for everyone and delete anyone's message; only the owner deletes

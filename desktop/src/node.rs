@@ -1107,7 +1107,7 @@ impl Node {
                     self.set_kv("name", &name.chars().take(32).collect::<String>());
                     self.set_kv("status", &status.chars().take(60).collect::<String>());
                     if let Some(b) = bio {
-                        self.set_kv("bio", &b.chars().take(300).collect::<String>());
+                        self.set_kv("bio", &b.chars().take(500).collect::<String>());
                     }
                     match avatar.filter(|a| a.starts_with("data:image/") && a.len() <= 200_000) {
                         Some(a) => self.set_kv("avatar", &a),
@@ -1345,7 +1345,7 @@ impl Node {
             self.set_kv("status", &st);
         }
         if let Some(b) = bio {
-            let b: String = b.trim().chars().take(300).collect();
+            let b: String = b.trim().chars().take(500).collect();
             self.set_kv("bio", &b);
         }
         if let Some(a) = avatar {
@@ -1397,7 +1397,7 @@ impl Node {
         tauri::async_runtime::spawn(async move {
             if let Ok(v) = me.request(&peer, &Req::Profile).await {
                 let avatar = v["avatar"].as_str().filter(|a| a.starts_with("data:image/") && a.len() <= 200_000);
-                let bio: Option<String> = v["bio"].as_str().map(|b| b.chars().take(300).collect());
+                let bio: Option<String> = v["bio"].as_str().map(|b| b.chars().take(500).collect());
                 let joined = v["joined"].as_i64();
                 let _ = me.db.lock().unwrap().execute(
                     "INSERT INTO profiles (id, status, avatar, pv, bio, joined) VALUES (?1, ?2, ?3, ?4, ?5, ?6)

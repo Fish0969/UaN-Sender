@@ -360,9 +360,8 @@
                 <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming, Watching a film, Away"></label>
               </div>
             </div>
-            <label class="bio-label">About you<textarea id="sBio" maxlength="300" rows="3" placeholder="Say something about yourself. Your friends see this on your profile."></textarea></label>
+            <label class="bio-label">About you<textarea id="sBio" maxlength="500" rows="4" placeholder="Say something about yourself. Your friends see this on your profile."></textarea></label>
             <div class="note" id="sBioCount"></div>
-            <div class="note avatar-links"><button type="button" class="link" id="sAvatarPick">Upload your own…</button> · <button type="button" class="link" id="sAvatarRemove">Remove picture</button></div>
             <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
           </section>
           <section class="s-page hidden" data-page="look">
@@ -442,7 +441,7 @@
                 </div>
               </div>
               <div class="note">When a new version is out, UaN shows it in the sidebar. One click downloads it and UaN restarts by itself, nothing to install.</div>
-              <div class="sub-title">What came in each version</div>
+              <div class="sub-title" id="sHistoryTitle">What is new in this version</div>
               <div id="sHistory" class="history"></div>
             </div>
           </section>

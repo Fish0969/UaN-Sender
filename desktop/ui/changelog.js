@@ -1,5 +1,14 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.16', items: [
+    'Click the name at the top of a private chat to see the person’s profile; right-click it for Mute, Clear messages and Remove friend.',
+    'Click your own name to see your profile the way others see it.',
+    'The About text can be 500 characters.',
+    'Your picture: click it to choose a file, or pick a ready-made one; the first ready-made one is your letter in a colour.',
+    'Theme settings (volume, blur, brightness) are whole numbers.',
+    'About & updates shows only what the newest update brought.',
+    'The “On UaN since” date is not shown for now.',
+  ] },
   { v: '1.9.15', items: [
     'Real profiles: write a short About text in Settings → Profile; a profile shows it, and since when the person is on UaN.',
     'Click a person’s picture or name (in a group chat or a member list) to open their profile.',
