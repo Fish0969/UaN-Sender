@@ -1329,7 +1329,7 @@ impl Node {
     }
 
     pub fn my_profile(&self) -> Value {
-        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
+        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "badge": self.kv("badge"), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
     }
 
     fn my_pv(&self) -> i64 {

@@ -393,7 +393,10 @@ function modeMenu(e) {
   showMenu(r.left, r.bottom + 4, ['online', 'away', 'dnd'].map((m) => ({ label: (S.me.mode === m ? '\u2022 ' : '') + MODE_NAMES[m], run: () => pick(m) })));
 }
 
+const isOwner = () => S.me?.profile?.badge === 'owner';
+const ownerBadge = () => el('span', { class: 'badge-owner', 'data-tip': 'Owner', tabindex: '0', 'aria-label': 'Owner' }, svg('<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5Z"/>'));
 function renderMe() {
+  $('meBadge').classList.toggle('hidden', !isOwner());
   $('meName').textContent = S.me.name;
   setAvatar($('meAvatar'), S.me.name, { seed: S.me.id, src: S.me.profile?.avatar, online: true, mode: S.me.mode });
   $('meAvatar').title = MODE_NAMES[S.me.mode] || 'Online';
@@ -1394,7 +1397,7 @@ function openProfile(id) {
   if (!p) return;
   $('pfBanner').style.background = bannerStyle(p.banner, p.id);
   $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
-  $('pfName').textContent = p.name;
+  $('pfName').replaceChildren(el('span', { text: p.name }), ...(p.me && isOwner() ? [ownerBadge()] : []));
   $('pfStatus').textContent = p.status || '';
   $('pfStatus').classList.toggle('hidden', !p.status);
   const link = S.links?.[id];
@@ -4497,6 +4500,7 @@ function bannerGrid(current, onPick, live) {
   };
   const plus = el('button', { type: 'button', class: 'banner-tile banner-plus', title: 'Use your own picture', onclick: () => { bannerTarget = onPick; $('bannerFile').value = ''; $('bannerFile').click(); } }, svg('<path d="M12 5v14M5 12h14"/>'));
   const colour = el('label', { class: 'banner-tile banner-colour', title: 'Pick any colour' },
+    svg('<path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/>'),
     el('input', { type: 'color', value: '#5b6cf0', 'aria-label': 'Colour', oninput: (e) => { if (live) onPick('c:' + e.target.value); }, onchange: (e) => { if (!live) onPick('c:' + e.target.value); } }));
   wrap.append(
     el('div', { class: 'banner-label', text: 'Ready-made' }),
@@ -4507,6 +4511,7 @@ function bannerGrid(current, onPick, live) {
     for (const b of wrap.querySelectorAll('[data-spec]')) b.classList.toggle('on', b.dataset.spec === cur);
     plus.classList.toggle('on', cur.startsWith('data:image/'));
     colour.classList.toggle('on', cur.startsWith('c:'));
+    colour.style.background = cur.startsWith('c:') ? cur.slice(2) : '';
   };
   wrap.mark(current || '');
   return wrap;

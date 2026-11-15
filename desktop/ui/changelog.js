@@ -1,5 +1,10 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.20', items: [
+    'The lists are plain again (a row is just a row); the headings with their line stay.',
+    'In the background picker the colour tile is an eyedropper.',
+    'Badges: a small Owner badge next to a name, with a tooltip when you point at it. Only the owner’s account has it.',
+  ] },
   { v: '1.9.19', items: [
     'Change your profile background right on your profile card (click your own name, then “Change background”).',
     'The background picker is tidier: ready-made ones, then your own, with a + tile for a picture and a colour wheel.',
