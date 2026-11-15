@@ -383,24 +383,28 @@ function renderLists() {
     return n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null;
   };
 
-  $('groupList').replaceChildren(...[...S.groups].sort(byRecent).map((g) => {
-    const chat = `g:${g.id}`;
+  const pins = pinned();
+  const pinFirst = (kind) => (a, b) => (pins[kind].includes(b.id) - pins[kind].includes(a.id)) || (pins[kind].indexOf(a.id) - pins[kind].indexOf(b.id)) || byRecent(a, b);
+  const pinMark = (kind, id) => (pins[kind].includes(id) ? el('span', { class: 'pin-dot', title: 'Pinned to the top' }, svg(ICON.pin)) : null);
+  $('groupList').replaceChildren(...[...S.groups].sort(pinFirst('g')).map((g) => {
     const n = unreadIn(g.id);
-    const online = g.members.filter((m) => m.online && m.id !== S.me.id).length;
+    const online = g.members.filter((m) => m.online || m.id === S.me.id).length;
     return el('li', { class: 'friend' + (groupIdOf(S.active) === g.id ? ' active' : '') + (n ? ' has-unread' : ''), onclick: () => openGroup(g.id), oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, groupMenu(g)); } },
-      avatar(g.name, { group: true, seed: g.id }),
-      rowText(g.name, `${g.members.length} members${online ? ` · ${online} online` : ''}`, g.lastAt,
+      avatar(g.name, { group: true, seed: g.id, src: g.avatar }),
+      rowText(g.name, `${g.members.length} members · ${online} online`, g.lastAt,
+        pinMark('g', g.id),
         S.mutes.has(`g:${g.id}`) ? svg(ICON.mute) : null,
         n ? el('span', { class: 'badge', text: n > 99 ? '99+' : String(n) }) : null));
   }));
   $('noGroups').classList.toggle('hidden', S.groups.length > 0);
 
-  $('friendList').replaceChildren(...[...S.friends].sort(byRecent).map((f) => el('li', {
+  $('friendList').replaceChildren(...[...S.friends].sort(pinFirst('f')).map((f) => el('li', {
     class: 'friend' + (S.active === f.id ? ' active' : '') + (S.unread.get(f.id) ? ' has-unread' : ''), onclick: () => openChat(f.id),
     oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, friendMenu(f)); },
     title: f.status || '',
   }, avatar(f.name, { online: f.online, seed: f.id, src: f.avatar, mode: f.mode }),
   rowText(f.name, f.status || (f.online ? (f.mode === 'away' ? 'Away' : f.mode === 'dnd' ? 'Do not disturb' : 'Online') : 'Offline'), f.lastAt,
+    pinMark('f', f.id),
     S.mutes.has(f.id) ? svg(ICON.mute) : null,
     badge(f.id)))));
   $('noFriends').classList.toggle('hidden', S.friends.length > 0);
@@ -686,12 +690,14 @@ function renderChatHead() {
   if (!info) return;
   $('chatName').textContent = info.group ? `# ${info.channelName}` : info.name;
   if (info.group) {
-    const online = info.group.members.filter((m) => m.online && m.id !== S.me.id).length;
-    const phone = document.documentElement.classList.contains('phone');
-    $('chatStatus').textContent = phone && online
-      ? `${info.name} · ${online} online`
-      : `${info.name} · ${info.group.members.length} members${online ? ` · ${online} online` : ''}`;
-    setAvatar($('chatAvatar'), info.name, { group: true, seed: info.group.id });
+    // You count too: "2 online" means you and one other.
+    const on = info.group.members.filter((m) => m.online || m.id === S.me.id);
+    const heads = onlineHeads() ? el('span', { class: 'online-heads', title: on.map((m) => (m.id === S.me.id ? 'You' : m.name)).join(', ') },
+      on.slice(0, 10).map((m) => avatar(m.name, { seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar })),
+      on.length > 10 ? el('span', { class: 'more', text: `+${on.length - 10}` }) : null) : null;
+    $('chatStatus').replaceChildren(`${info.name} · ${info.group.members.length} members · ${on.length} online`, heads || '');
+    $('chatStatus').title = '';
+    setAvatar($('chatAvatar'), info.name, { group: true, seed: info.group.id, src: info.group.avatar });
   } else {
     const mood = info.friend.status ? ` · ${info.friend.status}` : '';
     const link = S.links?.[info.friend.id];
@@ -767,6 +773,7 @@ function msgMenu(m, items) {
     !many && m.mine && m.text && !m.locked ? { label: 'Edit', run: () => startEdit(m) } : null,
     !many && !m.locked ? { label: m.pinned ? 'Unpin' : 'Pin', run: () => togglePin(m) } : null,
     m.text && !m.locked ? { label: 'Copy text', run: () => navigator.clipboard.writeText(m.text).then(() => toast('Copied.')).catch(() => {}) } : null,
+    !many && themeable(m.file) ? { label: 'Use as theme', run: () => useAsTheme(m.file) } : null,
     '-',
     { label: many ? 'Delete these…' : 'Delete…', danger: true, run: () => deleteMessage(many ? items : m) },
   ];
@@ -891,6 +898,7 @@ function printMenu(m) {
       ? { label: 'Open the downloaded file', run: () => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast) }
       : { label: 'Download', run: () => startDownload(m.file, m.chat) }) : null,
     isGroup(m.chat) && /^video\//i.test(m.file.mime) ? { label: 'Watch together', run: () => openPartySetup(m.file, groupIdOf(m.chat)) } : null,
+    themeable(m.file) ? { label: 'Use as theme', run: () => useAsTheme(m.file) } : null,
     '-',
     { label: 'Reply', run: () => startReply(m) },
     { label: m.pinned ? 'Unpin' : 'Pin', run: () => togglePin(m) },
@@ -1259,7 +1267,8 @@ $('msgInput').addEventListener('input', () => {
 // Delete a message: just for you, or (your own) for everyone in the chat.
 function deleteMessage(arg) {
   const items = Array.isArray(arg) ? arg : [arg];
-  const mine = items.every((x) => x.mine);
+  // The group's owner and co-owners may delete anyone's message for everyone.
+  const mine = items.every((x) => x.mine) || isManager(groupOf(items[0].chat));
   const files = items.some((x) => x.file);
   const d = $('delDlg');
   $('delAll').classList.toggle('hidden', !mine);
@@ -1528,17 +1537,66 @@ $('attachBtn').addEventListener('click', () => {
   const r = $('attachBtn').getBoundingClientRect();
   showMenu(r.left, r.top - 70, [
     { label: 'Send files…', run: () => invoke('pick_and_send', { chats: [S.active], text: '' }).catch(toast) },
-    { label: 'Send a folder…', run: () => invoke('pick_folder_and_send', { chats: [S.active] }).then((n) => n && toast(`${n} files sent.`)).catch(toast) },
+    { label: 'Send a folder…', run: async () => {
+      const chat = S.active;
+      try {
+        const path = await invoke('pick_folder');
+        if (path) await askFolderTypes(await invoke('scan_folder', { path }), chat);
+      } catch (e) { toast(e); }
+    } },
   ]);
 });
 
 listen('tauri://drag-enter', () => { if (S.active) $('drop').classList.remove('hidden'); });
 listen('tauri://drag-leave', () => $('drop').classList.add('hidden'));
-listen('tauri://drag-drop', ({ payload }) => {
+listen('tauri://drag-drop', async ({ payload }) => {
   $('drop').classList.add('hidden');
   if (!S.active || !payload.paths?.length) return;
-  invoke('send_paths', { paths: payload.paths, chats: [S.active], text: '' }).catch(toast);
+  const chat = S.active;
+  // Files go at once; for a folder you first pick which file types go.
+  const files = [], folders = [];
+  for (const p of payload.paths) {
+    try { folders.push(await invoke('scan_folder', { path: p })); } catch { files.push(p); }
+  }
+  if (files.length) invoke('send_paths', { paths: files, chats: [chat], text: '' }).catch(toast);
+  for (const f of folders) await askFolderTypes(f, chat);
 });
+
+// ---------- Sending a folder: pick which file types go ----------
+function askFolderTypes(scan, chat) {
+  return new Promise((resolve) => {
+    const d = $('folderSendDlg');
+    $('fsTitle').textContent = `Send “${scan.name}”`;
+    $('fsInfo').textContent = `${scan.count} ${scan.count === 1 ? 'file' : 'files'} · ${fmtBytes(scan.size)}`;
+    $('fsErr').textContent = scan.tooMany ? 'Over 1000 files: zip it, or send part of it.' : '';
+    const rows = scan.exts.map((x) => el('label', { class: 'fs-row' },
+      el('input', { type: 'checkbox', value: x.ext, checked: true, onchange: update }),
+      el('span', { class: 'fs-ext', text: x.ext ? `.${x.ext}` : 'no extension' }),
+      el('span', { class: 'fs-count', text: `${x.count} ${x.count === 1 ? 'file' : 'files'}` }),
+      el('span', { class: 'fs-size', text: fmtBytes(x.size) })));
+    $('fsList').replaceChildren(...rows);
+    function update() {
+      const on = scan.exts.filter((x) => rows.find((r) => r.querySelector('input').value === x.ext).querySelector('input').checked);
+      const n = on.reduce((a, x) => a + x.count, 0), size = on.reduce((a, x) => a + x.size, 0);
+      $('fsAll').checked = on.length === scan.exts.length;
+      $('fsSend').disabled = !n || scan.tooMany;
+      $('fsSend').textContent = n ? `Send ${n} ${n === 1 ? 'file' : 'files'} (${fmtBytes(size)})` : 'Send';
+    }
+    $('fsAll').onchange = () => { for (const r of rows) r.querySelector('input').checked = $('fsAll').checked; update(); };
+    update();
+    const finish = (go) => async () => {
+      d.close();
+      if (go) {
+        const exts = rows.map((r) => r.querySelector('input')).filter((i) => i.checked).map((i) => i.value);
+        try { const n = await invoke('send_folder', { path: scan.path, chats: [chat], exts }); toast(`${n} ${n === 1 ? 'file' : 'files'} sent.`); } catch (e) { toast(e); }
+      }
+      resolve();
+    };
+    $('fsSend').onclick = finish(true);
+    $('fsCancel').onclick = finish(false);
+    d.showModal();
+  });
+}
 
 // ---------- Player: our own controls at the bottom (seek bar, volume, CC, full screen) ----------
 const PICON = {
@@ -2068,14 +2126,17 @@ $('viewerClose').addEventListener('click', closeViewer);
 let pickMode = null;
 let pickGroup = null;
 
-function openPick(mode, group) {
+let pickTheme = null;
+function openPick(mode, group, themeToSend = null) {
   pickMode = mode;
   pickGroup = group;
+  pickTheme = themeToSend;
   let choices = S.friends;
   if (mode === 'add') choices = S.friends.filter((f) => !group.members.some((m) => m.id === f.id));
   if (!choices.length) return toast(mode === 'add' ? 'All your friends are already in this group.' : 'Add a friend first.');
-  $('pickTitle').textContent = { multi: 'Send to several', group: 'Create a group', add: `Add to ${group?.name}` }[mode];
+  $('pickTitle').textContent = { multi: 'Send to several', group: 'Create a group', add: `Add to ${group?.name}`, theme: `Send “${themeToSend?.name}”` }[mode];
   $('pickNote').textContent = {
+    theme: 'Pick friends and groups. They can right-click it and choose Use as theme.',
     multi: 'Pick friends and groups. A file is sent once and lands in every chat.',
     group: 'Pick the friends to put in the group. Everyone sees everything posted there.',
     add: 'Pick friends to add. They will see the earlier messages too.',
@@ -2084,13 +2145,13 @@ function openPick(mode, group) {
   $('pickText').classList.toggle('hidden', mode !== 'multi');
   $('pickAlt').classList.toggle('hidden', mode !== 'multi');
   $('pickAlt').textContent = 'Send message only';
-  $('pickOk').textContent = { multi: 'Choose files…', group: 'Create group', add: 'Add' }[mode];
+  $('pickOk').textContent = { multi: 'Choose files…', group: 'Create group', add: 'Add', theme: 'Send' }[mode];
   $('pickName').value = '';
   $('pickText').value = '';
   $('pickError').textContent = '';
   const rows = choices.map((f) => el('label', {}, el('input', { type: 'checkbox', value: f.id, checked: f.id === S.active }), avatar(f.name, { online: f.online, seed: f.id, src: f.avatar }), el('span', { text: f.name })));
-  if (mode === 'multi') {
-    rows.unshift(...S.groups.map((g) => el('label', {}, el('input', { type: 'checkbox', value: `g:${g.id}`, checked: S.active === `g:${g.id}` }), avatar(g.name, { group: true, seed: g.id }), el('span', { text: g.name }))));
+  if (mode === 'multi' || mode === 'theme') {
+    rows.unshift(...S.groups.map((g) => el('label', {}, el('input', { type: 'checkbox', value: `g:${g.id}`, checked: S.active === `g:${g.id}` }), avatar(g.name, { group: true, seed: g.id, src: g.avatar }), el('span', { text: g.name }))));
   }
   $('pickList').replaceChildren(...rows);
   renderRecent(mode);
@@ -2146,7 +2207,12 @@ $('pickForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const ids = picked();
   try {
-    if (pickMode === 'multi') {
+    if (pickMode === 'theme') {
+      if (!ids.length) return void ($('pickError').textContent = 'Pick at least one.');
+      await invoke('theme_send', { id: pickTheme.id, chats: ids });
+      $('pickDlg').close();
+      toast(`Sent “${pickTheme.name}”.`);
+    } else if (pickMode === 'multi') {
       if (!ids.length) return void ($('pickError').textContent = 'Pick at least one.');
       const n = await invoke('pick_and_send', { chats: ids, text: $('pickText').value.trim() });
       if (n > 0) { saveRecent(ids); $('pickDlg').close(); }
@@ -2205,21 +2271,59 @@ function muteItem(chat) {
   } };
 }
 
+// ---------- Pinned to the top of the list: up to 3 friends and 3 groups ----------
+function pinned() {
+  try { const p = JSON.parse(localStorage.getItem('uan.pinned') || '{}'); return { f: p.f || [], g: p.g || [] }; } catch { return { f: [], g: [] }; }
+}
+function pinItem(kind, id) {
+  const p = pinned();
+  const on = p[kind].includes(id);
+  return { label: on ? 'Unpin' : 'Pin to the top', run: () => {
+    if (!on && p[kind].length >= 3) return toast(`You can pin 3 ${kind === 'f' ? 'friends' : 'groups'}. Unpin one first.`);
+    p[kind] = on ? p[kind].filter((x) => x !== id) : [...p[kind], id];
+    try { localStorage.setItem('uan.pinned', JSON.stringify(p)); } catch {}
+    renderLists();
+  } };
+}
+const onlineHeads = () => { try { return localStorage.getItem('uan.onlineHeads') !== '0'; } catch { return true; } };
+const isManager = (g) => !!g && (g.owner === S.me.id || (g.admins || []).includes(S.me.id));
+
 function groupMenu(g) {
   const owner = g.owner === S.me.id;
+  const manager = isManager(g);
   return [
     { label: 'Add people…', run: () => openPick('add', g) },
+    pinItem('g', g.id),
     muteItem(`g:${g.id}`),
     { label: 'Members and details', run: () => openGroupInfo(g.id) },
+    manager ? { label: 'Change group picture…', run: () => pickGroupPicture(g) } : null,
     '-',
     { label: 'Clear messages for me', run: () => clearChat(`g:${g.id}`, false) },
-    owner ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(`g:${g.id}`, true) } : null,
+    manager ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(`g:${g.id}`, true) } : null,
     { label: owner ? 'Delete group' : 'Leave group', danger: true, run: () => leaveGroup(g) },
   ];
+}
+function pickGroupPicture(g) {
+  const input = el('input', { type: 'file', accept: 'image/*' });
+  input.onchange = async () => {
+    const f = input.files[0];
+    if (!f) return;
+    try {
+      const img = await createImageBitmap(f);
+      const c = document.createElement('canvas');
+      c.width = c.height = 160;
+      const s = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 160, 160);
+      await groupAct(g, 'picture', [], c.toDataURL('image/jpeg', 0.85));
+      toast('Group picture changed.');
+    } catch (e) { toast(e.message || e); }
+  };
+  input.click();
 }
 function friendMenu(f) {
   return [
     { label: 'Open chat', run: () => openChat(f.id) },
+    pinItem('f', f.id),
     muteItem(f.id),
     '-',
     { label: 'Clear messages for me', run: () => clearChat(f.id, false) },
@@ -2271,16 +2375,27 @@ function openGroupInfo(id = groupDlgId) {
   if (!g) return;
   groupDlgId = g.id;
   const owner = g.owner === S.me.id;
+  const manager = isManager(g);
+  const admins = g.admins || [];
   $('gTitle').textContent = g.name;
-  $('gRenameRow').classList.toggle('hidden', !owner);
+  $('gRenameRow').classList.toggle('hidden', !manager);
+  $('gPic').classList.toggle('hidden', !manager);
+  setAvatar($('gAvatar'), g.name, { group: true, seed: g.id, src: g.avatar });
   $('gName').value = g.name;
   $('gCount').textContent = `${g.members.length} members`;
   $('gError').textContent = '';
-  $('gMembers').replaceChildren(...g.members.map((m) => el('li', {},
-    avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar }),
-    el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name + (m.status ? ` · ${m.status}` : '') }),
-    m.id === g.owner ? el('span', { class: 'tag', text: 'creator' }) : null,
-    owner && m.id !== S.me.id ? iconBtn('x', 'Remove from group', () => groupAct(g, 'remove', [m.id])) : null)));
+  $('gMembers').replaceChildren(...[...g.members].sort((a, b) => (b.id === g.owner) - (a.id === g.owner) || admins.includes(b.id) - admins.includes(a.id) || a.name.localeCompare(b.name)).map((m) => {
+    const isAdmin = admins.includes(m.id);
+    const canRemove = manager && m.id !== S.me.id && m.id !== g.owner && (owner || !isAdmin);
+    return el('li', {},
+      avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar }),
+      el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name + (m.status ? ` · ${m.status}` : '') }),
+      m.id === g.owner ? el('span', { class: 'tag', text: 'owner' }) : isAdmin ? el('span', { class: 'tag', text: 'co-owner' }) : null,
+      owner && m.id !== S.me.id ? el('button', { type: 'button', class: 'small', text: isAdmin ? 'Remove co-owner' : 'Make co-owner',
+        title: isAdmin ? 'They go back to being a member' : 'They can then do what you do, except deleting the group and naming co-owners',
+        onclick: () => groupAct(g, isAdmin ? 'unadmin' : 'admin', [m.id]) }) : null,
+      canRemove ? iconBtn('x', 'Remove from group', () => groupAct(g, 'remove', [m.id])) : null);
+  }));
   $('gLeave').textContent = owner ? 'Delete group' : 'Leave group';
   if (!$('groupDlg').open) $('groupDlg').showModal();
 }
@@ -2297,6 +2412,7 @@ async function groupAct(g, action, ids = [], name = '') {
   }
 }
 $('gRename').addEventListener('click', () => groupAct(groupById(groupDlgId), 'rename', [], $('gName').value));
+$('gPic').addEventListener('click', () => pickGroupPicture(groupById(groupDlgId)));
 $('gAdd').addEventListener('click', () => {
   const g = groupById(groupDlgId);
   $('groupDlg').close();
@@ -2456,6 +2572,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sAuto').checked = S.me.autostart;
   $('sTyping').checked = S.me.typing;
   $('sReceipts').checked = S.me.receipts;
+  $('sHeads').checked = onlineHeads();
   renderThemeTiles();
   renderIconTiles();
   renderAvatarTiles();
@@ -2528,6 +2645,8 @@ $('settingsForm').addEventListener('submit', async (e) => {
     if (!S.me.profileName && $('sAuto').checked !== S.me.autostart) await invoke('set_autostart', { enabled: $('sAuto').checked });
     await invoke('set_autodl', { on: $('sAutoDl').checked, gb: Math.max(1, Number($('sAutoDlGb').value) || 10) });
     await invoke('set_privacy', { typing: $('sTyping').checked, receipts: $('sReceipts').checked });
+    try { localStorage.setItem('uan.onlineHeads', $('sHeads').checked ? '1' : '0'); } catch {}
+    renderChatHead();
     S.me = await invoke('state');
     renderMe();
     $('settingsDlg').close();
@@ -2682,7 +2801,34 @@ $('partyForm').addEventListener('submit', async (e) => {
 });
 
 // Invitations show up as a bar in the group chat.
+// An invitation shows as a card wherever you are in the app (and as the bar inside the group).
+const invitesSeen = new Set(); // parties you said "Not now" to
+function renderInviteCard() {
+  const card = $('partyInvite');
+  const p = [...S.parties.values()].find((x) => x.state !== 'ended' && x.leader !== S.me.id && !invitesSeen.has(x.id)
+    && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
+  const here = p && groupIdOf(S.active) === p.group && !$('chat').classList.contains('hidden');
+  card.classList.toggle('hidden', !p || here || openPartyId === p?.id);
+  if (!p || here) return;
+  const host = p.members.find((m) => m.id === p.leader);
+  const g = groupById(p.group);
+  const join = (full) => async () => {
+    card.classList.add('hidden');
+    try { await invoke('party_join', { id: p.id, full }); openParty(p.id); } catch (e) { toast(e); }
+  };
+  card.replaceChildren(
+    el('div', { class: 'pi-head' },
+      avatar(host?.name || '?', { seed: p.leader, src: g?.members.find((m) => m.id === p.leader)?.avatar }),
+      el('div', { class: 'grow' },
+        el('div', { class: 'strong', text: `${host?.name || 'Someone'} invited you to watch together` }),
+        el('div', { class: 'sub ellipsis', text: `${p.file.name}${g ? ` · ${g.name}` : ''}` }))),
+    el('div', { class: 'pi-btns' },
+      el('button', { class: 'accent', type: 'button', text: 'Join', title: 'Streams the film, nothing is downloaded', onclick: join(false) }),
+      el('button', { type: 'button', text: 'Download first', title: 'Downloads the whole film before it starts (smoothest)', onclick: join(true) }),
+      el('button', { type: 'button', text: 'Not now', onclick: () => { invitesSeen.add(p.id); invoke('party_leave', { id: p.id }).catch(() => {}); S.parties.delete(p.id); renderInviteBar(); } })));
+}
 function renderInviteBar() {
+  renderInviteCard();
   const bar = $('inviteBar');
   const p = [...S.parties.values()].find((x) => groupIdOf(S.active) === x.group && x.state !== 'ended' && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
   bar.classList.toggle('hidden', !p);
@@ -2893,7 +3039,7 @@ function renderParty(p) {
   $('partyMembers').replaceChildren(...p.members.filter((m) => !m.left).map((m) => {
     const full = m.have >= p.file.size;
     const pct = Math.floor((m.have / (p.file.size || 1)) * 100);
-    const status = !m.joined ? 'invited'
+    const status = !m.joined ? (m.id === p.leader ? 'host' : leader ? (m.reached ? 'got the invite, not joined yet' : m.note ? `invite not delivered yet: ${m.note}; trying again` : 'sending the invite…') : 'invited')
       : m.buffering ? 'loading…'
       : m.full && !full ? `downloading the whole film · ${pct}%`
       : m.ready ? (full ? 'ready' : `ready · ${fmtBytes(m.have)} ahead`)
@@ -3010,7 +3156,7 @@ listen('party', ({ payload: p }) => {
         renderQueue(p);
       }
     }
-    if (isNew && p.leader !== S.me.id) toast(`You were invited to watch “${p.file.name}” together. Open the group to join.`);
+
   }
   renderInviteBar();
 });
@@ -3071,13 +3217,6 @@ const THEMES = [
   { id: 'sakura', name: 'Sakura', base: 'light', image: 'linear-gradient(135deg, #ffe3ec 0%, #ffd0e0 50%, #e9d5ff 100%)', bg: '#ffdbe8', ...GLASS_LIGHT, dialog: '#fff3f7', accent: '#c2255c', mine: '#c2255c' },
   { id: 'mint', name: 'Mint', base: 'light', image: 'linear-gradient(135deg, #e3fff3 0%, #c9f2ff 100%)', bg: '#d8f8f8', ...GLASS_LIGHT, dialog: '#f2fffb', accent: '#0b7a5c', mine: '#0b7a5c' },
   { id: 'lavender', name: 'Lavender', base: 'light', image: 'linear-gradient(135deg, #efe7ff 0%, #dfe7ff 100%)', bg: '#e8e6ff', ...GLASS_LIGHT, dialog: '#f7f4ff', accent: '#6741d9', mine: '#6741d9' },
-  // Event Horizon: a black hole turning behind the conversation (drawn by the app, see setHorizon).
-  {
-    id: 'horizon', name: 'Horizon', base: 'dark', horizon: true,
-    bg: '#040509', side: 'rgba(6, 6, 10, .62)', panel: 'rgba(6, 6, 10, .3)', card: 'rgba(22, 18, 20, .8)', head: 'rgba(7, 7, 11, .42)', composer: 'rgba(16, 14, 18, .86)', transfers: 'rgba(7, 7, 11, .62)', shade: '0 1px 3px rgba(0, 0, 0, .95), 0 0 12px rgba(0, 0, 0, .7)',
-    theirs: 'rgba(17, 15, 19, .84)', dialog: '#0e0e13', accent: '#ffb454', mine: 'linear-gradient(135deg, #7c3a0a, #a9570f)',
-    tile: 'radial-gradient(circle at 62% 50%, #000 0 13%, #ffe2b0 14% 16%, #ff8a2a 21%, rgba(255, 120, 30, 0) 44%), #040509',
-  },
 ];
 // Your own themes (the + tile): an .html page, a video or a picture behind the panels.
 let customThemes = (() => { try { return JSON.parse(localStorage.getItem('uan.customThemes') || '[]'); } catch { return []; } })();
@@ -3085,7 +3224,7 @@ const customTheme = (c) => (c.base === 'light'
   ? { id: `custom:${c.id}`, name: c.name, base: 'light', custom: c, ...GLASS_LIGHT, bg: '#e9e9ee', dialog: '#f6f6f9', head: 'rgba(255, 255, 255, .78)', composer: 'rgba(255, 255, 255, .9)', accent: c.accent || undefined }
   : { id: `custom:${c.id}`, name: c.name, base: 'dark', custom: c, bg: '#0b0b10', side: 'rgba(8, 8, 12, .62)', panel: 'rgba(8, 8, 12, .36)', card: 'rgba(22, 22, 28, .8)', theirs: 'rgba(18, 18, 22, .84)', dialog: '#15151b', head: 'rgba(7, 7, 11, .42)', composer: 'rgba(16, 14, 18, .86)', transfers: 'rgba(7, 7, 11, .62)', shade: '0 1px 3px rgba(0, 0, 0, .95), 0 0 12px rgba(0, 0, 0, .7)', accent: c.accent || undefined });
 const themeById = (id) => {
-  if (id === 'secret') id = 'horizon'; // it was a hidden theme in 1.9
+  if (id === 'secret' || id === 'horizon') id = 'dark'; // themes that were removed
   if (id?.startsWith('custom:')) {
     const c = customThemes.find((x) => `custom:${x.id}` === id);
     return c ? customTheme(c) : THEMES[0];
@@ -3125,7 +3264,6 @@ function applyTheme() {
   root.style.setProperty('--mine', own && t.mine ? t.mine : (dark ? `color-mix(in srgb, ${color} 45%, #1c1c1c)` : color));
   root.style.setProperty('--on-mine', '#fff');
   setSnow(!!t.snow);
-  setHorizon(!!t.horizon);
   setBackdrop(t.custom || null);
 }
 
@@ -3148,14 +3286,16 @@ function setBackdrop(c) {
     return;
   }
   root.dataset.backdrop = c.base === 'light' ? 'light' : 'dark';
-  if (backdrop?.id === c.id || !S.me) return; // (before the app has started, the media address isn't known yet)
+  if (backdrop?.id === c.id) { if (backdrop.video) backdrop.video.muted = !c.sound; return; }
+  if (!S.me) return; // (before the app has started, the media address isn't known yet)
   backdrop?.node.remove();
   const node = el('div', { class: 'backdrop', 'aria-hidden': 'true' });
   document.body.prepend(node);
   backdrop = { id: c.id, node, video: null };
   if (c.kind === 'video') {
     const v = el('video', { src: themeFileUrl(c), loop: true, playsinline: true, preload: 'auto' });
-    v.muted = true;
+    v.muted = !c.sound;
+    v.volume = 0.6;
     v.autoplay = true;
     v.disablePictureInPicture = true;
     backdrop.video = v;
@@ -3196,20 +3336,58 @@ $('themeFile').addEventListener('change', async () => {
     toast('Adding the theme…');
     const path = await uploadFile(f);
     const t = await invoke('theme_add', { path, name: f.name.replace(/\.[^.]+$/, ''), base, accent });
-    await loadCustomThemes();
-    setTheme(`custom:${t.id}`);
-    toast(`Theme added: ${t.name}.`);
+    await themeAdded(t);
   } catch (e) {
     toast(e);
   }
 });
-$('sThemeRemove').addEventListener('click', async () => {
-  const c = themeById(theme.mode).custom;
-  if (!c || !(await ask(`Remove your theme “${c.name}”?`, 'Remove'))) return;
-  await invoke('theme_remove', { id: c.id }).catch(toast);
-  setTheme('dark');
+async function themeAdded(t) {
+  if (t.kind === 'video' && await ask(`“${t.name}” is a video. Play its sound too? (You can change this any time: right-click the theme.)`, 'Sound on')) {
+    await invoke('theme_sound', { id: t.id, on: true }).catch(() => {});
+  }
   await loadCustomThemes();
-});
+  setTheme(`custom:${t.id}`);
+  toast(`Theme added: ${t.name}.`);
+}
+async function removeTheme(c) {
+  if (!(await ask(`Remove your theme “${c.name}”?`, 'Remove'))) return;
+  await invoke('theme_remove', { id: c.id }).catch(toast);
+  if (theme.mode === `custom:${c.id}`) setTheme('dark');
+  await loadCustomThemes();
+}
+function themeMenu(c) {
+  return [
+    { label: theme.mode === `custom:${c.id}` ? 'In use' : 'Use this theme', run: () => setTheme(`custom:${c.id}`) },
+    c.kind === 'video' ? { label: c.sound ? 'Turn the sound off' : 'Turn the sound on', run: async () => {
+      await invoke('theme_sound', { id: c.id, on: !c.sound }).catch(toast);
+      await loadCustomThemes();
+    } } : null,
+    { label: 'Send to friends…', run: () => openPick('theme', null, c) },
+    '-',
+    { label: 'Remove theme…', danger: true, run: () => removeTheme(c) },
+  ];
+}
+// Any picture, video or .html page someone sent can become your theme.
+const themeable = (f) => f && (IMAGE.test(f.mime) || /^video\//i.test(f.mime) || /\.html?$/i.test(f.name)) && f.size <= 1024 * 1024 * 1024;
+async function useAsTheme(f) {
+  try {
+    toast('Adding the theme…');
+    const r = await fetch(mediaUrl(f));
+    if (!r.ok) throw new Error(r.status === 503 ? 'Can’t reach the sender’s PC right now.' : `Couldn’t load it (${r.status}).`);
+    const blob = await r.blob();
+    const name = f.name.split(/[\\/]/).pop();
+    let base = 'dark', accent = null;
+    if (/\.html?$/i.test(name)) {
+      const head = await blob.slice(0, 65536).text();
+      if (/<meta[^>]+name=["']uan-theme["'][^>]+content=["']light["']/i.test(head)) base = 'light';
+      accent = head.match(/<meta[^>]+name=["']uan-accent["'][^>]+content=["'](#[0-9a-f]{6})["']/i)?.[1] || null;
+    }
+    const path = await uploadFile(new File([blob], name));
+    await themeAdded(await invoke('theme_add', { path, name: name.replace(/\.[^.]+$/, '').replace(/^Theme$/, 'My theme'), base, accent }));
+  } catch (e) {
+    toast(e.message || e);
+  }
+}
 
 // Gentle snowfall behind the app (Christmas theme). Light on the CPU: few flakes, ~30 frames a second,
 // and it stops while the window is hidden.
@@ -3246,212 +3424,6 @@ function setSnow(on) {
   };
   snow = { canvas, raf: requestAnimationFrame(frame) };
 }
-// Event Horizon: the ground is a black hole seen almost edge-on. Everything that moves is a transform
-// or an opacity on its own layer (the disk turns once in 90 seconds), so it costs next to nothing.
-// Draws the black hole's textures once: the disk gas (face-on, with filaments), its bright inner rim for
-// the band in front of the hole, and the lensed light (arc over, thin arc under, photon ring).
-async function hzTextures() {
-  if (hzTextures.cache) return hzTextures.cache;
-  let seed = 90210;
-  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  const canvas = (n) => { const c = document.createElement('canvas'); c.width = c.height = n; return [c, c.getContext('2d')]; };
-  const mix = (stops, t) => {
-    for (let i = 1; i < stops.length; i++) {
-      if (t <= stops[i][0]) {
-        const [t0, a] = stops[i - 1], [t1, b] = stops[i];
-        const k = (t - t0) / (t1 - t0 || 1);
-        return a.map((v, j) => Math.round(v + (b[j] - v) * k));
-      }
-    }
-    return stops[stops.length - 1][1];
-  };
-  const HEAT = [[0, [255, 252, 240]], [0.08, [255, 226, 168]], [0.22, [255, 176, 88]], [0.45, [244, 118, 42]], [0.72, [196, 66, 22]], [1, [110, 26, 8]]];
-  const ring = (ctx, cx, cy, r0, r1) => { ctx.beginPath(); ctx.arc(cx, cy, r1, 0, Math.PI * 2); ctx.arc(cx, cy, r0, 0, Math.PI * 2, true); };
-  const blob = (c) => new Promise((res) => c.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
-
-  // 1) The disk, face-on. Inner edge sharp and white-hot, outer gas thin and ember-red.
-  // The inner edge sits just inside the shadow, so its brightest gas never shows as tips beside it.
-  const N = 1024, C = N / 2, rin = C * 0.165, rout = C * 0.985;
-  const [disk, d] = canvas(N);
-  const base = d.createRadialGradient(C, C, rin, C, C, rout);
-  base.addColorStop(0, 'rgba(255, 236, 196, .95)');
-  base.addColorStop(0.05, 'rgba(255, 190, 110, .7)');
-  base.addColorStop(0.2, 'rgba(240, 120, 44, .42)');
-  base.addColorStop(0.5, 'rgba(190, 64, 20, .2)');
-  base.addColorStop(1, 'rgba(90, 20, 6, 0)');
-  d.fillStyle = base;
-  ring(d, C, C, rin, rout);
-  d.fill('evenodd');
-  d.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < 4200; i++) {
-    const t = Math.pow(rnd(), 1.9);
-    const r = rin + (rout - rin) * t;
-    const a0 = rnd() * Math.PI * 2;
-    const len = 0.15 + rnd() * (1.2 + t * 2.2);
-    const [cr, cg, cb] = mix(HEAT, t);
-    d.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${(0.04 + rnd() * 0.14) * (1 - t * 0.6)})`;
-    d.lineWidth = 0.5 + rnd() * (1.2 + t * 3.5);
-    d.beginPath();
-    d.arc(C, C, r, a0, a0 + len);
-    d.stroke();
-  }
-  // a few dark lanes between the bright filaments
-  d.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 260; i++) {
-    const t = 0.05 + Math.pow(rnd(), 1.3) * 0.9;
-    const a0 = rnd() * Math.PI * 2;
-    d.strokeStyle = `rgba(0, 0, 0, ${0.15 + rnd() * 0.35})`;
-    d.lineWidth = 1 + rnd() * 4;
-    d.beginPath();
-    d.arc(C, C, rin + (rout - rin) * t, a0, a0 + 0.3 + rnd() * 1.6);
-    d.stroke();
-  }
-  // 2) Only the inner, brightest part: the band that passes in front of the hole.
-  // Drawn from the hot end only (white to amber), so the nearest gas is the brightest thing in the scene.
-  const [front, f] = canvas(N);
-  const fb = f.createRadialGradient(C, C, rin, C, C, rin * 1.7);
-  fb.addColorStop(0, 'rgba(255, 228, 170, 1)');
-  fb.addColorStop(0.25, 'rgba(255, 196, 112, .95)');
-  fb.addColorStop(0.6, 'rgba(255, 170, 80, .55)');
-  fb.addColorStop(1, 'rgba(255, 140, 50, 0)');
-  f.fillStyle = fb;
-  ring(f, C, C, rin, rin * 1.7);
-  f.fill('evenodd');
-  // normal blending: piled-up light would turn the band white instead of amber
-  for (let i = 0; i < 900; i++) {
-    const t = 0.08 + Math.pow(rnd(), 1.4) * 0.14;
-    const r = rin + (rin * 0.7) * ((t - 0.08) / 0.14);
-    const a0 = rnd() * Math.PI * 2;
-    const [cr, cg, cb] = mix(HEAT, t);
-    f.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.12 + rnd() * 0.3})`;
-    f.lineWidth = 0.6 + rnd() * 2.2;
-    f.beginPath();
-    f.arc(C, C, r, a0, a0 + 0.2 + rnd() * 1.4);
-    f.stroke();
-  }
-
-  // 3) The lensed light around the shadow (drawn for an element twice the shadow's width... see CSS).
-  const L = 1024, LC = L / 2, rs = L * 0.25; // the shadow's radius in this texture
-  const [lens, l] = canvas(L);
-  l.globalCompositeOperation = 'lighter';
-  const arc = (r0, r1, from, to, count, bright, widthMax) => {
-    for (let i = 0; i < count; i++) {
-      const u = Math.pow(rnd(), 1.5);
-      const r = r0 + (r1 - r0) * u;
-      const span = to - from;
-      const a0 = from + rnd() * span;
-      const len = 0.2 + rnd() * 1.4;
-      const [cr, cg, cb] = mix(HEAT, Math.min(1, u * 0.9));
-      // fades out towards the ends of the arc
-      const mid = (a0 + len / 2 - from) / span;
-      const env = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, mid))));
-      l.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${(0.05 + rnd() * 0.12) * bright * env * (1 - u * 0.55)})`;
-      l.lineWidth = 0.6 + rnd() * widthMax;
-      l.beginPath();
-      l.arc(LC, LC, r, a0, a0 + len);
-      l.stroke();
-    }
-  };
-  // over the top: the far side of the disk, bent up and over the hole (thick, bright)
-  arc(rs * 1.03, rs * 1.62, Math.PI - 0.28, Math.PI * 2 + 0.28, 2800, 1.25, 3.2);
-  // underneath: its other image, thin and dimmer
-  arc(rs * 1.02, rs * 1.16, -0.22, Math.PI + 0.22, 900, 0.55, 1.6);
-  // a soft glow under the arcs
-  l.globalCompositeOperation = 'destination-over';
-  const lg = l.createRadialGradient(LC, LC, rs, LC, LC, rs * 1.9);
-  lg.addColorStop(0, 'rgba(255, 200, 130, .5)');
-  lg.addColorStop(0.25, 'rgba(255, 150, 70, .2)');
-  lg.addColorStop(1, 'rgba(255, 110, 40, 0)');
-  l.fillStyle = lg;
-  ring(l, LC, LC, rs, rs * 1.9);
-  l.fill('evenodd');
-  // the photon ring: a thin, soft circle of light right at the edge
-  l.globalCompositeOperation = 'lighter';
-  l.filter = 'blur(1.6px)';
-  l.strokeStyle = 'rgba(255, 244, 222, .6)';
-  l.lineWidth = 2.2;
-  l.beginPath();
-  l.arc(LC, LC, rs * 1.012, 0, Math.PI * 2);
-  l.stroke();
-  l.filter = 'none';
-
-  hzTextures.cache = { disk: await blob(disk), front: await blob(front), lens: await blob(lens) };
-  return hzTextures.cache;
-}
-
-let horizon = null;
-function setHorizon(on, ignite = false) {
-  const root = document.documentElement;
-  if (!on) {
-    delete root.dataset.horizon;
-    if (horizon) { horizon.watch.disconnect(); horizon.node.remove(); horizon = null; }
-    return;
-  }
-  root.dataset.horizon = '';
-  if (!horizon) {
-    const plane = () => el('div', { class: 'hz-plane' }, el('i'));
-    const stars = [el('canvas', { class: 'hz-stars a' }), el('canvas', { class: 'hz-stars b' })];
-    const node = el('div', { class: 'horizon', 'aria-hidden': 'true' },
-      stars,
-      el('div', { class: 'hz-streak' }),
-      el('div', { class: 'hz-hole' },
-        el('div', { class: 'hz-glow' }),
-        plane(),
-        el('div', { class: 'hz-lens' }),
-        el('div', { class: 'hz-shadow' }),
-        el('div', { class: 'hz-front' }, plane())));
-    document.body.prepend(node);
-    const watch = new ResizeObserver(placeHorizon);
-    watch.observe(document.body);
-    watch.observe($('main'));
-    horizon = { node, stars, watch, drawn: '' };
-    hzTextures().then((t) => {
-      node.style.setProperty('--hz-disk', `url(${t.disk})`);
-      node.style.setProperty('--hz-front', `url(${t.front})`);
-      node.style.setProperty('--hz-lens', `url(${t.lens})`);
-    }).catch(() => {});
-  }
-  placeHorizon();
-  if (ignite) {
-    horizon.node.classList.remove('ignite');
-    void horizon.node.offsetWidth;
-    horizon.node.classList.add('ignite');
-  }
-}
-function placeHorizon() {
-  if (!horizon) return;
-  const W = innerWidth, H = innerHeight;
-  const area = document.querySelector('#main:not(.hidden) .content')?.getBoundingClientRect();
-  const r = area && area.width > 40 ? area : { left: 0, top: 0, width: W, height: H };
-  const s = Math.round(Math.max(300, Math.min(r.width * 1.06, r.height * 1.5, 1150)));
-  const st = horizon.node.style;
-  st.setProperty('--hz-x', `${Math.round(r.left + r.width / 2)}px`);
-  st.setProperty('--hz-y', `${Math.round(r.top + r.height * 0.46)}px`);
-  st.setProperty('--hz-s', `${s}px`);
-  // The stars are drawn once per window size, on two layers that fade against each other.
-  const key = `${W}x${H}`;
-  if (horizon.drawn === key) return;
-  horizon.drawn = key;
-  let seed = 20261114;
-  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  const dpr = Math.min(devicePixelRatio || 1, 2);
-  horizon.stars.forEach((cv, layer) => {
-    cv.width = Math.round(W * dpr);
-    cv.height = Math.round(H * dpr);
-    const c = cv.getContext('2d');
-    c.scale(dpr, dpr);
-    const n = Math.round((W * H) / (layer ? 2600 : 1700));
-    for (let i = 0; i < n; i++) {
-      const x = rnd() * W, y = rnd() * H, big = rnd() > 0.93;
-      const rad = big ? 1.1 + rnd() * 0.8 : 0.35 + rnd() * 0.65;
-      const warm = rnd();
-      c.fillStyle = warm > 0.82 ? `rgba(255, 214, 170, ${0.5 + rnd() * 0.5})` : warm < 0.14 ? `rgba(180, 205, 255, ${0.5 + rnd() * 0.5})` : `rgba(255, 255, 255, ${0.25 + rnd() * 0.65})`;
-      c.beginPath();
-      c.arc(x, y, rad, 0, Math.PI * 2);
-      c.fill();
-    }
-  });
-}
 
 function setTheme(id) {
   theme.mode = themeById(id).id;
@@ -3461,7 +3433,6 @@ function setTheme(id) {
     localStorage.removeItem('uan.accent');
   } catch {}
   applyTheme();
-  if (theme.mode === 'horizon') setHorizon(true, true); // picked just now: the disk ignites
   renderSwatches();
   renderThemeTiles();
 }
@@ -3486,7 +3457,6 @@ function renderThemeTiles() {
   const sel = $('sTheme');
   if (!sel.options.length) sel.replaceChildren(...THEMES.map((t) => el('option', { value: t.id, text: t.name })));
   sel.value = theme.mode;
-  $('sThemeRemove').classList.toggle('hidden', !theme.mode.startsWith('custom:'));
   const add = el('button', { type: 'button', class: 'add-theme', title: 'Add your own theme: an .html page, a video or a picture', 'aria-label': 'Add your own theme', onclick: () => $('themeFile').click() },
     svg('<path d="M12 5v14M5 12h14"/>'));
   $('sThemes').replaceChildren(...[...THEMES, ...customThemes.map(customTheme)].map((t) => {
@@ -3496,8 +3466,13 @@ function renderThemeTiles() {
         c.kind === 'image' ? el('img', { src: themeFileUrl(c), alt: '', loading: 'lazy' })
           : c.kind === 'video' ? el('video', { src: `${themeFileUrl(c)}#t=1`, preload: 'metadata', muted: true, tabindex: '-1' })
           : svg('<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12"/>'));
-      return el('button', { type: 'button', class: t.id === theme.mode ? 'on' : '', title: `${t.name} (your own theme)`, 'data-theme-id': t.id, onclick: () => setTheme(t.id) },
-        tile, el('span', { class: 't-name', text: t.name }));
+      const trash = el('span', { class: 't-trash', role: 'button', tabindex: '0', title: 'Remove this theme', 'aria-label': `Remove ${t.name}`,
+        onclick: (e) => { e.stopPropagation(); removeTheme(c); }, onkeydown: (e) => { if (e.key === 'Enter') { e.stopPropagation(); removeTheme(c); } } },
+      svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'));
+      const sound = c.kind === 'video' && c.sound ? el('span', { class: 't-sound', title: 'Plays its sound' }, svg('<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6"/>')) : null;
+      return el('button', { type: 'button', class: 'custom-tile' + (t.id === theme.mode ? ' on' : ''), title: `${t.name} (your own theme; right-click for more)`, 'data-theme-id': t.id,
+        onclick: () => setTheme(t.id), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); showMenu(e.clientX, e.clientY, themeMenu(c)); } },
+      tile, sound, trash, el('span', { class: 't-name', text: t.name }));
     }
     const sideC = t.side || t.preview?.[0];
     const mainC = t.panel || t.preview?.[1];
@@ -3756,32 +3731,33 @@ async function renderGallery() {
       const isImg = IMAGE.test(m.file.mime) && m.file.size <= INLINE_IMAGE_LIMIT;
       const isVideo = /^video\//i.test(m.file.mime);
       let thumb;
-      let badge = null;
+      const badge = el('span', { class: 'g-dur' });
       if (m.thumb?.img) {
-        thumb = el('img', { src: m.thumb.img, alt: '' });
-        if (isVideo && m.thumb.dur) badge = el('span', { class: 'tile-badge', text: fmtTime(m.thumb.dur) });
+        thumb = el('img', { src: m.thumb.img, alt: '', loading: 'lazy' });
+        if (isVideo && m.thumb.dur) badge.textContent = fmtTime(m.thumb.dur);
       } else if (isImg) {
         thumb = el('img', { src: mediaUrl(m.file), alt: '', loading: 'lazy' });
       } else if (isVideo && videoThumbs++ < 24) {
-        // A frame from a few seconds in, as a preview picture.
-        thumb = el('video', { src: `${mediaUrl(m.file)}#t=3`, preload: 'metadata', muted: true });
-        badge = el('span', { class: 'tile-badge' });
-        thumb.addEventListener('loadedmetadata', () => { badge.textContent = fmtTime(thumb.duration); });
+        // A frame from a fifth of the way in (the first seconds are often a logo or black).
+        thumb = el('video', { src: mediaUrl(m.file), preload: 'metadata', muted: true, tabindex: '-1' });
+        thumb.addEventListener('loadedmetadata', () => {
+          badge.textContent = fmtTime(thumb.duration);
+          if (isFinite(thumb.duration)) thumb.currentTime = Math.min(thumb.duration * 0.2, 900);
+        }, { once: true });
       } else {
-        thumb = el('div', { class: 'tile-blank' });
+        thumb = el('span', { class: 'g-blank' }, svg(ICON.bigplay));
       }
+      const list = items.map((x) => x.file);
       nodes.push(el('button', {
         type: 'button',
-        class: 'tile',
+        class: 'g-item',
         title: `${m.file.name}\n${fmtBytes(m.file.size)} · ${m.mine ? 'You' : m.senderName} · ${dayFmt.format(m.ts)}`,
-        onclick: () => { $('galleryDlg').close(); openViewer(m.file); },
+        onclick: () => { $('galleryDlg').close(); openViewer(m.file, { list, chat }); },
+        oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, printMenu(m)); },
       },
-      thumb,
-      isVideo ? el('span', { class: 'tile-play' }, svg(ICON.bigplay)) : null,
-      badge,
-      el('span', { class: 'tile-info' },
-        el('span', { class: 'tile-name', text: m.file.name }),
-        el('span', { class: 'tile-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : m.senderName}` }))));
+      el('span', { class: 'g-print' }, thumb, isVideo ? el('span', { class: 'g-play' }, svg(ICON.bigplay)) : null, badge),
+      el('span', { class: 'g-name', text: m.file.name.split(/[\\/]/).pop() }),
+      el('span', { class: 'g-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : m.senderName} · ${shortDayFmt.format(m.ts)}` })));
     }
     body.replaceChildren(...nodes);
   } else {

@@ -906,81 +906,6 @@ html.phone .f-row { padding: 10px 12px; }
 /* The toast lives in the top layer, so it also shows above an open dialog. */
 .toast[popover] { top: auto; right: auto; margin: 0; border: 0; overflow: visible; }
 
-/* ================= Event Horizon (the hidden theme): a black hole behind the conversation =================
-   A living ground, like the Christmas snow: it sits behind the two panels and never changes their shape.
-   Only transforms and opacities animate, each on its own layer. */
-.horizon {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
-  --hz-x: 50vw; --hz-y: 46vh; --hz-s: 720px;
-  background: radial-gradient(120% 95% at var(--hz-x) var(--hz-y), #120c10 0%, #07070c 46%, #020204 100%);
-}
-.hz-stars { position: absolute; inset: 0; width: 100%; height: 100%; }
-.hz-stars.a { animation: hz-twinkle 11s ease-in-out infinite alternate; }
-.hz-stars.b { animation: hz-twinkle 7s ease-in-out infinite alternate-reverse; }
-@keyframes hz-twinkle { from { opacity: .45; } to { opacity: 1; } }
-
-.hz-hole { position: absolute; left: var(--hz-x); top: var(--hz-y); width: var(--hz-s); height: var(--hz-s); transform: translate(-50%, -50%); }
-.hz-hole > * { position: absolute; left: 50%; top: 50%; }
-/* The warm haze of the disk's light. */
-.hz-glow {
-  width: 190%; height: 74%; transform: translate(-50%, -50%);
-  background: radial-gradient(closest-side, rgba(255, 156, 66, .42), rgba(255, 112, 32, .16) 44%, transparent 76%);
-}
-/* The disk: a flat ring of glowing gas seen almost from its edge, turning once in 90 seconds.
-   The side coming towards you is brighter; the dim outer gas stays ember-red. */
-/* The disk: glowing gas seen almost from its edge, turning once in 90 seconds (at about 20 steps a
-   second, plenty for something this slow). Its texture is drawn once by the app (hzTextures): white-hot
-   at the inner edge, ember-red and thin further out, made of filaments. The side coming towards you is brighter. */
-.hz-plane {
-  width: 140%; height: 140%; transform: translate(-50%, -50%) rotateX(81deg);
-  -webkit-mask-image: linear-gradient(90deg, #000 0 40%, rgba(0, 0, 0, .46) 100%); mask-image: linear-gradient(90deg, #000 0 40%, rgba(0, 0, 0, .46) 100%);
-}
-.hz-plane i {
-  position: absolute; inset: 0; border-radius: 50%;
-  background: var(--hz-disk, radial-gradient(closest-side, transparent 0 19%, rgba(255, 200, 120, .7) 21%, rgba(220, 90, 30, .25) 50%, transparent 95%)) center / 100% 100% no-repeat;
-  animation: hz-spin 90s steps(1800) infinite;
-}
-@keyframes hz-spin { to { transform: rotate(-360deg); } }
-/* The whole disk is behind the hole (the shadow hides what is behind it); only its bright inner rim is
-   drawn again in front, as the thin band that crosses the shadow. */
-.hz-front { width: 100%; height: 100%; transform: translate(-50%, -50%); clip-path: inset(50% -40% 0 -40%); }
-.hz-front .hz-plane { position: absolute; left: 50%; top: 50%; }
-.hz-front .hz-plane i { background-image: var(--hz-front, none); }
-/* Only where it crosses the shadow; beside it, the disk behind already shows the same gas. */
-.hz-front { -webkit-mask-image: linear-gradient(90deg, transparent 33%, #000 38.5%, #000 61.5%, transparent 67%); mask-image: linear-gradient(90deg, transparent 33%, #000 38.5%, #000 61.5%, transparent 67%); }
-/* Light from behind the hole, bent over it (the thick arc) and under it (the thin one), and the soft photon
-   ring at the edge: one drawn texture, twice the shadow's width. */
-.hz-lens {
-  width: 50%; height: 50%; transform: translate(-50%, -50%);
-  background: var(--hz-lens, none) center / 100% 100% no-repeat;
-}
-.hz-shadow { width: 25%; height: 25%; border-radius: 50%; transform: translate(-50%, -50%); background: #000; }
-/* Now and then, a shooting star. */
-.hz-streak {
-  position: absolute; left: -16%; top: 9%; width: 15%; height: 1.5px; border-radius: 1px; opacity: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .95));
-  transform: rotate(16deg) translateX(0);
-  animation: hz-streak 26s linear 9s infinite;
-}
-@keyframes hz-streak {
-  0% { opacity: 0; transform: rotate(16deg) translateX(0); }
-  1% { opacity: 1; }
-  5% { opacity: 0; transform: rotate(16deg) translateX(150vw); }
-  100% { opacity: 0; transform: rotate(16deg) translateX(150vw); }
-}
-/* Unlocking it: the disk ignites out of the dark. */
-.horizon.ignite .hz-hole { animation: hz-ignite 3.2s var(--ease) both; }
-.horizon.ignite .hz-stars { animation: hz-dawn 2.4s ease-out both; }
-@keyframes hz-ignite {
-  0% { opacity: 0; transform: translate(-50%, -50%) scale(.16); filter: brightness(3) blur(14px); }
-  45% { opacity: 1; filter: brightness(1.7) blur(2px); }
-  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: none; }
-}
-@keyframes hz-dawn { from { opacity: 0; } }
-html.paused .horizon * { animation-play-state: paused; }
-@media (prefers-reduced-motion: reduce) {
-  .horizon *, .horizon.ignite .hz-hole, .horizon.ignite .hz-stars { animation: none !important; }
-}
 /* Colour roles a theme with a bright living ground may set (they default to nothing): a tint behind the
    header and the transfers, the composer's fill, and a shadow for text that sits straight on the glass. */
 .chat-head, .chan-tabs { background: var(--head-bg, transparent); }
@@ -1000,4 +925,82 @@ html[data-backdrop="light"] .backdrop { background: #fff; }
 .tiles.themes .tile.custom svg { width: 18px; height: 18px; margin-bottom: 10px; }
 .tiles.themes button.add-theme { display: grid; place-items: center; border: 1px dashed color-mix(in srgb, var(--text) 30%, transparent); color: var(--muted); background: transparent; }
 .tiles.themes button.add-theme:hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
-#sThemeRemove { display: block; margin: 2px 0 6px; font-size: 12px; }
+
+/* ---------- Watch together: an invitation, wherever you are in the app ---------- */
+.party-invite {
+  position: fixed; right: 20px; top: 20px; z-index: 15; width: min(400px, calc(100vw - 32px)); padding: 14px;
+  border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--dialog, var(--panel)); color: var(--text);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12), 0 30px 70px -20px rgba(0, 0, 0, .55); animation: dlg-in .28s var(--ease);
+}
+.pi-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.pi-head .avatar { width: 40px; height: 40px; font-size: 16px; }
+.pi-btns { display: flex; gap: 8px; }
+.pi-btns button { flex: 1 1 auto; white-space: nowrap; padding: 0 12px; }
+.pi-btns button.accent { flex: 1.4 1 auto; }
+
+/* Your own theme tiles: a trash can on hover, a sound mark when it plays its sound */
+.tiles.themes button.custom-tile { overflow: visible; }
+.t-trash, .t-sound {
+  position: absolute; top: -6px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--dialog, var(--panel)); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 4px 10px -4px rgba(0, 0, 0, .5); z-index: 2;
+}
+.t-trash { right: -6px; opacity: 0; transition: opacity .15s; }
+.t-sound { left: -6px; color: var(--accent); }
+.t-trash svg, .t-sound svg { width: 12px; height: 12px; }
+.custom-tile:hover .t-trash, .custom-tile:focus-within .t-trash, .custom-tile.on .t-trash { opacity: 1; }
+.t-trash:hover { background: var(--danger); color: #fff; }
+
+/* ---------- Media and files: a contact sheet of prints, names underneath ---------- */
+#galleryDlg { width: min(900px, calc(100vw - 32px)); height: min(680px, calc(100vh - 48px)); }
+#galleryDlg .gtabs { display: flex; gap: 6px; }
+#galleryDlg .gtabs .tab { height: 28px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); }
+#galleryDlg .gtabs .tab.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--text); }
+.results.gallery.grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); grid-auto-rows: max-content;
+  gap: 16px 12px; padding: 4px 4px 12px; align-content: start; border: 0; background: transparent;
+}
+.gallery .g-month { grid-column: 1 / -1; padding: 10px 2px 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.gallery .g-month:first-child { padding-top: 0; }
+.g-item {
+  display: flex; flex-direction: column; gap: 3px; width: 100%; height: auto; min-width: 0; padding: 0; border: 0;
+  background: none; color: var(--text); text-align: left; border-radius: var(--r-print);
+}
+.g-item:hover { background: none; }
+.g-print {
+  position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--r-print);
+  border: 3px solid var(--panel); background: #111; box-shadow: 0 0 0 1px var(--border);
+  transition: transform .25s var(--ease), box-shadow .25s var(--ease);
+}
+.g-item:hover .g-print, .g-item:focus-visible .g-print { transform: translateY(-2px); box-shadow: var(--print-lift); }
+.g-print img, .g-print video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.g-blank { position: absolute; inset: 0; display: grid; place-items: center; background: linear-gradient(135deg, #24262c, #141518); }
+.g-blank svg { width: 26px; height: 26px; fill: rgba(255, 255, 255, .5); stroke: none; }
+.g-play { position: absolute; left: 50%; top: 50%; width: 38px; height: 38px; margin: -19px 0 0 -19px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, .55); }
+.g-play svg { width: 16px; height: 16px; fill: #fff; stroke: none; }
+.g-dur { position: absolute; right: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px; font-size: 12px; color: #fff; background: rgba(0, 0, 0, .72); }
+.g-dur:empty { display: none; }
+.g-name { padding: 4px 2px 0; font-size: 13.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-meta { padding: 0 2px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Sending a folder: the file types in it ---------- */
+#folderSendDlg { width: min(480px, calc(100vw - 32px)); }
+.fs-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 12px; margin: 0; padding: 10px 12px; color: var(--text); font-size: 13.5px; border-bottom: 1px solid var(--border); }
+.fs-row:last-child { border-bottom: 0; }
+.fs-row:hover { background: var(--hover); }
+.fs-ext { font-weight: 600; }
+.fs-count, .fs-size { font-size: 12px; color: var(--muted); }
+.fs-size { min-width: 64px; text-align: right; }
+
+/* ---------- Groups: who is online, roles, pinned rows ---------- */
+.online-heads { display: inline-flex; align-items: center; margin-left: 8px; vertical-align: middle; }
+.online-heads .avatar { width: 18px; height: 18px; font-size: 9px; margin-left: -5px; box-shadow: 0 0 0 1.5px var(--panel); }
+.online-heads .avatar:first-child { margin-left: 0; }
+.online-heads .avatar.online::after { display: none; }
+.online-heads .more { margin-left: 4px; font-size: 12px; color: var(--muted); }
+#chatStatus { display: flex; align-items: center; }
+.g-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.g-head h2 { margin: 0; }
+.g-head .avatar { width: 40px; height: 40px; font-size: 16px; }
+.members li .small { flex: none; }
+.pin-dot { display: grid; place-items: center; color: var(--muted); flex: none; }
+.pin-dot svg { width: 12px; height: 12px; }

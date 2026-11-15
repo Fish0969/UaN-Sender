@@ -150,7 +150,7 @@ components:
 
 UaN is a chat whose real material is what friends send each other: photos, films, whole folders. The interface lays two floating panels on whatever ground the active theme paints (people on the left, the conversation on the right) and keeps the text around them quiet, so that a set of photos arrives as a contact sheet of prints rather than a stack of equal-weight bubbles. It is a quiet companion for evenings next to a game or a film: compact, system-native type, soft lift, no ornament that competes with the media.
 
-The system is split cleanly in two. Themes own colour and nothing else: eighteen named themes, and any theme the user adds, set only the ground, panel, card, bubble, dialog, accent and "mine" colours (some as gradients with see-through glass panels). Everything else (corner radii, spacing, type, shadows, motion) is theme-independent and lives in one layer, so every theme keeps working and a new surface inherits all of them for free.
+The system is split cleanly in two. Themes own colour and nothing else: seventeen named themes, and any theme the user adds, set only the ground, panel, card, bubble, dialog, accent and "mine" colours (some as gradients with see-through glass panels). Everything else (corner radii, spacing, type, shadows, motion) is theme-independent and lives in one layer, so every theme keeps working and a new surface inherits all of them for free.
 
 The owner rejected a Discord-style server rail; the two-panel layout with a people list on the left is the confirmed shape. No emojis appear anywhere in the interface, and all copy is English.
 
@@ -184,7 +184,7 @@ The palette is not one palette but a contract: themes supply a small set of colo
 ### Named Rules
 **The Theme Owns Colour Rule.** A theme may set only `--bg`, `--bg-image`, `--side`, `--panel`, `--card`, `--theirs`, `--dialog`, `--accent` and `--mine`. Shape, space and type never vary by theme, and no component hard-codes a surface colour.
 
-**The Living Ground Rule.** A theme may also draw its ground as a scene behind the two panels: Christmas has snowfall, Horizon a black hole (a tilted disk turning once in 90 seconds, the ring of bent light, stars), and a user's own theme a video, a picture or an .html page. A scene sits at z-index 0, takes no pointer events, animates only transforms and opacity, pauses while the window is hidden and stops under reduced motion. A theme with a bright ground may also set four optional colour roles, which default to nothing: `--head-bg` (behind the header and channel pills), `--composer-bg` (the composer and reply bar), `--transfers-bg` (the transfer list) and `--text-shade` (a shadow for text that sits straight on the glass). Its card role is then dense (about 80% dark) so file and folder cards stay readable over the brightest part. Horizon draws its black hole from raster textures the app paints once at start: the disk gas with filaments, its bright inner rim for the band that crosses in front of the hole, and the lensed light (a thick arc over the hole, a thin one under it, a soft photon ring). The panels' shape never changes, and no theme moves a layout element.
+**The Living Ground Rule.** A theme may also draw its ground as a scene behind the two panels: Christmas has snowfall, and a user's own theme a video (muted unless turned on), a picture or an .html page. A scene sits at z-index 0, takes no pointer events, animates only transforms and opacity, pauses while the window is hidden and stops under reduced motion. A theme with a bright ground may also set four optional colour roles, which default to nothing: `--head-bg` (behind the header and channel pills), `--composer-bg` (the composer and reply bar), `--transfers-bg` (the transfer list) and `--text-shade` (a shadow for text that sits straight on the glass). Its card role is then dense (about 80% dark) so file and folder cards stay readable over the brightest part. The panels' shape never changes, and no theme moves a layout element.
 
 **The Accent Means Something Rule.** The accent marks selection (as a 16% tint, `--accent-soft`), unread, focus and the send action. It is not used for decoration or for section headings.
 
@@ -278,6 +278,12 @@ Photos and videos sent together render as one grid of prints, 400px wide (300px 
 
 ### Folder Card
 A whole folder reads as one 320px card: an accent-tinted folder tile, the folder name over "N files · size", and a chevron. It opens a dialog listing the contents as hairline-divided rows: a 44px print-framed preview tile (the picture, the video's preview with a play mark, or the file type), the name over its size, and one action per file (Download, progress, Open; Play or Open for the sender), with tick boxes for several at once and Download folder as the primary action. Opening a picture or film from the folder shows it in the viewer with round previous and next buttons and a "1 / 4" counter; closing the viewer returns to the folder. On a film the arrow keys seek and Shift+arrows step; on the phone a swipe steps. The viewer is solid black and covers the whole window.
+
+### Media and files
+A dialog with pill tabs (Photos & videos, Files). Photos and videos form a grid of prints (16:10, 176px minimum, panel-colour frame and hairline, lift on hover), each with its name (13.5) and size, sender and date (12, muted) underneath; films carry a play disc and their length. Month captions in 12/600.
+
+### Invitations
+A watch-together invitation is a floating card at the top right of the window (dialog surface, panel radius, dialog shadow): the host's picture, "X invited you to watch together", the film and group, and Join (accent), Download first, Not now on one line.
 
 ### Dialogs, Menus, Toasts
 Dialogs are 16px-cornered panel-coloured sheets with 22px padding that rise 8px and scale from 98.5% over 0.28s. Context menus and the mention picker are 12px-cornered with 8px-cornered 30px items. Toasts and the offline notice are pills; the toast inverts the panel (text-coloured background, panel-coloured text). All motion is removed under `prefers-reduced-motion`.

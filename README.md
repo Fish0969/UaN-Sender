@@ -38,8 +38,9 @@ sudo apt install ./UaN_*_amd64.deb
   stream it from your PC. Films can be **watched inside UaN** without downloading, or downloaded.
 - **Remembers where you stopped.** Close a film (or leave a watch party) and it continues from
   the same spot next time.
-- **Watch together.** In a group, every video has a *Watch together* button (the invitation keeps arriving until the
-  person joins or says no, on all their devices). The PC with the fastest
+- **Watch together.** In a group, every video has a *Watch together* button. The invitation pops up as a card wherever
+  your friend is in UaN (and keeps arriving until they join or say no, on all their devices); in the party window you
+  see for each person whether it reached them. The PC with the fastest
   connection shares the film, it streams for everyone, starts when everyone has enough loaded, and
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
   A chat and a **playlist** sit next to the film (the next film starts by itself).
@@ -62,7 +63,8 @@ sudo apt install ./UaN_*_amd64.deb
   the top of the chat, and write **bold**, *italic*, ~~strike~~ or `code`. In groups, @Name mentions someone.
 - **Quiet when you want.** Mute a chat, group or channel (an @mention or an answer to you still comes through).
   Click your picture to be Online, Away or Do not disturb (no notifications at all).
-- **Folders.** Send a whole folder: it shows up as one folder in the chat. Click it to see what is inside, with
+- **Folders.** Send a whole folder (paperclip, *Send a folder…*, or drop it in): first you see which kinds of files are
+  in it (.mkv, .srt, .jpg …) and tick the ones that should go. It shows up as one folder in the chat. Click it to see what is inside, with
   previews of photos and videos: download any file on its own, tick several (Shift-click ticks a range), or
   **Download folder** (everything lands in a folder of the same name in Downloads, sub-folders kept). Click a
   picture or film in the folder to open it big; the arrows (or the arrow keys) go through the others, and Esc
@@ -81,18 +83,26 @@ sudo apt install ./UaN_*_amd64.deb
   the background to `Downloads/UaN`, so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
-  **profile picture** (upload one or pick a ready-made one), **status**, **18 themes** (including a Christmas one with falling snow
-  and *Horizon*, a black hole turning behind the chat), and a choice of **app icons**.
+  **profile picture** (upload one or pick a ready-made one), **status**, **17 themes** (including a Christmas one with falling
+  snow), and a choice of **app icons**. The *Media and files* button shows every photo and video of a chat as a grid.
 - **Your own themes.** The **+** tile next to the themes takes an `.html` page, a video or a picture and puts it behind
   the chat. A page runs locked away from the app: it can draw and animate, but cannot reach UaN, your files or the
   internet, so it has to be one self-contained file (on Linux and Android pages are shown without scripts). A page can
   ask for light panels with `<meta name="uan-theme" content="light">` and an accent colour with
-  `<meta name="uan-accent" content="#ff8800">`. Your themes stay on your device.
+  `<meta name="uan-accent" content="#ff8800">`. A video's sound is off unless you turn it on (you're asked when adding
+  it). Right-click your theme for its sound, to send it to friends, or to remove it (or the bin on the tile). Any picture,
+  video or page someone sends can become your theme: right-click it in the chat, *Use as theme*.
+- **Groups.** The owner can name **co-owners**. Owners and co-owners can rename the group, add and remove people, manage
+  channels, change the group picture, clear the chat for everyone and delete anyone's message; only the owner deletes
+  the group or names co-owners. The header shows who is online with small pictures (you count too; Settings turns
+  the pictures off). Right-click a friend or group to **pin** it to the top (3 of each).
 - **Small updates.** One click on *Update* in the app: it downloads only the new program (a few MB) and
   switches over by itself, no installer, no uninstaller, everything stays. On Linux, the AppImage also only downloads the new program
   (a few MB), not the whole 150 MB package.
 
 ## Android
+
+*The phone app is paused: no new versions for now (the last one is 1.9.2).*
 
 Download `UaN_<version>_android.apk` from the [Releases page](https://github.com/Fish0969/UaN-Sender/releases)
 on the phone and open it (Android asks once to allow installing apps from the browser). Updates install over

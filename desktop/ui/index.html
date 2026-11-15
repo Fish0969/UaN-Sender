@@ -191,6 +191,7 @@
     </div>
   </div>
 
+  <div id="partyInvite" class="party-invite hidden" role="alertdialog" aria-label="Watch together invitation"></div>
   <div id="toast" class="toast hidden" popover="manual"></div>
   <div id="ctxMenu" class="menu hidden"></div>
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
@@ -222,6 +223,21 @@
       <input id="joinCode" placeholder="ABCD-EFGH-JK" autocomplete="off" spellcheck="false" maxlength="14">
       <div id="joinErr" class="error"></div>
       <div class="actions"><span class="grow note" id="joinStatus"></span><button type="button" id="joinCancel">Cancel</button><button class="accent" id="joinGo">Sign in</button></div>
+    </form>
+  </dialog>
+
+  <!-- Sending a folder: pick which file types go -->
+  <dialog id="folderSendDlg">
+    <form method="dialog" onsubmit="return false">
+      <div class="folder-head">
+        <div class="folder-ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></div>
+        <div class="grow"><h2 id="fsTitle" class="ellipsis"></h2><div class="sub" id="fsInfo"></div></div>
+      </div>
+      <p class="note">Which kinds of files should go? The others stay out.</p>
+      <label class="f-all"><input type="checkbox" id="fsAll" checked> All</label>
+      <div id="fsList" class="folder-list"></div>
+      <div id="fsErr" class="error"></div>
+      <div class="actions"><span class="grow"></span><button type="button" id="fsCancel">Cancel</button><button type="button" class="accent" id="fsSend">Send</button></div>
     </form>
   </dialog>
 
@@ -325,7 +341,6 @@
         <div class="group-title">Appearance</div>
         <select id="sTheme" class="hidden"></select>
         <div class="tiles themes" id="sThemes"></div>
-        <button type="button" class="link hidden" id="sThemeRemove">Remove this theme</button>
         <div class="swatches" id="sAccent"></div>
         <div class="pc-only">
         <div class="sub-title">App icon</div>
@@ -337,6 +352,7 @@
         <div class="group-title">Privacy</div>
         <label class="check"><input type="checkbox" id="sTyping"> Show others when I’m typing</label>
         <label class="check"><input type="checkbox" id="sReceipts"> Show others when I’ve seen their messages</label>
+        <label class="check"><input type="checkbox" id="sHeads"> Show who is online (small pictures) in group headers</label>
       </div>
       <div class="group">
         <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when your computer starts (runs in the tray)</label>
@@ -397,7 +413,11 @@
   <!-- Group details -->
   <dialog id="groupDlg">
     <form id="groupForm" method="dialog">
-      <h2 id="gTitle"></h2>
+      <div class="g-head">
+        <div class="avatar" id="gAvatar"></div>
+        <h2 id="gTitle" class="grow ellipsis"></h2>
+        <button type="button" id="gPic" class="small hidden">Change picture</button>
+      </div>
       <div class="rename hidden" id="gRenameRow">
         <input id="gName" maxlength="40">
         <button type="button" id="gRename">Rename</button>

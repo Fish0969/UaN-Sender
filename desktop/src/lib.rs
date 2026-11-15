@@ -623,6 +623,9 @@ struct CustomTheme {
     base: String,
     #[serde(default)]
     accent: Option<String>,
+    /// Play the video's sound (off unless you turn it on).
+    #[serde(default)]
+    sound: bool,
 }
 
 fn load_themes(dir: &std::path::Path) -> Vec<CustomTheme> {
@@ -692,10 +695,35 @@ fn theme_add(profile: State<'_, Profile>, path: String, name: String, base: Stri
         mime: mime.into(),
         base: if base == "light" { "light".into() } else { "dark".into() },
         accent,
+        sound: false,
     };
     list.push(theme.clone());
     save_themes(&profile.dir, &list)?;
     Ok(theme)
+}
+
+#[tauri::command]
+fn theme_sound(profile: State<'_, Profile>, id: String, on: bool) -> CmdResult<()> {
+    let mut list = load_themes(&profile.dir);
+    let t = list.iter_mut().find(|t| t.id == id).ok_or("That theme is gone.")?;
+    t.sound = on;
+    save_themes(&profile.dir, &list)
+}
+
+/// Sends one of your themes into chats, as a file your friends can use as their theme.
+#[tauri::command]
+fn theme_send(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, id: String, chats: Vec<String>) -> CmdResult<usize> {
+    let t = load_themes(&profile.dir).into_iter().find(|t| t.id == id).ok_or("That theme is gone.")?;
+    let ext = t.file.rsplit('.').next().unwrap_or("bin");
+    // A copy named after the theme, so it arrives as "Interstellar.mp4" rather than an id.
+    let safe: String = t.name.chars().filter(|c| !"/\\:*?\"<>|".contains(*c)).collect();
+    let dir = profile.dir.join("themes").join("send");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let copy = dir.join(format!("{}.{ext}", if safe.trim().is_empty() { "Theme" } else { safe.trim() }));
+    if !copy.exists() {
+        std::fs::copy(profile.dir.join("themes").join(&t.file), &copy).map_err(|e| e.to_string())?;
+    }
+    node.share_files(vec![copy], &chats, Some("A theme for UaN: right-click it and choose Use as theme.".into()))
 }
 
 #[tauri::command]
@@ -892,6 +920,32 @@ async fn pick_folder_and_send(app: AppHandle, node: State<'_, Arc<Node>>, chats:
     }
     #[cfg(mobile)]
     Err("Folders can be sent from a PC.".into())
+}
+
+/// Lets you choose a folder (it is sent after you pick which file types go).
+#[tauri::command]
+#[cfg_attr(mobile, allow(unused_variables))]
+async fn pick_folder(app: AppHandle) -> CmdResult<Option<String>> {
+    #[cfg(desktop)]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog().file().set_title("Choose a folder to send").pick_folder(move |f| {
+            let _ = tx.send(f);
+        });
+        Ok(rx.await.ok().flatten().and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
+    }
+    #[cfg(mobile)]
+    Err("Folders can be sent from a PC.".into())
+}
+
+#[tauri::command]
+fn scan_folder(node: State<'_, Arc<Node>>, path: String) -> CmdResult<Value> {
+    node.scan_folder(&path)
+}
+
+#[tauri::command]
+fn send_folder(node: State<'_, Arc<Node>>, path: String, chats: Vec<String>, exts: Vec<String>) -> CmdResult<usize> {
+    node.share_folder(&path, &chats, &exts)
 }
 
 #[tauri::command]
@@ -1194,6 +1248,8 @@ pub fn run() {
             themes,
             theme_add,
             theme_remove,
+            theme_sound,
+            theme_send,
             theme_html,
             contacts,
             add_friend,
@@ -1220,6 +1276,9 @@ pub fn run() {
             export_backup,
             import_backup,
             pick_folder_and_send,
+            pick_folder,
+            scan_folder,
+            send_folder,
             party_queue,
             party_next,
             #[cfg(feature = "test-profiles")]

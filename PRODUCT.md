@@ -24,7 +24,7 @@ No account, no server, no size limit: your friend code is your identity, files o
 
 - Used next to games and films; the app must not steal focus or get in the way.
 - Desktop window ~820x540 and larger; phone portrait.
-- 18 themes (light, dark, gradient themes, Christmas with snowfall, Horizon with a black hole), plus themes the user adds (an .html page, a video or a picture) and accent colours, all built on CSS custom properties; every theme must keep working.
+- 17 themes (light, dark, gradient themes, Christmas with snowfall), plus themes the user adds (an .html page, a video or a picture, optionally with sound); the phone app is paused (not updated) at the owner's request and accent colours, all built on CSS custom properties; every theme must keep working.
 - UI language: English. The owner talks in Hungarian.
 
 ## Capabilities and Constraints

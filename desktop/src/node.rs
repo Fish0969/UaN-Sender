@@ -165,6 +165,19 @@ pub struct WireGroup {
     /// Extra channels besides the main one ("general"). Older versions don't know them.
     #[serde(default)]
     pub channels: Vec<Channel>,
+    /// Co-owners: can do what the owner does, except deleting the group and naming co-owners.
+    #[serde(default)]
+    pub admins: Vec<String>,
+    /// The group's picture (a small data: URL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
+}
+
+impl WireGroup {
+    /// The owner or a co-owner.
+    fn manager(&self, who: &str) -> bool {
+        self.owner == who || self.admins.iter().any(|a| a == who)
+    }
 }
 
 /// A channel in a group. `check` is set for password-locked channels: their messages are encrypted
@@ -343,6 +356,8 @@ pub enum Req {
     PartyQueue { party_id: String, file: FileMeta },
     /// A member asks the group's creator to add a channel.
     ChannelAdd { group_id: String, channel: Channel },
+    /// The group's owner or a co-owner deleted someone's message for everyone.
+    ModDelete { group_id: String, msg_id: String },
     /// "… is typing" (never stored; only sent while both are online).
     Typing {
         #[serde(default)]
@@ -397,6 +412,12 @@ pub struct PartyMember {
     pub buffering: bool,
     #[serde(default)]
     pub full: bool,
+    /// (host only) the invitation reached one of their devices
+    #[serde(default)]
+    pub reached: bool,
+    /// (host only) why the invitation hasn't reached them yet
+    #[serde(default)]
+    pub note: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -749,6 +770,8 @@ impl Node {
         let _ = db.execute("ALTER TABLE messages ADD COLUMN sealed TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN reply TEXT", []);
         let _ = db.execute("ALTER TABLE messages ADD COLUMN edited INTEGER", []);
+        let _ = db.execute("ALTER TABLE groups ADD COLUMN admins TEXT", []);
+        let _ = db.execute("ALTER TABLE groups ADD COLUMN avatar TEXT", []);
         // Locked channels ask for their password every time: no channel key survives a restart.
         let _ = db.execute("DELETE FROM kv WHERE k LIKE 'chkey:%'", []);
 
@@ -1022,6 +1045,14 @@ impl Node {
             }
             Req::GroupLeave { group_id } => {
                 self.delete_group_local(&group_id);
+                Ok(ok)
+            }
+            Req::ModDelete { msg_id, .. } => {
+                if let Some((_, from, Some(f))) = self.remove_message(&msg_id, None) {
+                    if from != me {
+                        self.forget_file(&f.id);
+                    }
+                }
                 Ok(ok)
             }
             Req::FriendRequest { name } => {
@@ -1562,7 +1593,7 @@ impl Node {
         match req {
             Req::Dev { req, .. } => Self::mailbox_ok(req),
             Req::Mirror { req, .. } => Self::mailbox_ok(req) || matches!(**req, Req::MyProfile { .. } | Req::ClearGroup { .. }),
-            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Devices { .. } | Req::ClearGroup { .. }),
+            _ => matches!(req, Req::Msg { .. } | Req::FriendRequest { .. } | Req::FriendAccept { .. } | Req::FriendRemove | Req::Group { .. } | Req::GroupLeave { .. } | Req::Thumb { .. } | Req::Unsend { .. } | Req::Edit { .. } | Req::Pin { .. } | Req::Devices { .. } | Req::ClearGroup { .. } | Req::ModDelete { .. }),
         }
     }
 
@@ -2023,12 +2054,8 @@ impl Node {
                 // lost on the way, or reached only one of their devices, would otherwise never arrive).
                 let mine: Vec<Party> = self.parties.lock().unwrap().values().filter(|p| p.leader == self.me_s && p.state != "ended").cloned().collect();
                 for p in mine {
-                    let req = Req::Party { party: p.clone() };
                     for m in p.members.iter().filter(|m| m.id != self.me_s && !m.joined && !m.left) {
-                        let (me, req, to) = (self.clone(), req.clone(), m.id.clone());
-                        tauri::async_runtime::spawn(async move {
-                            let _ = me.request_all(&to, &req).await;
-                        });
+                        self.send_party(&p, &m.id);
                     }
                 }
             }
@@ -2270,9 +2297,17 @@ impl Node {
                     .query_row("SELECT owner, version FROM groups WHERE id = ?1", [&group.id], |r| Ok((r.get(0)?, r.get(1)?)))
                     .optional()
                     .map_err(e2s)?;
-                let allowed = match &existing {
-                    Some((owner, version)) => owner == peer && group.version > *version,
-                    None => group.owner == peer,
+                // The owner changes anything; a co-owner changes members, name, channels and picture,
+                // but not who owns the group or who the co-owners are.
+                let stored = existing.as_ref().and_then(|_| self.load_group(&group.id));
+                let allowed = match (&existing, &stored) {
+                    (Some((owner, version)), Some(old)) => {
+                        group.version > *version
+                            && group.owner == *owner
+                            && (owner == peer || (old.admins.iter().any(|a| a == peer) && group.admins == old.admins))
+                    }
+                    (Some((owner, version)), None) => owner == peer && group.version > *version,
+                    (None, _) => group.owner == peer,
                 };
                 if !allowed {
                     return Ok(ok); // stale or not from the owner: ignore quietly
@@ -2330,9 +2365,9 @@ impl Node {
                 Ok(ok)
             }
             Req::History { group_id, msgs } => {
-                match self.group_owner(&group_id) {
+                match self.load_group(&group_id) {
                     None => return Err("later".into()), // the group itself hasn't arrived yet
-                    Some(o) if o != peer => return Err("Not allowed.".into()),
+                    Some(g) if !g.manager(peer) => return Err("Not allowed.".into()),
                     _ => {}
                 }
                 if !self.is_member(&group_id, &self.me_s) || msgs.len() > 200 {
@@ -2369,8 +2404,22 @@ impl Node {
                 self.emit("history", json!({ "chat": chat }));
                 Ok(ok)
             }
+            Req::ModDelete { group_id, msg_id } => {
+                if !self.load_group(&group_id).is_some_and(|g| g.manager(peer)) {
+                    return Err("Not allowed.".into());
+                }
+                let in_group: Option<String> = self.db.lock().unwrap().query_row("SELECT chat FROM messages WHERE id = ?1", [&msg_id], |r| r.get(0)).optional().ok().flatten();
+                if in_group.as_deref().and_then(split_chat).is_some_and(|(g, _)| g == group_id) {
+                    if let Some((_, from, Some(f))) = self.remove_message(&msg_id, None) {
+                        if from != self.me_s {
+                            self.forget_file(&f.id);
+                        }
+                    }
+                }
+                Ok(ok)
+            }
             Req::ClearGroup { group_id, before, channel } => {
-                if self.group_owner(&group_id).as_deref() != Some(peer) {
+                if !self.load_group(&group_id).is_some_and(|g| g.manager(peer)) {
                     return Err("Not allowed.".into());
                 }
                 let chat = chat_id(&group_id, channel.as_deref());
@@ -2452,12 +2501,20 @@ impl Node {
                 // Updates come from the host; when the host leaves, its last update names the new host.
                 let stored_leader = self.parties.lock().unwrap().get(&party.id).map(|p| p.leader.clone());
                 let from_host = party.leader == peer || stored_leader.as_deref() == Some(peer);
-                if !from_host
-                    || !party.members.iter().any(|m| m.id == self.me_s)
-                    || !self.is_member(&party.group, peer)
-                    || !self.is_member(&party.group, &self.me_s)
-                {
-                    return Err("Not allowed.".into());
+                let why = if !from_host {
+                    Some("it isn't from the host")
+                } else if !party.members.iter().any(|m| m.id == self.me_s) {
+                    Some("you aren't invited")
+                } else if !self.is_member(&party.group, &self.me_s) {
+                    Some("you aren't in that group on this PC")
+                } else if !self.is_member(&party.group, peer) {
+                    Some("the host isn't in that group on this PC")
+                } else {
+                    None
+                };
+                if let Some(why) = why {
+                    self.log(&format!("party {} from {}: refused, {why}", &party.id[..party.id.len().min(8)], &peer[..peer.len().min(8)]));
+                    return Err(format!("Not allowed: {why}."));
                 }
                 let (is_new, newer) = {
                     let parties = self.parties.lock().unwrap();
@@ -2607,28 +2664,38 @@ impl Node {
 
     fn load_group(&self, g: &str) -> Option<WireGroup> {
         let db = self.db.lock().unwrap();
-        let (name, owner, version, channels): (String, String, i64, Option<String>) = db
-            .query_row("SELECT name, owner, version, channels FROM groups WHERE id = ?1", [g], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        let (name, owner, version, channels, admins, avatar): (String, String, i64, Option<String>, Option<String>, Option<String>) = db
+            .query_row("SELECT name, owner, version, channels, admins, avatar FROM groups WHERE id = ?1", [g], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
             .optional()
             .ok()
             .flatten()?;
         let channels: Vec<Channel> = channels.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
+        let admins: Vec<String> = admins.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
         let mut stmt = db.prepare("SELECT member_id, name FROM group_members WHERE group_id = ?1 ORDER BY name").ok()?;
         let members = stmt
             .query_map([g], |r| Ok(Member { id: r.get(0)?, name: r.get(1)? }))
             .ok()?
             .filter_map(Result::ok)
             .collect();
-        Some(WireGroup { id: g.to_string(), name, owner, version, members, channels })
+        Some(WireGroup { id: g.to_string(), name, owner, version, members, channels, admins, avatar })
     }
 
     fn save_group(&self, g: &WireGroup) {
         {
             let db = self.db.lock().unwrap();
             let _ = db.execute(
-                "INSERT INTO groups (id, name, owner, version, channels) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, owner = excluded.owner, version = excluded.version, channels = excluded.channels",
-                params![g.id, g.name, g.owner, g.version, serde_json::to_string(&g.channels).unwrap()],
+                "INSERT INTO groups (id, name, owner, version, channels, admins, avatar) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, owner = excluded.owner, version = excluded.version, channels = excluded.channels,
+                   admins = excluded.admins, avatar = excluded.avatar",
+                params![
+                    g.id,
+                    g.name,
+                    g.owner,
+                    g.version,
+                    serde_json::to_string(&g.channels).unwrap(),
+                    serde_json::to_string(&g.admins).unwrap(),
+                    g.avatar.as_deref().filter(|a| a.starts_with("data:image/") && a.len() <= 160_000)
+                ],
             );
             let _ = db.execute("DELETE FROM group_members WHERE group_id = ?1", [&g.id]);
             for m in &g.members {
@@ -2672,7 +2739,7 @@ impl Node {
             let n = self.friend_name(id).ok_or("You can only add your friends.")?;
             members.push(Member { id: id.clone(), name: n });
         }
-        let group = WireGroup { id: new_id(), name: name.to_string(), owner: self.me_s.clone(), version: 1, members, channels: vec![] };
+        let group = WireGroup { id: new_id(), name: name.to_string(), owner: self.me_s.clone(), version: 1, members, channels: vec![], admins: vec![], avatar: None };
         self.save_group(&group);
         let req = Req::Group { group: group.clone() };
         self.mirror(&self.me_s.clone(), "", &req);
@@ -2685,8 +2752,33 @@ impl Node {
     pub fn group_action(self: &Arc<Self>, g: &str, action: &str, ids: &[String], name: &str) -> Result<(), String> {
         let group = self.load_group(g).ok_or("That group no longer exists.")?;
         let owner = group.owner == self.me_s;
+        let manager = group.manager(&self.me_s);
         match action {
-            "remove" | "rename" | "delete" if !owner => Err("Only the group's creator can do that.".into()),
+            "delete" | "admin" | "unadmin" if !owner => Err("Only the group's owner can do that.".into()),
+            "remove" | "rename" | "picture" if !manager => Err("Only the group's owner or a co-owner can do that.".into()),
+            "admin" | "unadmin" => {
+                let mut group = group;
+                for id in ids.iter().filter(|id| **id != group.owner && group.members.iter().any(|m| m.id == **id)) {
+                    group.admins.retain(|a| a != id);
+                    if action == "admin" {
+                        group.admins.push(id.clone());
+                    }
+                }
+                self.save_group(&group);
+                self.bump_and_broadcast(g, &[]);
+                Ok(())
+            }
+            "picture" => {
+                let pic = name.trim();
+                if !pic.is_empty() && (!pic.starts_with("data:image/") || pic.len() > 160_000) {
+                    return Err("That picture is too big.".into());
+                }
+                let mut group = group;
+                group.avatar = (!pic.is_empty()).then(|| pic.to_string());
+                self.save_group(&group);
+                self.bump_and_broadcast(g, &[]);
+                Ok(())
+            }
             "add" => {
                 let fresh: Vec<Member> = ids
                     .iter()
@@ -2696,7 +2788,7 @@ impl Node {
                 if fresh.is_empty() {
                     return Ok(());
                 }
-                if owner {
+                if manager {
                     self.add_members(g, &fresh);
                 } else {
                     // The creator's PC keeps the member list: it adds them as soon as it is online.
@@ -2707,7 +2799,8 @@ impl Node {
             "remove" => {
                 {
                     let db = self.db.lock().unwrap();
-                    for id in ids.iter().filter(|id| **id != self.me_s) {
+                    // A co-owner can't remove the owner or another co-owner.
+                    for id in ids.iter().filter(|id| **id != self.me_s && **id != group.owner && (owner || !group.admins.contains(id))) {
                         let _ = db.execute("DELETE FROM group_members WHERE group_id = ?1 AND member_id = ?2", [g, id]);
                     }
                 }
@@ -2826,15 +2919,17 @@ impl Node {
             }
         }
         let mut stmt = db
-            .prepare("SELECT id, name, owner, (SELECT MAX(ts) FROM messages WHERE chat = 'g:' || groups.id OR chat LIKE 'g:' || groups.id || '#%'), channels FROM groups")
+            .prepare("SELECT id, name, owner, (SELECT MAX(ts) FROM messages WHERE chat = 'g:' || groups.id OR chat LIKE 'g:' || groups.id || '#%'), channels, admins, avatar FROM groups")
             .unwrap();
-        let groups_raw: Vec<(String, String, String, Option<i64>, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        #[allow(clippy::type_complexity)]
+        let groups_raw: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
         let mut groups = vec![];
-        for (id, name, owner, last, channels) in groups_raw {
+        for (id, name, owner, last, channels, admins, gavatar) in groups_raw {
+            let admins: Vec<String> = admins.and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default();
             let channels: Vec<Channel> = channels.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
             let channels: Vec<Value> = channels
                 .iter()
@@ -2855,7 +2950,7 @@ impl Node {
                 .filter_map(Result::ok)
                 .map(|(mid, mname, avatar, mood)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default() }))
                 .collect();
-            groups.push(json!({ "id": id, "name": name, "owner": owner, "members": members, "lastAt": last, "channels": channels }));
+            groups.push(json!({ "id": id, "name": name, "owner": owner, "admins": admins, "avatar": gavatar, "members": members, "lastAt": last, "channels": channels }));
         }
         json!({ "friends": friends, "incoming": incoming, "outgoing": outgoing, "groups": groups })
     }
@@ -2936,7 +3031,7 @@ impl Node {
             self.set_kv(&format!("chkey:{}", chat_id(g, Some(&id))), &HEXLOWER.encode(&key));
         }
         let channel = Channel { id: id.clone(), name: name.to_string(), check };
-        if group.owner == self.me_s {
+        if group.manager(&self.me_s) {
             self.add_channel_local(g, channel)?;
         } else {
             self.deliver(&group.owner, &Req::ChannelAdd { group_id: g.to_string(), channel });
@@ -2947,8 +3042,8 @@ impl Node {
     /// Renames or deletes a channel (the group's creator only).
     pub fn channel_action(self: &Arc<Self>, g: &str, channel: &str, action: &str, name: &str) -> Result<(), String> {
         let mut group = self.load_group(g).ok_or("That group no longer exists.")?;
-        if group.owner != self.me_s {
-            return Err("Only the group's creator can do that.".into());
+        if !group.manager(&self.me_s) {
+            return Err("Only the group's owner or a co-owner can do that.".into());
         }
         match action {
             "rename" => {
@@ -3464,7 +3559,22 @@ impl Node {
             .map_err(e2s)?;
         let Some(sender) = mine else { return Ok(()) };
         if everyone && sender != self.me_s {
-            return Err("You can only delete your own messages for everyone.".into());
+            // The group's owner or a co-owner may delete anyone's message in the group.
+            let chat: Option<String> = self.db.lock().unwrap().query_row("SELECT chat FROM messages WHERE id = ?1", [id], |r| r.get(0)).optional().ok().flatten();
+            let group = chat.as_deref().and_then(split_chat).map(|(g, _)| g.to_string()).and_then(|g| self.load_group(&g));
+            let Some(group) = group.filter(|g| g.manager(&self.me_s)) else {
+                return Err("You can only delete your own messages for everyone.".into());
+            };
+            let req = Req::ModDelete { group_id: group.id.clone(), msg_id: id.to_string() };
+            self.purge_outbox(|r| matches!(r, Req::Msg { msg } if msg.id == id));
+            if let Some((_, _, Some(f))) = self.remove_message(id, None) {
+                self.forget_file(&f.id);
+            }
+            self.mirror(&self.me_s.clone(), "", &req);
+            for m in group.members.iter().filter(|m| m.id != self.me_s) {
+                self.deliver(&m.id, &req);
+            }
+            return Ok(());
         }
         let Some((chat, _, file)) = self.remove_message(id, None) else { return Ok(()) };
         if everyone {
@@ -3570,6 +3680,60 @@ impl Node {
             params![file.id, path, file.name, size as i64, file.mime, now()],
         ).map_err(e2s)?;
         Ok(file)
+    }
+
+    /// What is in a folder, by file type (shown before sending it, to pick which types go).
+    pub fn scan_folder(&self, path: &str) -> Result<Value, String> {
+        let dir = PathBuf::from(path);
+        if !dir.is_dir() {
+            return Err("Not a folder.".into());
+        }
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("folder").to_string();
+        let mut found = Vec::new();
+        collect_files(&dir, &name, &mut found, 0);
+        let mut by: HashMap<String, (u64, u64)> = HashMap::new();
+        for (p, _, len) in &found {
+            let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+            let e = by.entry(ext).or_insert((0, 0));
+            e.0 += 1;
+            e.1 += len;
+        }
+        let mut exts: Vec<Value> = by.into_iter().map(|(ext, (count, size))| json!({ "ext": ext, "count": count, "size": size })).collect();
+        exts.sort_by(|a, b| b["size"].as_u64().cmp(&a["size"].as_u64()));
+        Ok(json!({ "path": path, "name": name, "count": found.len(), "size": found.iter().map(|f| f.2).sum::<u64>(), "exts": exts, "tooMany": found.len() > 1000 }))
+    }
+
+    /// Sends a folder, only the files of the chosen types ("" = files without an extension).
+    pub fn share_folder(self: &Arc<Self>, path: &str, chats: &[String], exts: &[String]) -> Result<usize, String> {
+        for chat in chats {
+            self.chat_targets(chat)?;
+        }
+        let dir = PathBuf::from(path);
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("folder").to_string();
+        let mut found = Vec::new();
+        collect_files(&dir, &name, &mut found, 0);
+        if found.len() > 1000 {
+            return Err(format!("{name}: too many files (over 1000). Zip it, or send part of it."));
+        }
+        let want: HashSet<String> = exts.iter().map(|e| e.to_lowercase()).collect();
+        let mut sent = 0;
+        for (p, rel, len) in found {
+            let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+            if !want.contains(&ext) || len > MAX_FILE_SIZE {
+                continue;
+            }
+            let file = FileMeta { id: new_id(), name: rel, size: len, mime: guess_mime(&p).to_string(), owner: self.me_s.clone(), dev: self.my_dev() };
+            let _ = self.db.lock().unwrap().execute(
+                "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![file.id, p.to_string_lossy(), file.name, file.size as i64, file.mime, now()],
+            );
+            self.send(chats, None, Some(file))?;
+            sent += 1;
+        }
+        if sent == 0 {
+            return Err("Nothing to send: none of the files are of the chosen types.".into());
+        }
+        Ok(sent)
     }
 
     pub fn share_files(self: &Arc<Self>, paths: Vec<PathBuf>, chats: &[String], text: Option<String>) -> Result<usize, String> {
@@ -4373,15 +4537,47 @@ impl Node {
 
     fn broadcast_party(self: &Arc<Self>, party: &Party) {
         let _ = self.app.emit("party", party);
-        let req = Req::Party { party: party.clone() };
         for m in party.members.iter().filter(|m| m.id != self.me_s && !m.left) {
-            let me = self.clone();
-            let req = req.clone();
-            let to = m.id.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = me.request_all(&to, &req).await;
-            });
+            self.send_party(party, &m.id);
         }
+    }
+
+    /// Sends the party to one person (all their devices). The host keeps track of whether the invitation
+    /// got through, and why not, so the party window can say so; the background loop sends it again.
+    fn send_party(self: &Arc<Self>, party: &Party, to: &str) {
+        let (me, req, to, pid) = (self.clone(), Req::Party { party: party.clone() }, to.to_string(), party.id.clone());
+        let host = party.leader == self.me_s;
+        tauri::async_runtime::spawn(async move {
+            let res = me.request_all(&to, &req).await;
+            let short = &to[..to.len().min(8)];
+            let (reached, note) = match &res {
+                Ok(_) => (true, String::new()),
+                Err(ReqError::Offline(e)) => (false, format!("can't reach their PC ({e})")),
+                Err(ReqError::Refused(e)) => (false, format!("their UaN refused it: {e}")),
+            };
+            me.log(&format!("party {}: to {short} {}", &pid[..pid.len().min(8)], if reached { "delivered".to_string() } else { note.clone() }));
+            if !host {
+                return;
+            }
+            let changed = {
+                let mut parties = me.parties.lock().unwrap();
+                parties.get_mut(&pid).and_then(|p| p.members.iter_mut().find(|m| m.id == to)).map(|m| {
+                    let changed = m.reached != (reached || m.reached) || (!m.reached && m.note != note);
+                    m.reached |= reached;
+                    if !m.reached {
+                        m.note = note.clone();
+                    } else {
+                        m.note.clear();
+                    }
+                    changed
+                })
+            };
+            if changed == Some(true) {
+                if let Some(p) = me.parties.lock().unwrap().get(&pid).cloned() {
+                    let _ = me.app.emit("party", &p);
+                }
+            }
+        });
     }
 
     // ----- Streaming for watch together (no download, no Downloads folder) -----
@@ -4596,10 +4792,10 @@ impl Node {
     pub fn create_party(self: &Arc<Self>, group: &str, file: FileMeta, invite: Vec<String>, seeder: String) -> Result<String, String> {
         let g = self.load_group(group).ok_or("That group no longer exists.")?;
         let (have, ready) = self.buffer_state(&file);
-        let mut members = vec![PartyMember { id: self.me_s.clone(), name: self.my_name(), have, joined: true, left: false, ready, buffering: false, full: false }];
+        let mut members = vec![PartyMember { id: self.me_s.clone(), name: self.my_name(), have, joined: true, left: false, ready, buffering: false, full: false, reached: true, note: String::new() }];
         for id in invite {
             if let Some(m) = g.members.iter().find(|m| m.id == id && m.id != self.me_s) {
-                members.push(PartyMember { id: m.id.clone(), name: m.name.clone(), have: 0, joined: false, left: false, ready: false, buffering: false, full: false });
+                members.push(PartyMember { id: m.id.clone(), name: m.name.clone(), have: 0, joined: false, left: false, ready: false, buffering: false, full: false, reached: false, note: String::new() });
             }
         }
         if members.len() < 2 {
