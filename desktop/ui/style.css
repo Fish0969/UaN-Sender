@@ -1049,3 +1049,54 @@ html[data-backdrop="light"] .backdrop { background: #fff; }
 .members li .small { flex: none; }
 .pin-dot { display: grid; place-items: center; color: var(--muted); flex: none; }
 .pin-dot svg { width: 12px; height: 12px; }
+
+/* ================= Settings: pages on the left, the page on the right ================= */
+#settingsDlg { width: min(760px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); max-height: none; padding: 0; overflow: hidden; }
+.s-shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); height: 100%; }
+.s-nav { display: flex; flex-direction: column; gap: 2px; padding: 18px 10px 12px; overflow-y: auto; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--bg, #000) 38%, transparent); }
+.s-nav h2 { margin: 2px 10px 14px; }
+.s-tab { display: flex; align-items: center; gap: 10px; flex: none; height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: none; color: var(--muted); text-align: left; font-size: 13.5px; }
+.s-tab svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.s-tab:hover { background: var(--hover); color: var(--text); }
+.s-tab.on { background: var(--accent-soft); color: var(--text); }
+.s-tab.on svg { color: var(--accent); }
+.s-nav .app-version { margin: 8px 10px 0; text-align: left; }
+.s-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.s-pages { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 26px 12px; }
+.s-title { margin: 0 0 16px; font-size: 19px; font-weight: 600; }
+.s-page .group { margin-bottom: 8px; }
+.s-page .group-title { display: none; }
+.s-main .error { padding: 0 26px; }
+.s-main .actions { padding: 12px 26px 16px; border-top: 1px solid var(--border); }
+.about-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.about-ver { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.about-ver b { font-size: 15px; }
+.about-btns { display: flex; gap: 8px; flex: none; }
+@media (max-width: 720px) { .s-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } }
+html.phone #settingsDlg { height: calc(100vh - 24px); padding: 0; }
+html.phone .s-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+html.phone .s-nav { flex-direction: row; gap: 4px; padding: 8px; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--border); }
+html.phone .s-nav h2, html.phone .s-nav .grow, html.phone .s-nav .app-version { display: none; }
+html.phone .s-pages { padding: 14px 14px 8px; }
+html.phone .s-main .actions { padding: 10px 14px 14px; }
+html.phone .s-tab[data-page="mailbox"] { display: none; }
+@media (max-width: 720px) {
+  .s-nav { flex-direction: row; gap: 4px; padding: 8px; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--border); }
+  .s-nav h2, .s-nav .grow, .s-nav .app-version { display: none; }
+}
+
+/* ================= The update card in the sidebar ================= */
+.update-bar { display: flex; align-items: center; gap: 10px; margin: 0 10px 8px; padding: 10px 10px 10px 12px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent); color: var(--text); font-size: 12px; }
+.update-bar .upd-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); }
+.update-bar .upd-ico svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.update-bar .upd-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.update-bar .upd-text b { font-size: 12.5px; font-weight: 600; }
+.update-bar .upd-text span { flex: none; color: var(--muted); }
+.update-bar button { flex: none; height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; }
+.update-bar button:disabled { opacity: .7; }
+
+/* Number boxes next to the theme sliders */
+.wp-row { grid-template-columns: 20px 90px 1fr 50px; }
+.wp-num { width: 100%; height: 24px; padding: 0 6px; box-sizing: border-box; border: 1px solid rgba(255, 255, 255, .14); border-radius: 4px; background: #2b2b30; color: #e6e6ea; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+.wp-num::-webkit-inner-spin-button, .wp-num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.wp-num:focus { outline: 0; border-color: var(--accent); }

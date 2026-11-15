@@ -197,32 +197,51 @@ async function enterMain() {
 }
 
 // ---------- Updates: one click replaces the installed version ----------
+let lastUpdate = null;
+// One click: downloads the new version and switches over by itself (the buttons are the ones to disable meanwhile).
+async function installUpdate(u, btns) {
+  if (!u.url) return toast('No download for this system in that release yet.');
+  const size = u.size ? ` (${fmtBytes(u.size)})` : '';
+  if (!(await ask(`Update to UaN ${u.version}${size}? It downloads the new version and switches over by itself, nothing to install. UaN restarts in a few seconds.`, 'Update'))) return;
+  const labels = btns.map((b) => b.textContent);
+  const busy = (on) => btns.forEach((b, i) => { b.disabled = on; b.textContent = on ? 'Downloading…' : labels[i]; });
+  busy(true);
+  try {
+    await invoke('install_update', { url: u.url, name: u.name });
+  } catch (err) {
+    if (String(err) === 'no-write' && u.installer) {
+      try { await invoke('install_update', { url: u.installer, name: u.installerName }); return; } catch (e2) { err = e2; }
+    }
+    busy(false);
+    toast(err);
+  }
+}
+function renderUpdateState() {
+  const u = lastUpdate;
+  $('sUpdState').textContent = u ? `UaN ${u.version} is available` : 'No newer version found.';
+  $('sUpdNow').classList.toggle('hidden', !u);
+}
 async function checkUpdate() {
   const u = await invoke('check_update').catch(() => null);
+  lastUpdate = u;
   const bar = $('updateBar');
   bar.classList.toggle('hidden', !u);
-  if (!u) return;
-  const btn = el('button', { type: 'button', text: 'Update' });
-  btn.onclick = async () => {
-    if (!u.url) return toast('No download for this system in that release yet.');
-    const size = u.size ? ` (${fmtBytes(u.size)})` : '';
-    if (!(await ask(`Update to UaN ${u.version}${size}? It downloads the new version and switches over by itself, nothing to install. UaN restarts in a few seconds.`, 'Update'))) return;
-    btn.disabled = true;
-    btn.textContent = 'Downloading…';
-    try {
-      await invoke('install_update', { url: u.url, name: u.name });
-    } catch (err) {
-      if (String(err) === 'no-write' && u.installer) {
-        btn.textContent = 'Downloading…';
-        try { await invoke('install_update', { url: u.installer, name: u.installerName }); return; } catch (e2) { err = e2; }
-      }
-      btn.disabled = false;
-      btn.textContent = 'Update';
-      toast(err);
-    }
-  };
-  bar.replaceChildren(el('span', { text: `UaN ${u.version} is available` }), btn);
+  if (u) {
+    const btn = el('button', { type: 'button', text: 'Update' });
+    btn.onclick = () => installUpdate(u, [btn, $('sUpdNow')]);
+    bar.replaceChildren(
+      el('div', { class: 'upd-ico' }, svg('<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>')),
+      el('div', { class: 'upd-text' }, el('b', { text: 'Update available' }), el('span', { text: `UaN ${u.version}` })),
+      btn);
+  }
+  renderUpdateState();
+  return u;
 }
+$('sUpdCheck').addEventListener('click', async () => {
+  $('sUpdState').textContent = 'Checking…';
+  await checkUpdate();
+});
+$('sUpdNow').addEventListener('click', () => { if (lastUpdate) installUpdate(lastUpdate, [$('sUpdNow')]); });
 
 // ---------- Built-in playback self-test (used by the automatic Linux/Windows build checks) ----------
 async function runSelfTest(file) {
@@ -2700,8 +2719,26 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sShowCode').textContent = 'Show friend code';
   $('sError').textContent = '';
   $('sVersion').textContent = `UaN ${S.me.version}`;
+  $('sAboutVer').textContent = `UaN ${S.me.version}`;
+  renderUpdateState();
+  // The phone page carries the name the app gives it; pages that don't exist here (no mailbox on a phone) get no tab.
+  const devLabel = $('sDevicesTitle').textContent || 'Phone';
+  document.querySelector('.s-tab[data-page="devices"] span').textContent = devLabel;
+  document.querySelector('.s-page[data-page="devices"] .s-title').textContent = devLabel;
+  for (const [page, group] of [['devices', 'sDevicesGroup'], ['mailbox', 'sMailboxGroup']]) {
+    const g = $(group);
+    document.querySelector(`.s-tab[data-page="${page}"]`).classList.toggle('hidden', g.classList.contains('hidden') || getComputedStyle(g).display === 'none');
+  }
+  showSettingsPage('profile');
   $('settingsDlg').showModal();
 });
+function showSettingsPage(name) {
+  document.querySelectorAll('.s-tab').forEach((b) => b.classList.toggle('on', b.dataset.page === name));
+  document.querySelectorAll('.s-page').forEach((p) => p.classList.toggle('hidden', p.dataset.page !== name));
+  $('settingsDlg').querySelector('.s-pages').scrollTop = 0;
+  if (name !== 'look') closeTune();
+}
+document.querySelectorAll('.s-tab').forEach((b) => b.addEventListener('click', () => showSettingsPage(b.dataset.page)));
 $('sCancel').addEventListener('click', () => $('settingsDlg').close());
 
 function askPassword({ title, note, ok, twice }) {
@@ -3467,10 +3504,24 @@ function renderTune() {
   const set = (key, v) => { c.tune = { ...(c.tune || {}), [key]: v }; applyTune(c); saveTune(c); };
   const row = (icon, label, ...ctl) => el('div', { class: 'wp-row' }, svg(TUNE_ICON[icon]), el('span', { class: 'wp-lbl', text: label }), ...ctl);
   const slider = (key, icon, label, min, max) => {
-    const out = el('output', { text: String(t[key]) });
+    const num = el('input', { type: 'number', class: 'wp-num', min, max, step: 1, value: t[key], 'aria-label': `${label} (number)` });
     const input = el('input', { type: 'range', class: 'wp-range', min, max, step: 1, value: t[key], 'aria-label': label });
-    input.addEventListener('input', () => { out.textContent = input.value; set(key, Number(input.value)); });
-    return row(icon, label, input, out);
+    const clamp = (v) => Math.min(max, Math.max(min, Math.round(v)));
+    // The slider and the number box move each other; a number typed in is kept inside the allowed range.
+    input.addEventListener('input', () => { num.value = input.value; set(key, Number(input.value)); });
+    num.addEventListener('input', () => {
+      if (num.value === '' || !Number.isFinite(Number(num.value))) return;
+      const v = clamp(Number(num.value));
+      input.value = v;
+      set(key, v);
+    });
+    num.addEventListener('change', () => {
+      const v = num.value !== '' && Number.isFinite(Number(num.value)) ? clamp(Number(num.value)) : Number(input.value);
+      num.value = v;
+      input.value = v;
+      set(key, v);
+    });
+    return row(icon, label, input, num);
   };
   const rows = [];
   if (video) {
@@ -3497,7 +3548,7 @@ function placeTune() {
   const dlg = $('settingsDlg');
   // Wide window: the panel sits beside the settings (settings move left), so you see the background change.
   // Narrow window: it opens right under the theme tiles.
-  const wide = innerWidth >= 16 + 460 + 12 + 300 + 16;
+  const wide = innerWidth >= 16 + 760 + 12 + 300 + 16;
   if (wide) { if (panel.parentElement !== dlg) dlg.append(panel); } else if (panel.previousElementSibling !== $('sThemes')) $('sThemes').after(panel);
   panel.classList.toggle('side', wide);
   dlg.classList.toggle('tuning', wide);
