@@ -100,6 +100,11 @@ pub fn show_main(app: &AppHandle) {
         .title(title)
         .inner_size(820.0, 540.0)
         .min_inner_size(560.0, 400.0);
+    // On Windows UaN draws its own title bar (it follows the theme); other systems keep theirs.
+    #[cfg(windows)]
+    {
+        builder = builder.decorations(false);
+    }
     builder = if invisible() { builder } else { builder.center() };
     if profile.name.is_some() {
         builder = builder.data_directory(profile.dir.join("webview"));
@@ -148,6 +153,8 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "httpBase": http.0,
         "vlc": vlc::find().is_some(),
         "selftestVlc": std::env::var("UAN_SELFTEST_VLC").is_ok(),
+        "selftestAssist": std::env::var("UAN_SELFTEST_ASSIST").is_ok(),
+        "customChrome": cfg!(windows),
         "platform": std::env::consts::OS,
         "version": app.package_info().version.to_string(),
         "selftest": selftest.0,
@@ -510,6 +517,55 @@ async fn vlc_status(vlc: State<'_, vlc::Vlc>, id: String) -> CmdResult<Value> {
 #[tauri::command]
 async fn vlc_command(vlc: State<'_, vlc::Vlc>, id: String, cmd: String, value: f64) -> CmdResult<()> {
     vlc.command(&id, &cmd, value).await
+}
+
+/// Decodes a film's sound with a silent VLC and returns the address of the stream (see `vlc::Vlc::assist_start`).
+#[tauri::command]
+fn audio_assist_start(http: State<'_, HttpBase>, vlc: State<'_, vlc::Vlc>, url: String, start: f64) -> CmdResult<String> {
+    // Only films served by UaN itself.
+    if http.0.is_empty() || !url.starts_with(&format!("{}/", http.0)) {
+        return Err("Unexpected address.".into());
+    }
+    let port = vlc.assist_start(&url, start.max(0.0))?;
+    Ok(format!("http://127.0.0.1:{port}/a.ogg"))
+}
+
+#[tauri::command]
+fn audio_assist_stop(vlc: State<'_, vlc::Vlc>) {
+    vlc.assist_stop()
+}
+
+/// The buttons of UaN's own title bar (Windows): minimize, maximize or restore, close, drag, full screen (F11).
+/// Always answers with the window's state.
+#[tauri::command]
+fn win_ctl(window: tauri::WebviewWindow, action: String) -> CmdResult<Value> {
+    #[cfg(desktop)]
+    {
+        let e = |x: tauri::Error| x.to_string();
+        match action.as_str() {
+            "minimize" => window.minimize().map_err(e)?,
+            "toggle_max" => {
+                if window.is_maximized().unwrap_or(false) {
+                    window.unmaximize().map_err(e)?
+                } else {
+                    window.maximize().map_err(e)?
+                }
+            }
+            "close" => window.close().map_err(e)?,
+            "drag" => window.start_dragging().map_err(e)?,
+            "fullscreen" => {
+                let on = !window.is_fullscreen().unwrap_or(false);
+                window.set_fullscreen(on).map_err(e)?
+            }
+            _ => {}
+        }
+        Ok(json!({ "maximized": window.is_maximized().unwrap_or(false), "fullscreen": window.is_fullscreen().unwrap_or(false) }))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (window, action);
+        Ok(json!({}))
+    }
 }
 
 /// Opens the VLC download page in the browser.
@@ -1324,6 +1380,9 @@ pub fn run() {
             vlc_command,
             vlc_close,
             open_vlc_site,
+            audio_assist_start,
+            audio_assist_stop,
+            win_ctl,
             open_github,
             install_vlc,
             audio_track,

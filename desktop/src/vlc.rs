@@ -20,6 +20,8 @@ pub struct Session {
 #[derive(Default)]
 pub struct Vlc {
     sessions: Mutex<HashMap<String, Session>>,
+    /// The silent helper that decodes a film's sound for the built-in player (see `assist_start`).
+    assist: Mutex<Option<Child>>,
 }
 
 /// Program and arguments that start VLC on this system, if it is installed.
@@ -148,6 +150,45 @@ impl Vlc {
         let id = uuid::Uuid::new_v4().simple().to_string();
         self.sessions.lock().unwrap().insert(id.clone(), Session { child, port, password });
         Ok(id)
+    }
+
+    /// VLC without a window, only to decode the film's sound (AC-3, DTS … that the built-in player can't) and send it back
+    /// as an Ogg stream on a local port, which the built-in player plays in step with the picture. Returns the port.
+    pub fn assist_start(&self, url: &str, start: f64) -> Result<u16, String> {
+        let (program, mut args) = find().ok_or("VLC isn't installed on this computer.")?;
+        self.assist_stop();
+        let port = free_port().ok_or("No free port for VLC.")?;
+        args.extend([
+            "-I".to_string(),
+            "dummy".to_string(),
+            "--no-video".to_string(),
+            "--no-one-instance".to_string(),
+            "--no-sub-autodetect-file".to_string(),
+            "--no-osd".to_string(),
+            "--quiet".to_string(),
+            format!("--start-time={start:.2}"),
+            url.to_string(),
+            "--sout".to_string(),
+            format!("#transcode{{vcodec=none,acodec=vorb,ab=160,channels=2,samplerate=48000}}:std{{access=http{{mime=audio/ogg}},mux=ogg,dst=127.0.0.1:{port}/a.ogg}}"),
+            "vlc://quit".to_string(),
+        ]);
+        let mut cmd = system_command(&program);
+        cmd.args(&args);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // no console window
+        }
+        let child = cmd.spawn().map_err(|e| format!("Couldn't start VLC: {e}"))?;
+        *self.assist.lock().unwrap() = Some(child);
+        Ok(port)
+    }
+
+    pub fn assist_stop(&self) {
+        if let Some(mut c) = self.assist.lock().unwrap().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
     }
 
     fn endpoint(&self, id: &str) -> Option<(u16, String, bool)> {

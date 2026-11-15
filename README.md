@@ -83,8 +83,6 @@ Seventeen built-in themes, or put your **own** behind the chat: a video, a pictu
 
 Double-click your theme to open its settings: **sound**, **volume**, **blur** and **brightness**, live, with a slider or a typed number.
 
-Happy with it? **Copy share code**, send it to a friend, and they paste it to get the same theme with the same settings.
-
 </td>
 </tr>
 </table>

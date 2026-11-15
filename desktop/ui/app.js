@@ -151,6 +151,7 @@ document.addEventListener('contextmenu', (e) => {
   if (!e.target.closest('input, .bubble, .code-box')) e.preventDefault();
 });
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'F11') { e.preventDefault(); winCtl('fullscreen'); return; }
   if (e.ctrlKey && e.key.toLowerCase() === 'f' && S.me?.name) { e.preventDefault(); openSearch(); return; }
   if (e.key === 'F5' || (e.ctrlKey && ['r', 'p', 'g', 'u'].includes(e.key.toLowerCase()))) e.preventDefault();
   if ($('viewer').classList.contains('hidden')) return;
@@ -159,8 +160,40 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---------- Start ----------
+// ---------- Window: UaN's own title bar (Windows), full screen with F11 ----------
+function syncWindow(st) {
+  if (!st) return;
+  document.documentElement.classList.toggle('fullscreen', !!st.fullscreen);
+  const max = !!st.maximized;
+  $('tbMax').title = max ? 'Restore' : 'Maximize';
+  $('tbMax').replaceChildren(svg(max
+    ? '<path d="M8.5 8.5V6.6a1.1 1.1 0 0 1 1.1-1.1h7.8a1.1 1.1 0 0 1 1.1 1.1v7.8a1.1 1.1 0 0 1-1.1 1.1h-1.9"/><rect x="5.5" y="8.5" width="10" height="10" rx="1.4"/>'
+    : '<rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/>'));
+}
+const winCtl = (action) => invoke('win_ctl', { action }).then(syncWindow).catch(() => {});
+function setupChrome() {
+  if (!S.me.customChrome) return;
+  document.documentElement.classList.add('chrome');
+  $('titlebar').classList.remove('hidden');
+  const name = S.me.profileName ? `UaN (${S.me.profileName})` : 'UaN';
+  const title = () => { $('tbTitle').textContent = /^\(\d+\)/.test(document.title) ? `${document.title.match(/^\(\d+\)/)[0]} ${name}` : name; };
+  title();
+  new MutationObserver(title).observe(document.querySelector('title'), { childList: true });
+  $('tbDrag').addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.detail === 2) winCtl('toggle_max'); else winCtl('drag');
+  });
+  $('tbMin').addEventListener('click', () => winCtl('minimize'));
+  $('tbMax').addEventListener('click', () => winCtl('toggle_max'));
+  $('tbClose').addEventListener('click', () => winCtl('close'));
+  let rz;
+  addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => winCtl('state'), 120); });
+  winCtl('state');
+}
+
 async function boot() {
   S.me = await invoke('state');
+  setupChrome();
   loadCustomThemes();
   if (S.me.platform === 'android' || S.me.platform === 'ios') document.documentElement.classList.add('phone');
   if (S.me.selftest) return runSelfTest(S.me.selftest);
@@ -268,6 +301,26 @@ async function runSelfTest(file) {
     const stillPaused = v.paused && Math.abs(v.currentTime - t1) < 0.5;
     v.close();
     return report(afterSeek >= 14.5 && afterSeek < 25 && stillPaused, `VLC streamed: seek→${afterSeek.toFixed(1)}s, paused=${stillPaused}, duration=${v.duration}`);
+  }
+  if (S.me.selftestAssist) {
+    const v = el('video', { src: mediaUrl(file) });
+    document.body.append(v);
+    v.play().catch(() => {});
+    const t0 = Date.now();
+    const wait = async (cond, ms) => { while (Date.now() - t0 < ms) { if (cond()) return true; await new Promise((r) => setTimeout(r, 250)); } return false; };
+    if (!(await wait(() => v.currentTime > 2, 40000))) return report(false, 'picture did not play: t=' + v.currentTime + ' err=' + v.error?.code);
+    const started = await startAudioAssist(v, file, () => {});
+    if (!started) return report(false, 'the sound helper did not start (VLC missing?)');
+    const a = v._assist?.audio;
+    const playing = await wait(() => a && !a.paused && a.currentTime > 1.5, 60000);
+    if (!playing) return report(false, 'sound did not play: ready=' + v._assist?.ready + ' paused=' + a?.paused + ' t=' + a?.currentTime + ' err=' + a?.error?.code + ' picture=' + v.currentTime.toFixed(1));
+    const drift1 = v.currentTime - (v._assist.startAt + a.currentTime);
+    v.currentTime = Math.min(v.currentTime + 6, (v.duration || 100) - 3); // jump ahead: the sound must follow
+    await new Promise((r) => setTimeout(r, 1000));
+    const back = await wait(() => a && !a.paused && !v.paused && Math.abs(v.currentTime - (v._assist.startAt + a.currentTime)) < 0.8, 60000);
+    const drift2 = v.currentTime - (v._assist.startAt + a.currentTime);
+    v._assist.stop();
+    return report(back && Math.abs(drift1) < 0.8, 'quiet sound OK: drift ' + drift1.toFixed(2) + 's, after the jump ' + drift2.toFixed(2) + 's, picture at ' + v.currentTime.toFixed(1) + 's');
   }
   const v = el('video', { src: mediaUrl(file) });
   v.muted = true;
@@ -2044,6 +2097,91 @@ async function openInVlc(file, why) {
   }
 }
 
+// ---------- The film's sound through VLC, quietly: the picture and everything else stay in UaN ----------
+// Some films carry their sound in a format the built-in player can't decode (AC-3, DTS ...). Instead of opening VLC's
+// window, a silent VLC decodes just the sound and sends it back as an ordinary audio stream; it plays here, level
+// with the picture (restarted after a jump, nudged when it drifts). Returns true when it started.
+async function startAudioAssist(video, file, onFail) {
+  if (video._assist) return true;
+  if (!(await ensureVlc('This film’s sound is in a format the built-in player can’t decode. VLC (free) can decode it quietly in the background, so the film still plays here.'))) return false;
+  if (video._assist) return true;
+  const a = new Audio();
+  a.preload = 'auto';
+  const A = (video._assist = { audio: a, startAt: 0, lead: 3, ready: false, token: 0, failures: 0, iv: null, timer: null });
+  const stop = () => {
+    clearInterval(A.iv);
+    clearTimeout(A.timer);
+    A.token++;
+    a.pause();
+    a.removeAttribute('src');
+    a.load();
+    invoke('audio_assist_stop').catch(() => {});
+    if (video._assist === A) video._assist = null;
+  };
+  A.stop = stop;
+  const failed = (why) => {
+    stop();
+    toast('The film’s sound couldn’t be started quietly' + (why ? ' (' + why + ')' : '') + ', so it opens in VLC instead.');
+    onFail?.();
+  };
+  // Starts the sound a few seconds ahead of the picture (VLC needs a moment), and lets it begin when the picture gets there.
+  const launch = async (from) => {
+    const mine = ++A.token;
+    A.ready = false;
+    a.pause();
+    A.startAt = Math.max(0, from + A.lead);
+    try {
+      const url = await invoke('audio_assist_start', { url: httpUrl(file), start: A.startAt });
+      if (mine !== A.token) return;
+      // VLC opens its port a moment later: try a few times.
+      let ok = false;
+      for (let n = 0; n < 12 && !ok && mine === A.token; n++) {
+        a.src = n ? url + '?r=' + n : url;
+        a.load();
+        ok = await new Promise((res) => {
+          const done = (v) => { clearTimeout(t); a.removeEventListener('canplay', yes); a.removeEventListener('error', no); res(v); };
+          const yes = () => done(true);
+          const no = () => done(false);
+          const t = setTimeout(() => done(false), 4000);
+          a.addEventListener('canplay', yes, { once: true });
+          a.addEventListener('error', no, { once: true });
+        });
+        if (!ok) await new Promise((r) => setTimeout(r, 350));
+      }
+      if (mine !== A.token) return;
+      if (!ok) { if (++A.failures >= 3) failed('no sound came back'); else launch(video.currentTime); return; }
+      A.failures = 0;
+      A.ready = true;
+    } catch (e) {
+      if (mine === A.token) failed(String(e).slice(0, 80));
+    }
+  };
+  const tick = () => {
+    if (!video.isConnected) return stop(); // the player was closed
+    if (!A.ready) return;
+    const vt = video.currentTime;
+    if (video.paused || video.seeking || video.readyState < 3) { if (!a.paused) a.pause(); return; }
+    if (a.paused) {
+      if (vt >= A.startAt - 0.03) {
+        if (vt > A.startAt + 1.2) { A.lead = Math.min(A.lead + 1.5, 9); launch(vt); return; } // too late: ask for it further ahead
+        a.play().catch(() => {});
+      }
+      return;
+    }
+    const diff = vt - (A.startAt + a.currentTime); // positive: the sound is behind the picture
+    if (Math.abs(diff) > 1.2) { launch(vt); return; }
+    a.playbackRate = Math.abs(diff) > 0.12 ? 1 + Math.max(-0.05, Math.min(0.05, diff * 0.5)) : 1;
+  };
+  const volume = () => { a.volume = video.volume; a.muted = video.muted; };
+  volume();
+  video.addEventListener('volumechange', volume);
+  video.addEventListener('seeked', () => { clearTimeout(A.timer); A.timer = setTimeout(() => launch(video.currentTime), 250); });
+  video.addEventListener('ended', stop);
+  A.iv = setInterval(tick, 200);
+  launch(video.currentTime);
+  return true;
+}
+
 // Looks like a <video> element to the watch-together code, but drives VLC through its remote control.
 class VlcVideo extends EventTarget {
   constructor(file) {
@@ -2274,7 +2412,7 @@ function showInViewer(file) {
   if (/^video\//i.test(file.mime)) {
     viewerPlayer = makePlayer(body, { file, chat });
     viewerPlayer.video.addEventListener('error', showError);
-    watchSound(viewerPlayer.video, file, (what = 'sound') => {
+    const toVlcWindow = (what = 'sound') => {
       if (token !== viewerToken || autoVlc) return;
       autoVlc = true;
       viewerPlayer?.video.pause();
@@ -2283,6 +2421,16 @@ function showInViewer(file) {
         el('button', { type: 'button', class: 'small', text: 'Open in VLC (no download)', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } })));
       note.classList.remove('hidden');
       openInVlc(file, `This film’s ${what} can’t be played inside UaN on this computer, but VLC can play it without downloading.`);
+    };
+    watchSound(viewerPlayer.video, file, async (what = 'sound') => {
+      if (token !== viewerToken || autoVlc) return;
+      if (what === 'sound' && await startAudioAssist(viewerPlayer.video, file, () => toVlcWindow('sound'))) {
+        note.textContent = 'This film’s sound is in a format the built-in player can’t decode, so VLC decodes it quietly in the background. The film plays here.';
+        note.classList.remove('hidden');
+        setTimeout(() => { if (token === viewerToken) note.classList.add('hidden'); }, 7000);
+        return;
+      }
+      toVlcWindow(what);
     });
   } else {
     const src = mediaUrl(file);
@@ -2769,6 +2917,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sHeads').checked = onlineHeads();
   renderThemeTiles();
   syncTune();
+  renderUiStyles();
   renderIconTiles();
   renderAvatarTiles();
   $('sAutoDl').checked = S.me.autodl;
@@ -3168,7 +3317,14 @@ function openParty(id, mode = partyMode) {
       if ((await reachability(p.file)) !== 'ok') return;
       toVlc('format');
     });
-    watchSound(v, p.file, (what = 'sound') => toVlc(what));
+    watchSound(v, p.file, async (what = 'sound') => {
+      if (what === 'sound' && openPartyId === id && partyPlayer?.video === v && !noAutoVlc.has(id)
+        && await startAudioAssist(v, p.file, () => toVlc('sound'))) {
+        toast('This film’s sound plays through VLC in the background, still in sync with everyone.');
+        return;
+      }
+      toVlc(what);
+    });
   }
   v.addEventListener('ended', () => {
     const cur = S.parties.get(id);
@@ -3630,8 +3786,6 @@ function closeTune() {
   $('settingsDlg').classList.remove('tuning');
 }
 $('tuneClose').addEventListener('click', closeTune);
-$('tuneCopy').addEventListener('click', () => { if (tuning) copyThemeCode(tuning); });
-$('themeCodeForm').addEventListener('submit', (e) => e.preventDefault());
 $('settingsDlg').addEventListener('close', closeTune);
 $('tuneReset').addEventListener('click', () => {
   if (!tuning) return;
@@ -3641,155 +3795,6 @@ $('tuneReset').addEventListener('click', () => {
   renderTune();
 });
 
-// ---------- Share code: your theme and its settings in one piece of text ----------
-const b64u = {
-  enc(bytes) {
-    let s = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  },
-  dec(str) {
-    const s = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
-    const out = new Uint8Array(s.length);
-    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-    return out;
-  },
-};
-const pipeBytes = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
-const SHARE_EMBED_LIMIT = 700; // bytes: only a tiny theme travels inside the code, any other one is sent as a file
-const MIME_EXT = { 'text/html': 'html', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/x-matroska': 'mkv', 'video/quicktime': 'mov', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
-const KIND_LETTER = { html: 'h', video: 'v', image: 'i' };
-const LETTER_KIND = { h: 'html', v: 'video', i: 'image' };
-// A short code (about 80 characters): UAN-T + [2, name, kind, light or dark, accent, size, volume, brightness, blur, sound],
-// and for a tiny theme also its file after a dot.
-async function themeShareCode(c) {
-  const t = tuneOf(c);
-  const head = [2, c.name, KIND_LETTER[c.kind], c.base === 'light' ? 'l' : 'd', c.accent ? c.accent.slice(1) : 0, c.size, t.vol, t.bright, t.blur, c.sound ? 1 : 0];
-  let body = '';
-  if (c.size <= 8192) {
-    const r = await fetch(themeFileUrl(c)).catch(() => null);
-    if (r?.ok) {
-      let bytes = new Uint8Array(await r.arrayBuffer());
-      let z = 0;
-      if (typeof CompressionStream === 'function') {
-        const packed = await pipeBytes(bytes, new CompressionStream('deflate-raw'));
-        if (packed.length < bytes.length) { bytes = packed; z = 1; }
-      }
-      if (bytes.length <= SHARE_EMBED_LIMIT) {
-        head.push((c.file || '').split('.').pop() || 'html', z);
-        body = b64u.enc(bytes);
-      }
-    }
-  }
-  return { code: `UAN-T${b64u.enc(new TextEncoder().encode(JSON.stringify(head)))}${body ? `.${body}` : ''}`, embedded: !!body };
-}
-async function copyThemeCode(c) {
-  try {
-    const { code, embedded } = await themeShareCode(c);
-    await navigator.clipboard.writeText(code);
-    toast(embedded
-      ? 'Share code copied. Whoever pastes it in UaN gets this theme with your settings.'
-      : 'Share code copied. It holds the settings; send the theme file too (right-click the theme → Send to friends…).');
-  } catch (e) {
-    toast(e.message || e);
-  }
-}
-function cleanTune(t) {
-  const out = {};
-  const lim = { vol: [0, 100], bright: [20, 160], blur: [0, 40] };
-  for (const [k, [lo, hi]] of Object.entries(lim)) if (Number.isFinite(Number(t?.[k]))) out[k] = Math.min(hi, Math.max(lo, Math.round(Number(t[k]))));
-  return out;
-}
-// Reads a share code: the short one, or the first, longer format (still understood).
-function parseThemeCode(text) {
-  const s = String(text).trim();
-  let m = s.match(/UAN-T([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]*))?/);
-  if (m) {
-    let a = null;
-    try { a = JSON.parse(new TextDecoder().decode(b64u.dec(m[1]))); } catch {}
-    if (Array.isArray(a) && a[0] === 2 && typeof a[1] === 'string' && LETTER_KIND[a[2]]) {
-      return { name: a[1].slice(0, 24), kind: LETTER_KIND[a[2]], base: a[3] === 'l' ? 'light' : 'dark', accent: /^[0-9a-f]{6}$/i.test(String(a[4])) ? `#${a[4]}` : null,
-        size: Number(a[5]) || 0, t: { vol: a[6], bright: a[7], blur: a[8] }, snd: !!a[9], ext: typeof a[10] === 'string' ? a[10].replace(/[^a-z0-9]/gi, '').slice(0, 5) : '', z: !!a[11], body: m[2] || '' };
-    }
-  }
-  m = s.match(/UANTHEME1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)/);
-  if (m) {
-    try {
-      const h = JSON.parse(new TextDecoder().decode(b64u.dec(m[1])));
-      if (h && typeof h.n === 'string' && ['html', 'video', 'image'].includes(h.k)) {
-        return { name: h.n.slice(0, 24), kind: h.k, base: h.b === 'light' ? 'light' : 'dark', accent: /^#[0-9a-f]{6}$/i.test(h.a || '') ? h.a : null,
-          size: Number(h.s) || 0, t: h.t, snd: !!h.snd, ext: MIME_EXT[h.m] || '', z: !!h.z, body: m[2] || '' };
-      }
-    } catch {}
-  }
-  return null;
-}
-let pendingCode = null; // a code whose theme file we still need
-async function applyThemeCode(head, theme) {
-  await invoke('theme_tune', { id: theme.id, tune: cleanTune(head.t) });
-  if (theme.kind === 'video' && !!theme.sound !== !!head.snd) await invoke('theme_sound', { id: theme.id, on: !!head.snd }).catch(() => {});
-  await loadCustomThemes();
-  setTheme(`custom:${theme.id}`);
-  toast(`Theme added: ${theme.name}.`);
-}
-async function importThemeCode(text) {
-  const p = parseThemeCode(text);
-  if (!p) throw new Error('That isn’t a UaN theme code.');
-  const { name, base, accent } = p;
-  if (p.body) {
-    toast('Adding the theme…');
-    let bytes = b64u.dec(p.body);
-    if (p.z) bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'));
-    const ext = p.ext || (p.kind === 'html' ? 'html' : p.kind === 'video' ? 'mp4' : 'png');
-    const path = await uploadFile(new File([bytes], `${name.replace(/[\/:*?"<>|]/g, '') || 'theme'}.${ext}`));
-    const t = await invoke('theme_add', { path, name, base, accent });
-    return applyThemeCode(p, t);
-  }
-  // Only the settings are in the code: use the same theme file if it is already here.
-  const have = customThemes.find((c) => c.kind === p.kind && c.size === p.size);
-  if (have) return applyThemeCode(p, have);
-  pendingCode = { head: p, name, base, accent };
-  const mb = Math.max(1, Math.round(p.size / 1048576));
-  if (await ask(`This code holds the settings of “${name}”. The theme file itself (about ${mb} MB) is not in the code: pick the file your friend sent you, and UaN applies their settings to it.`, 'Choose the file…')) {
-    $('themeCodeFile').click();
-  } else {
-    pendingCode = null;
-  }
-}
-$('themeCodeFile').addEventListener('change', async () => {
-  const f = $('themeCodeFile').files[0];
-  $('themeCodeFile').value = '';
-  const p = pendingCode;
-  pendingCode = null;
-  if (!f || !p) return;
-  try {
-    toast('Adding the theme…');
-    const path = await uploadFile(f);
-    const t = await invoke('theme_add', { path, name: p.name, base: p.base, accent: p.accent });
-    await applyThemeCode(p.head, t);
-  } catch (e) {
-    toast(e.message || e);
-  }
-});
-function openCodeDlg() {
-  $('themeCodeText').value = '';
-  $('themeCodeError').textContent = '';
-  $('themeCodeDlg').showModal();
-  $('themeCodeText').focus();
-}
-$('themeCodeCancel').addEventListener('click', () => $('themeCodeDlg').close());
-$('themeCodePaste').addEventListener('click', async () => {
-  try { $('themeCodeText').value = await navigator.clipboard.readText(); } catch { $('themeCodeError').textContent = 'Couldn’t read the clipboard. Paste it with Ctrl+V instead.'; }
-});
-$('themeCodeOk').addEventListener('click', async () => {
-  $('themeCodeError').textContent = '';
-  try {
-    await importThemeCode($('themeCodeText').value);
-    $('themeCodeDlg').close();
-  } catch (e) {
-    $('themeCodeError').textContent = e.message || String(e);
-  }
-});
 async function loadCustomThemes() {
   try {
     customThemes = await invoke('themes');
@@ -3849,7 +3854,6 @@ function themeMenu(c) {
       await invoke('theme_sound', { id: c.id, on: !c.sound }).catch(toast);
       await loadCustomThemes();
     } } : null,
-    { label: 'Copy share code', run: () => copyThemeCode(c) },
     { label: 'Send to friends…', run: () => openPick('theme', null, c) },
     '-',
     { label: 'Remove theme…', danger: true, run: () => removeTheme(c) },
@@ -3946,15 +3950,8 @@ function renderThemeTiles() {
   const sel = $('sTheme');
   if (!sel.options.length) sel.replaceChildren(...THEMES.map((t) => el('option', { value: t.id, text: t.name })));
   sel.value = theme.mode;
-  const add = el('button', { type: 'button', class: 'add-theme', title: 'Add a theme: from a file or from a share code', 'aria-label': 'Add a theme',
-    onclick: (e) => {
-      const r = e.currentTarget.getBoundingClientRect();
-      showMenu(r.left, r.bottom + 4, [
-        { label: 'From a file (.html, video, picture)…', run: () => $('themeFile').click() },
-        { label: 'Paste from a share code…', run: openCodeDlg },
-      ]);
-    } },
-  svg('<path d="M12 5v14M5 12h14"/>'));
+  const add = el('button', { type: 'button', class: 'add-theme', title: 'Add your own theme: an .html page, a video or a picture', 'aria-label': 'Add your own theme', onclick: () => $('themeFile').click() },
+    svg('<path d="M12 5v14M5 12h14"/>'));
   $('sThemes').replaceChildren(...[...THEMES, ...customThemes.map(customTheme)].map((t) => {
     if (t.custom) {
       const c = t.custom;
@@ -3995,6 +3992,30 @@ function renderThemeTiles() {
 $('sTheme').addEventListener('change', () => setTheme($('sTheme').value));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 applyTheme();
+
+// ---------- Interface style: the shape and feel of the panels (Default changes nothing) ----------
+const UI_STYLES = [
+  { id: 'default', name: 'Default' },
+  { id: 'glass', name: 'Liquid glass' },
+  { id: 'pixel', name: 'Pixel' },
+  { id: 'flat', name: 'Flat' },
+];
+let uiStyle = (() => { try { const v = localStorage.getItem('uan.ui'); return UI_STYLES.some((u) => u.id === v) ? v : 'default'; } catch { return 'default'; } })();
+function applyUiStyle() {
+  if (uiStyle === 'default') delete document.documentElement.dataset.ui;
+  else document.documentElement.dataset.ui = uiStyle;
+}
+function setUiStyle(id) {
+  uiStyle = UI_STYLES.some((u) => u.id === id) ? id : 'default';
+  try { if (uiStyle === 'default') localStorage.removeItem('uan.ui'); else localStorage.setItem('uan.ui', uiStyle); } catch {}
+  applyUiStyle();
+  renderUiStyles();
+}
+function renderUiStyles() {
+  $('sUiStyles').replaceChildren(...UI_STYLES.map((u) => el('button', { type: 'button', class: u.id === uiStyle ? 'on' : '', 'data-ui-id': u.id, title: u.name, onclick: () => setUiStyle(u.id) },
+    el('div', { class: 'uis-prev' }, el('i'), el('i')), el('span', { class: 'uis-name', text: u.name }))));
+}
+applyUiStyle();
 
 // ---------- App icon: a few ready-made ones ----------
 const APP_ICONS = [

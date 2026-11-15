@@ -955,7 +955,6 @@ html.phone .f-row { padding: 10px 12px; }
 .tune-foot { display: flex; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--border); }
 .tune-foot button { height: 32px; padding: 0 12px; }
 .tune-foot .accent { flex: 1; }
-#themeCodeDlg textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 12px/1.4 ui-monospace, Consolas, monospace; word-break: break-all; }
 html[data-backdrop="dark"] .backdrop::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, .2); }
 html[data-backdrop="light"] .backdrop { background: #fff; }
 
@@ -1105,3 +1104,87 @@ html.phone .s-tab[data-page="mailbox"] { display: none; }
 .ap-bar::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--p, 0%), color-mix(in srgb, var(--text) 22%, transparent) var(--p, 0%)); }
 .ap-bar::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%; background: var(--accent); }
 .ap-time { flex: none; min-width: 74px; text-align: right; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.tune-foot button { flex: 1; }
+
+/* A group's picture is an .avatar.group: it must not pick up the margin of a settings .group (it sat 7px too high in the list) */
+.avatar.group { margin: 0; }
+
+
+/* ================= UaN's own title bar (Windows) ================= */
+.titlebar {
+  position: fixed; top: 0; left: 0; right: 0; height: 34px; z-index: 60; display: flex; align-items: stretch;
+  background: color-mix(in srgb, var(--side) 72%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; user-select: none;
+}
+.tb-drag { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; }
+.tb-drag img { width: 16px; height: 16px; flex: none; }
+.tb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tb-btn { width: 46px; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; display: grid; place-items: center; color: var(--text); }
+.tb-btn svg { width: 14px; height: 14px; }
+.tb-btn:hover { background: var(--hover); }
+.tb-btn:active { background: var(--active); }
+.tb-close:hover { background: #e5484d; color: #fff; }
+html.chrome body { padding-top: 34px; }
+html.chrome .viewer { top: 34px; }
+html.chrome .party-invite { top: 52px; }
+html.chrome.fullscreen body { padding-top: 0; }
+html.chrome.fullscreen .titlebar { display: none; }
+html.chrome.fullscreen .viewer { top: 0; }
+html.chrome.fullscreen .party-invite { top: 20px; }
+
+/* ================= Interface styles: the shape and feel of the panels (Default = no change at all) ================= */
+.ui-styles { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 8px; }
+.ui-styles button { width: 112px; height: 74px; padding: 8px; display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; text-align: left; border-radius: 12px; }
+.ui-styles button.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ui-styles .uis-name { font-size: 12px; font-weight: 600; }
+.ui-styles .uis-prev { height: 30px; display: grid; grid-template-columns: 26px 1fr; gap: 4px; }
+.ui-styles .uis-prev i { display: block; background: color-mix(in srgb, var(--text) 16%, transparent); border: 1px solid color-mix(in srgb, var(--text) 22%, transparent); }
+.ui-styles [data-ui-id="default"] .uis-prev i { border-radius: 6px; }
+.ui-styles [data-ui-id="glass"] .uis-prev i { border-radius: 10px; background: linear-gradient(135deg, rgba(255,255,255,.34), rgba(255,255,255,.08)); border-color: rgba(255,255,255,.38); box-shadow: inset 0 1px 0 rgba(255,255,255,.5); }
+.ui-styles [data-ui-id="pixel"] .uis-prev i { border-radius: 0; border-width: 2px; border-color: var(--text); box-shadow: 2px 2px 0 var(--text); }
+.ui-styles [data-ui-id="flat"] .uis-prev i { border-radius: 2px; border-color: transparent; }
+
+/* --- Liquid glass: frosted, translucent panels with a bright edge --- */
+html[data-ui="glass"] { --r-panel: 28px; --r-ctl: 15px; --r-print: 16px; --gap: 12px; --border: color-mix(in srgb, var(--text) 18%, transparent);
+  --lift: 0 18px 50px -18px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 1px rgba(255, 255, 255, .1); }
+html[data-ui="glass"] body { background: var(--bg-image, radial-gradient(70% 60% at 12% 8%, color-mix(in srgb, var(--accent) 42%, transparent), transparent 70%), radial-gradient(60% 60% at 92% 92%, color-mix(in srgb, var(--mine, var(--accent)) 46%, transparent), transparent 70%), var(--bg)); }
+html[data-ui="glass"] .side, html[data-ui="glass"] .content { background: color-mix(in srgb, var(--side) 36%, transparent); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); }
+html[data-ui="glass"] .chat-head, html[data-ui="glass"] .composer { background: color-mix(in srgb, var(--panel) 30%, transparent); }
+html[data-ui="glass"] .bubble { -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); }
+html[data-ui="glass"] .msg.theirs .bubble { background: color-mix(in srgb, var(--theirs) 48%, transparent); }
+html[data-ui="glass"] button:not(.ap-btn):not(.tb-btn):not(.s-tab):not(.tune-x):not(.add-theme):not(.custom-tile):not(.rail-btn):not(.swatch):not(.accent) { background: color-mix(in srgb, var(--card) 38%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2); }
+html[data-ui="glass"] button.accent { background: color-mix(in srgb, var(--accent) 82%, transparent); }
+html[data-ui="glass"] .tb-btn { background: transparent; }
+html[data-ui="glass"] .tb-btn:hover { background: var(--hover); }
+html[data-ui="glass"] .tb-close:hover { background: #e5484d; }
+html[data-ui="glass"] input { background: color-mix(in srgb, var(--card) 40%, transparent); }
+html[data-ui="glass"] .list li.active, html[data-ui="glass"] .list li.active:hover { background: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, .08)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); }
+html[data-ui="glass"] dialog, html[data-ui="glass"] .menu, html[data-ui="glass"] .party-invite { background: color-mix(in srgb, var(--dialog, var(--panel)) 58%, transparent); -webkit-backdrop-filter: blur(34px) saturate(1.7); backdrop-filter: blur(34px) saturate(1.7); border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .3); }
+html[data-ui="glass"] .titlebar { background: color-mix(in srgb, var(--side) 30%, transparent); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); }
+html[data-ui="glass"] .s-nav { background: color-mix(in srgb, var(--bg, #000) 20%, transparent); }
+
+/* --- Pixel: square corners, thick edges, hard shadows, a console font --- */
+html[data-ui="pixel"] { --r-panel: 0px; --r-ctl: 0px; --r-print: 0px; --gap: 10px; --border: color-mix(in srgb, var(--text) 62%, transparent); --lift: 5px 5px 0 rgba(0, 0, 0, .55); --ease: steps(4, end); }
+html[data-ui="pixel"] body { font-family: "Lucida Console", "Courier New", Consolas, monospace; font-size: 12.5px; -webkit-font-smoothing: none; }
+html[data-ui="pixel"] *, html[data-ui="pixel"] *::before, html[data-ui="pixel"] *::after { border-radius: 0 !important; transition: none !important; }
+html[data-ui="pixel"] .side, html[data-ui="pixel"] .content { border-width: 3px; border-color: var(--text); }
+html[data-ui="pixel"] button, html[data-ui="pixel"] input, html[data-ui="pixel"] select, html[data-ui="pixel"] textarea { border: 2px solid color-mix(in srgb, var(--text) 75%, transparent); box-shadow: 3px 3px 0 rgba(0, 0, 0, .5); }
+html[data-ui="pixel"] button { white-space: nowrap; font-size: 12px; letter-spacing: -.2px; padding-left: 8px; padding-right: 8px; }
+html[data-ui="pixel"] .dock button, html[data-ui="pixel"] .code-row button { font-size: 11px; padding-left: 4px; padding-right: 4px; }
+html[data-ui="pixel"] button:active { transform: translate(3px, 3px); box-shadow: none; }
+html[data-ui="pixel"] .tb-btn, html[data-ui="pixel"] .s-tab, html[data-ui="pixel"] .tune-x { box-shadow: none; border: 0; }
+html[data-ui="pixel"] button.icon, html[data-ui="pixel"] button.tiny, html[data-ui="pixel"] button.link { box-shadow: none; }
+html[data-ui="pixel"] .bubble { border: 2px solid color-mix(in srgb, var(--text) 70%, transparent); box-shadow: 3px 3px 0 rgba(0, 0, 0, .45); }
+html[data-ui="pixel"] dialog, html[data-ui="pixel"] .menu, html[data-ui="pixel"] .party-invite { border: 3px solid var(--text); box-shadow: 8px 8px 0 rgba(0, 0, 0, .6); }
+html[data-ui="pixel"] .avatar, html[data-ui="pixel"] .print img, html[data-ui="pixel"] .thumb img { image-rendering: pixelated; }
+html[data-ui="pixel"] .list li.active { box-shadow: inset 0 0 0 2px var(--accent); }
+html[data-ui="pixel"] .titlebar { border-bottom: 3px solid var(--text); font-family: inherit; }
+html[data-ui="pixel"] .wp-range::-webkit-slider-thumb { width: 12px; height: 16px; margin-top: -6px; }
+
+/* --- Flat: no floating panels, straight lines --- */
+html[data-ui="flat"] { --r-panel: 0px; --r-ctl: 6px; --r-print: 4px; --gap: 0px; --lift: none; }
+html[data-ui="flat"] .main { padding: 0; }
+html[data-ui="flat"] .side, html[data-ui="flat"] .content { border-width: 0 1px 0 0; box-shadow: none; }
+html[data-ui="flat"] .content { border-width: 0; }
+html[data-ui="flat"] .list li { border-radius: 6px; }

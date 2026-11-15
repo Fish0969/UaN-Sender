@@ -24,9 +24,11 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   A chat and a **playlist** sit next to the film (the next film starts by itself).
   Everyone chooses for themselves: just stream it, or **download the whole film first** (smoothest;
   the party waits for you, and a copy is kept in `Downloads/UaN`).
-- **Open in VLC.** If a film's format or sound can't play inside UaN (picture but no sound, e.g. AC3/DTS
-  sound), it opens in VLC by itself, streamed without downloading. If VLC is missing, UaN offers to
-  install it with one click. *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in
+- **Sound the player can't decode (AC3, DTS …).** The film still plays inside UaN: a silent VLC in the background decodes just
+  the sound and UaN plays it level with the picture, also after you jump around, and in a watch party. If VLC is
+  missing, UaN offers to install it with one click. If this doesn't work, the film opens in VLC's window instead.
+- **Open in VLC.** If a film's picture can't play inside UaN, it opens in VLC by itself, streamed without
+  downloading. *Open in VLC* does it anytime. In a watch party, *Watch in VLC* keeps VLC in
   sync with everyone (play, pause, seek both ways); close VLC and you're back in UaN's own player.
 - **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)
   for everyone. Deleting a file for everyone also stops sharing it, stops friends' downloads of it and removes the
@@ -72,12 +74,12 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
 - **Theme settings.** Double-click one of your themes, or right-click it → *Theme settings…*, and a panel opens next to
   Settings: **sound** on or off, **volume**, **blur** and **brightness**, each with a slider and a box to type the number.
   The background changes while you drag. *Reset* goes back to the defaults.
-- **Share a theme.** *Copy share code* in the theme settings puts a code on the clipboard. Whoever pastes it
-  (**+** → *Paste from a share code…*) gets the same theme with the same settings, and can change them for themselves.
-  The code is short (about 80 characters) and carries the settings. Only a tiny theme travels inside it; for a picture, video or page,
-  send the file too (right-click the theme → *Send to friends…*): if they already have it, UaN finds it by itself, otherwise it asks them to pick it.
-- **Settings in pages.** The pages are listed on the left (Profile, Appearance, Privacy, Downloads & start-up, Offline
-  mailbox, Backup, Phone, Friend code, About & updates), the page itself on the right. The installed version is shown at the bottom.
+- **Settings in pages.** The pages are listed on the left (Profile, Appearance, Interface style, Privacy, Downloads &
+  start-up, Offline mailbox, Backup, Phone, About & updates), the page itself on the right. The installed version is shown at the bottom.
+- **Interface style.** Besides the colours of a theme you can change the shape and feel of the whole app: **Liquid glass**
+  (frosted, translucent panels), **Pixel** (square corners, thick edges, hard shadows) or **Flat**. **Default** is the usual
+  look and is what everyone starts with; pick it any time to go back.
+- **Title bar and full screen (Windows).** UaN draws its own title bar in the colours of your theme. **F11** shows the app full screen and back.
 - **Groups.** The owner can name **co-owners**. Owners and co-owners can rename the group, add and remove people, manage
   channels, change the group picture, clear the chat for everyone and delete anyone's message; only the owner deletes
   the group or names co-owners. The header shows who is online with small pictures (you count too; Settings turns

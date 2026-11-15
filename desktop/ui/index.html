@@ -7,6 +7,14 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- UaN's own title bar (Windows): it follows the theme -->
+  <div id="titlebar" class="titlebar hidden">
+    <div class="tb-drag" id="tbDrag"><img src="icon.png" alt=""><span class="tb-title" id="tbTitle">UaN</span></div>
+    <button type="button" class="tb-btn" id="tbMin" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    <button type="button" class="tb-btn" id="tbMax" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/></svg></button>
+    <button type="button" class="tb-btn tb-close" id="tbClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+
   <!-- First run -->
   <div id="setup" class="login hidden">
     <form id="setupForm" class="login-box">
@@ -198,7 +206,6 @@
   <input type="file" id="avatarFile" accept="image/*" hidden>
   <input type="file" id="phoneFiles" multiple hidden>
   <input type="file" id="themeFile" accept=".html,.htm,video/*,image/*" hidden>
-  <input type="file" id="themeCodeFile" accept=".html,.htm,video/*,image/*" hidden>
   <input type="file" id="phonePhotos" accept="image/*,video/*" multiple hidden>
 
   <!-- Sign in on a phone: the PC shows a code -->
@@ -332,6 +339,7 @@
         <h2 tabindex="-1" autofocus>Settings</h2>
         <button type="button" class="s-tab on" data-page="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Profile</span></button>
         <button type="button" class="s-tab" data-page="look"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.2-1-1.6-1-2.7 0-1 .8-1.5 1.8-1.5H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg><span>Appearance</span></button>
+        <button type="button" class="s-tab" data-page="style"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M9 9v11"/></svg><span>Interface style</span></button>
         <button type="button" class="s-tab" data-page="privacy"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6Z"/><path d="m9 12 2 2 4-4"/></svg><span>Privacy</span></button>
         <button type="button" class="s-tab" data-page="files"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg><span>Downloads &amp; start-up</span></button>
         <button type="button" class="s-tab" data-page="mailbox"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Offline mailbox</span></button>
@@ -366,6 +374,13 @@
               <div class="tiles icons" id="sIcons"></div>
               <div class="note">Changes the icon of the window, the taskbar and the tray. The desktop shortcut keeps the original.</div>
               </div>
+            </div>
+          </section>
+          <section class="s-page hidden" data-page="style">
+            <h3 class="s-title">Interface style</h3>
+            <div class="group">
+              <div class="tiles ui-styles" id="sUiStyles"></div>
+              <div class="note">How the panels, buttons and corners look. Your theme (colours and background) stays as it is. <b>Default</b> is the usual look: pick it any time to go back.</div>
             </div>
           </section>
           <section class="s-page hidden" data-page="privacy">
@@ -443,26 +458,9 @@
       <div class="tune-section"><span>Properties</span></div>
       <div id="tuneRows" class="tune-body"></div>
       <div class="tune-foot">
-        <button type="button" id="tuneCopy" class="accent" title="Copies a code. Send it to a friend: they choose + → Paste from a share code and get this theme with these settings.">Copy share code</button>
         <button type="button" id="tuneReset" title="Back to the default settings">Reset</button>
       </div>
     </aside>
-  </dialog>
-
-  <!-- Add a theme from a share code -->
-  <dialog id="themeCodeDlg">
-    <form method="dialog" id="themeCodeForm">
-      <h2>Add a theme from a code</h2>
-      <p class="sub">Paste the share code your friend copied.</p>
-      <textarea id="themeCodeText" rows="4" spellcheck="false" placeholder="UAN-T…"></textarea>
-      <div id="themeCodeError" class="error"></div>
-      <div class="actions">
-        <button type="button" id="themeCodeCancel">Cancel</button>
-        <span class="grow"></span>
-        <button type="button" id="themeCodePaste">Paste</button>
-        <button type="button" id="themeCodeOk" class="accent">Add theme</button>
-      </div>
-    </form>
   </dialog>
 
   <!-- Pick friends (send to several / new group / add members) -->
