@@ -626,6 +626,9 @@ struct CustomTheme {
     /// Play the video's sound (off unless you turn it on).
     #[serde(default)]
     sound: bool,
+    /// How the background is shown: volume, brightness, position (x, y) and zoom. Empty = defaults.
+    #[serde(default)]
+    tune: serde_json::Map<String, serde_json::Value>,
 }
 
 fn load_themes(dir: &std::path::Path) -> Vec<CustomTheme> {
@@ -696,6 +699,7 @@ fn theme_add(profile: State<'_, Profile>, path: String, name: String, base: Stri
         base: if base == "light" { "light".into() } else { "dark".into() },
         accent,
         sound: false,
+        tune: Default::default(),
     };
     list.push(theme.clone());
     save_themes(&profile.dir, &list)?;
@@ -707,6 +711,21 @@ fn theme_sound(profile: State<'_, Profile>, id: String, on: bool) -> CmdResult<(
     let mut list = load_themes(&profile.dir);
     let t = list.iter_mut().find(|t| t.id == id).ok_or("That theme is gone.")?;
     t.sound = on;
+    save_themes(&profile.dir, &list)
+}
+
+/// Saves how a theme's background is shown (volume, brightness, position, zoom). Only known numbers are kept.
+#[tauri::command]
+fn theme_tune(profile: State<'_, Profile>, id: String, tune: serde_json::Map<String, serde_json::Value>) -> CmdResult<()> {
+    let mut list = load_themes(&profile.dir);
+    let t = list.iter_mut().find(|t| t.id == id).ok_or("That theme is gone.")?;
+    let mut clean = serde_json::Map::new();
+    for (key, lo, hi) in [("vol", 0.0, 100.0), ("bright", 20.0, 160.0), ("blur", 0.0, 40.0)] {
+        if let Some(v) = tune.get(key).and_then(|v| v.as_f64()) {
+            clean.insert(key.into(), serde_json::json!(v.clamp(lo, hi).round()));
+        }
+    }
+    t.tune = clean;
     save_themes(&profile.dir, &list)
 }
 
@@ -1249,6 +1268,7 @@ pub fn run() {
             theme_add,
             theme_remove,
             theme_sound,
+            theme_tune,
             theme_send,
             theme_html,
             contacts,

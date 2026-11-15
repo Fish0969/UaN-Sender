@@ -198,6 +198,7 @@
   <input type="file" id="avatarFile" accept="image/*" hidden>
   <input type="file" id="phoneFiles" multiple hidden>
   <input type="file" id="themeFile" accept=".html,.htm,video/*,image/*" hidden>
+  <input type="file" id="themeCodeFile" accept=".html,.htm,video/*,image/*" hidden>
   <input type="file" id="phonePhotos" accept="image/*,video/*" multiple hidden>
 
   <!-- Sign in on a phone: the PC shows a code -->
@@ -309,7 +310,7 @@
 
   <!-- Watch together setup -->
   <dialog id="partyDlg">
-    <form id="partyForm" method="dialog">
+    <form id="partySetupForm" method="dialog">
       <h2>Watch together</h2>
       <p class="sub" id="pFile"></p>
       <div class="pick-head"><span class="note">Who do you want to invite?</span><button type="button" class="link" id="pAll">All</button></div>
@@ -387,6 +388,37 @@
         <span class="grow"></span>
         <button type="button" id="sCancel">Cancel</button>
         <button class="accent">Save</button>
+      </div>
+    </form>
+    <!-- Adjust one of your own themes (opens beside the settings, or under the theme tiles in a narrow window) -->
+    <aside id="themeTune" class="tune hidden" aria-label="Adjust your theme">
+      <div class="tune-head">
+        <b id="tuneName" class="ellipsis"></b>
+        <button type="button" class="tune-x" id="tuneClose" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="tune-section"><span>Properties</span></div>
+      <div id="tuneRows" class="tune-body"></div>
+      <div class="tune-foot">
+        <button type="button" id="tuneCopy" class="accent" title="Copies a code. Send it to a friend: they choose + → Paste from a share code and get this theme with these settings.">Copy share code</button>
+        <button type="button" id="tuneReset" title="Back to the default settings">Reset</button>
+      </div>
+    </aside>
+  </dialog>
+
+  <!-- Add a theme from a share code -->
+  <dialog id="themeCodeDlg">
+    <form method="dialog" id="themeCodeForm">
+      <h2>Add a theme from a code</h2>
+      <p class="sub">Paste the share code your friend copied.</p>
+      <textarea id="themeCodeText" rows="4" spellcheck="false" placeholder="UANTHEME1.…"></textarea>
+      <div id="themeCodeError" class="error"></div>
+      <div class="actions">
+        <button type="button" id="themeCodeCancel">Cancel</button>
+        <span class="grow"></span>
+        <button type="button" id="themeCodePaste">Paste</button>
+        <button type="button" id="themeCodeOk" class="accent">Add theme</button>
       </div>
     </form>
   </dialog>

@@ -910,7 +910,8 @@ function printMenu(m) {
 function folderCard(b) {
   const files = b.items.map((x) => x.file);
   const size = files.reduce((a, f) => a + f.size, 0);
-  const done = files.filter((f) => downloadOf(f.id)?.status === 'done').length;
+  const tm = transferIndex();
+  const done = files.filter((f) => tm.get(f.id)?.status === 'done').length;
   const mine = b.items[0].mine;
   const got = !mine && done ? ` · ${done === files.length ? 'downloaded' : `${done} downloaded`}` : '';
   return el('button', { type: 'button', class: 'folder-card', title: 'Show what is in this folder', onclick: () => openFolder(b) },
@@ -921,19 +922,43 @@ function folderCard(b) {
     el('span', { class: 'chev' }, svg(ICON.chev)));
 }
 let folderOpen = null;
+// A folder can hold tens of thousands of files (an 800 GB one froze the app): rows are drawn a page at a time,
+// the ticks live in a Set instead of in the page, and transfers are looked up in one pass, not once per row.
+const folderCollator = new Intl.Collator(undefined, { numeric: true });
+const FOLDER_PAGE = 150;
+let folderRows = [];            // the folder's files, sorted (done once when it is opened)
+let folderShown = 0;            // how many rows are drawn
+let folderSel = new Set();      // ticked file ids
+let folderSizes = new Map();    // file id -> size
+let folderTotal = 0;
+let folderLast = -1;
+let folderMore = null;          // watches the "Show more" button so it loads by itself when you scroll down
+let folderTimer = null;
+
+function transferIndex() {
+  const m = new Map();
+  for (const t of S.transfers) m.set(t.file.id, t); // the latest one of a file wins
+  return m;
+}
 function openFolder(b, sel = null) {
   folderOpen = b;
   folderLast = -1;
   const mine = b.items[0].mine;
   $('folderName').textContent = b.folder;
   for (const id of ['folderAllRow', 'folderDlSel', 'folderDlAll']) $(id).classList.toggle('hidden', mine);
-  $('folderList').replaceChildren();
-  renderFolder(true);
+  folderRows = [...b.items].sort((x, y) => folderCollator.compare(x.file.name, y.file.name));
+  folderSizes = new Map(folderRows.map((x) => [x.file.id, x.file.size]));
+  folderTotal = folderRows.reduce((a, x) => a + x.file.size, 0);
   if (sel) {
     // Back from a picture or film: the ticks are as you left them.
-    for (const i of $('folderList').querySelectorAll('input')) i.checked = sel.has(i.value);
-    folderSelInfo();
+    folderSel = new Set(sel);
+  } else {
+    const tm = transferIndex();
+    folderSel = new Set(folderRows.filter((x) => !tm.has(x.file.id)).map((x) => x.file.id));
   }
+  folderShown = Math.min(FOLDER_PAGE, folderRows.length);
+  $('folderList').scrollTop = 0;
+  renderFolder();
   $('folderDlg').showModal();
 }
 // Opens a picture, film or song of the folder in the big viewer; the arrows go through the folder's
@@ -941,99 +966,146 @@ function openFolder(b, sel = null) {
 function openFromFolder(f) {
   const b = folderOpen;
   if (!b) return;
-  const list = [...b.items].sort((x, y) => x.file.name.localeCompare(y.file.name, undefined, { numeric: true }))
-    .map((x) => x.file).filter((x) => IMAGE.test(x.mime) || PLAYABLE.test(x.mime));
-  const sel = new Set([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value));
+  const list = folderRows.map((x) => x.file).filter((x) => IMAGE.test(x.mime) || PLAYABLE.test(x.mime));
+  const sel = new Set(folderSel);
   $('folderDlg').close();
   openViewer(f, { list, chat: b.items[0].chat, back: () => openFolder(b, sel) });
 }
-function renderFolder(fresh = false) {
+function syncFolderBoxes() {
+  for (const i of $('folderList').querySelectorAll('input')) i.checked = folderSel.has(i.value);
+}
+function folderRow(x, i, tm, mine) {
+  const f = x.file;
+  const stop = (fn) => (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
+  const rel = f.name.split(/[\\/]/).slice(1);
+  const leaf = rel.pop() || f.name;
+  const media = IMAGE.test(f.mime) || /^video\//i.test(f.mime);
+  const playable = media || PLAYABLE.test(f.mime);
+  const src = x.thumb?.img || (IMAGE.test(f.mime) && f.size <= INLINE_IMAGE_LIMIT ? mediaUrl(f) : null);
+  const ext = (leaf.includes('.') ? leaf.split('.').pop() : 'file').slice(0, 4);
+  const thumb = el(playable ? 'button' : 'span', playable ? { type: 'button', class: 'f-thumb', title: 'Open', onclick: stop(() => openFromFolder(f)) } : { class: 'f-thumb' },
+    src ? el('img', { src, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => e.target.remove() }) : f.mime.startsWith('video/') ? null : el('span', { class: 'ext', text: ext }),
+    /^video\//i.test(f.mime) ? el('span', { class: 'f-play' }, svg(ICON.bigplay)) : null);
+  const t = tm.get(f.id);
+  let act;
+  if (mine) act = playable ? el('button', { type: 'button', class: 'small', text: /^(video|audio)\//i.test(f.mime) ? 'Play' : 'Open', onclick: stop(() => openFromFolder(f)) }) : el('span', { class: 'f-state', text: 'Sent' });
+  else if (t?.status === 'done') act = el('button', { type: 'button', class: 'small', text: 'Open', title: 'Open the downloaded file', onclick: stop(() => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast)) });
+  else if (t?.status === 'running') act = el('span', { class: 'f-state', text: `${Math.floor((t.done / Math.max(t.size, 1)) * 100)}%` });
+  else act = el('button', { type: 'button', class: 'small', text: t?.status === 'error' ? 'Retry' : t?.status === 'paused' ? 'Resume' : 'Download', onclick: stop(() => startDownload(f, x.chat)) });
+  const box = el('input', { type: 'checkbox', value: f.id,
+    onclick: (e) => {
+      // Shift-click selects everything between the last click and this one.
+      if (e.shiftKey && folderLast >= 0) {
+        const [a, z] = [Math.min(folderLast, i), Math.max(folderLast, i)];
+        for (let k = a; k <= z; k++) {
+          const id = folderRows[k].file.id;
+          if (e.target.checked) folderSel.add(id); else folderSel.delete(id);
+        }
+        syncFolderBoxes();
+      } else if (e.target.checked) {
+        folderSel.add(f.id);
+      } else {
+        folderSel.delete(f.id);
+      }
+      folderLast = i;
+      folderSelInfo();
+    } });
+  box.checked = folderSel.has(f.id);
+  if (mine) box.classList.add('hidden');
+  return el('label', { class: 'f-row' + (mine ? ' mine' : ''), title: f.name },
+    box,
+    thumb,
+    el('span', { class: 'f-text' },
+      el('span', { class: 'f-path' }, rel.length ? el('span', { class: 'dir', text: rel.join('/') + '/' }) : null, leaf),
+      el('span', { class: 'f-size', text: fmtBytes(f.size) })),
+    act);
+}
+function moreButton() {
+  const left = folderRows.length - folderShown;
+  const btn = el('button', { type: 'button', class: 'f-more', text: `Show more (${left} more ${left === 1 ? 'file' : 'files'})`, onclick: showMoreFolder });
+  folderMore?.disconnect();
+  if (typeof IntersectionObserver === 'function') {
+    folderMore = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) showMoreFolder(); }, { root: $('folderList'), rootMargin: '200px' });
+    folderMore.observe(btn);
+  }
+  return btn;
+}
+function showMoreFolder() {
+  if (!folderOpen || folderShown >= folderRows.length) return;
+  const list = $('folderList');
+  list.querySelector('.f-more')?.remove();
+  const mine = folderOpen.items[0].mine;
+  const tm = transferIndex();
+  const end = Math.min(folderRows.length, folderShown + FOLDER_PAGE * 2);
+  const rows = [];
+  for (let i = folderShown; i < end; i++) rows.push(folderRow(folderRows[i], i, tm, mine));
+  folderShown = end;
+  if (folderShown < folderRows.length) rows.push(moreButton());
+  list.append(...rows);
+}
+function renderFolder() {
   const b = folderOpen;
   if (!b) return;
   const mine = b.items[0].mine;
-  const was = new Set([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value));
-  const items = [...b.items].sort((x, y) => x.file.name.localeCompare(y.file.name, undefined, { numeric: true }));
-  const total = items.reduce((a, x) => a + x.file.size, 0);
-  $('folderInfo').textContent = `${items.length} ${items.length === 1 ? 'file' : 'files'} · ${fmtBytes(total)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
-  const stop = (fn) => (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
-  $('folderList').replaceChildren(...items.map((x, i) => {
-    const f = x.file;
-    const rel = f.name.split(/[\\/]/).slice(1);
-    const leaf = rel.pop() || f.name;
-    const media = IMAGE.test(f.mime) || /^video\//i.test(f.mime);
-    const playable = media || PLAYABLE.test(f.mime);
-    const src = x.thumb?.img || (IMAGE.test(f.mime) && f.size <= INLINE_IMAGE_LIMIT ? mediaUrl(f) : null);
-    const ext = (leaf.includes('.') ? leaf.split('.').pop() : 'file').slice(0, 4);
-    const thumb = el(playable ? 'button' : 'span', playable ? { type: 'button', class: 'f-thumb', title: 'Open', onclick: stop(() => openFromFolder(f)) } : { class: 'f-thumb' },
-      src ? el('img', { src, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }) : f.mime.startsWith('video/') ? null : el('span', { class: 'ext', text: ext }),
-      /^video\//i.test(f.mime) ? el('span', { class: 'f-play' }, svg(ICON.bigplay)) : null);
-    const t = downloadOf(f.id);
-    let act;
-    if (mine) act = playable ? el('button', { type: 'button', class: 'small', text: /^(video|audio)\//i.test(f.mime) ? 'Play' : 'Open', onclick: stop(() => openFromFolder(f)) }) : el('span', { class: 'f-state', text: 'Sent' });
-    else if (t?.status === 'done') act = el('button', { type: 'button', class: 'small', text: 'Open', title: 'Open the downloaded file', onclick: stop(() => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast)) });
-    else if (t?.status === 'running') act = el('span', { class: 'f-state', text: `${Math.floor((t.done / Math.max(t.size, 1)) * 100)}%` });
-    else act = el('button', { type: 'button', class: 'small', text: t?.status === 'error' ? 'Retry' : t?.status === 'paused' ? 'Resume' : 'Download', onclick: stop(() => startDownload(f, x.chat)) });
-    const box = el('input', { type: 'checkbox', value: f.id, onchange: folderSelInfo,
-      onclick: (e) => {
-        // Shift-click selects everything between the last click and this one.
-        const boxes = [...$('folderList').querySelectorAll('input')];
-        if (e.shiftKey && folderLast >= 0) {
-          const [a, z] = [Math.min(folderLast, i), Math.max(folderLast, i)];
-          boxes.slice(a, z + 1).forEach((c) => { c.checked = e.target.checked; });
-          folderSelInfo();
-        }
-        folderLast = i;
-      } });
-    box.checked = fresh ? !t : was.has(f.id);
-    if (mine) box.classList.add('hidden');
-    return el('label', { class: 'f-row' + (mine ? ' mine' : ''), title: f.name },
-      box,
-      thumb,
-      el('span', { class: 'f-text' },
-        el('span', { class: 'f-path' }, rel.length ? el('span', { class: 'dir', text: rel.join('/') + '/' }) : null, leaf),
-        el('span', { class: 'f-size', text: fmtBytes(f.size) })),
-      act);
-  }));
-  folderSelInfo();
+  const tm = transferIndex();
+  const n = folderRows.length;
+  $('folderInfo').textContent = `${n} ${n === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
+  const top = $('folderList').scrollTop;
+  const rows = [];
+  for (let i = 0; i < folderShown; i++) rows.push(folderRow(folderRows[i], i, tm, mine));
+  if (folderShown < n) rows.push(moreButton());
+  $('folderList').replaceChildren(...rows);
+  $('folderList').scrollTop = top;
+  folderSelInfo(tm);
 }
-let folderLast = -1;
-function folderSelInfo() {
+// Transfers tick several times a second: refresh the folder at most twice a second.
+function refreshFolderSoon() {
+  if (!folderOpen || folderTimer) return;
+  folderTimer = setTimeout(() => { folderTimer = null; renderFolder(); }, 500);
+}
+function folderSelInfo(tm = transferIndex()) {
   if (!folderOpen) return;
-  const boxes = [...$('folderList').querySelectorAll('input')];
-  const on = boxes.filter((i) => i.checked);
-  const size = on.reduce((a, i) => a + (folderOpen.items.find((x) => x.file.id === i.value)?.file.size || 0), 0);
-  $('folderAll').checked = on.length === boxes.length && boxes.length > 0;
-  const allDone = folderOpen.items.every((x) => downloadOf(x.file.id)?.status === 'done');
+  let size = 0;
+  for (const id of folderSel) size += folderSizes.get(id) || 0;
+  const n = folderSel.size;
+  const all = folderRows.length;
+  $('folderAll').checked = n === all && all > 0;
+  let allDone = all > 0;
+  for (const x of folderRows) if (tm.get(x.file.id)?.status !== 'done') { allDone = false; break; }
   $('folderDlAll').textContent = allDone ? 'Show in Downloads' : 'Download folder';
   $('folderDlAll').title = allDone ? 'Opens the folder in Downloads' : `Downloads every file into Downloads/${folderOpen.folder}`;
-  $('folderSel').textContent = folderOpen.items[0].mine ? 'Click a picture or video to open it.' : on.length ? `${on.length} selected · ${fmtBytes(size)}` : 'Nothing selected';
-  $('folderDlSel').disabled = !on.length;
-  $('folderDlSel').textContent = on.length && on.length < boxes.length ? `Download ${on.length} selected` : 'Download selected';
+  $('folderSel').textContent = folderOpen.items[0].mine ? 'Click a picture or video to open it.' : n ? `${n} selected · ${fmtBytes(size)}` : 'Nothing selected';
+  $('folderDlSel').disabled = !n;
+  $('folderDlSel').textContent = n && n < all ? `Download ${n} selected` : 'Download selected';
 }
 $('folderAll').addEventListener('change', () => {
-  for (const i of $('folderList').querySelectorAll('input')) i.checked = $('folderAll').checked;
+  folderSel = $('folderAll').checked ? new Set(folderRows.map((x) => x.file.id)) : new Set();
+  syncFolderBoxes();
   folderSelInfo();
 });
 function downloadFolder(ids) {
   const b = folderOpen;
   if (!b) return;
+  const want = new Set(ids);
+  const tm = transferIndex();
   let n = 0;
   for (const x of b.items) {
-    if (!ids.includes(x.file.id)) continue;
-    const t = downloadOf(x.file.id);
+    if (!want.has(x.file.id)) continue;
+    const t = tm.get(x.file.id);
     if (t && (t.status === 'done' || t.status === 'running')) continue;
     startDownload(x.file, x.chat);
     n++;
   }
   toast(n ? `Downloading ${n} ${n === 1 ? 'file' : 'files'} into Downloads/${b.folder}.` : 'Those files are already downloaded.');
 }
-$('folderDlSel').addEventListener('click', () => downloadFolder([...$('folderList').querySelectorAll('input:checked')].map((i) => i.value)));
+$('folderDlSel').addEventListener('click', () => downloadFolder([...folderSel]));
 $('folderDlAll').addEventListener('click', () => {
-  const done = folderOpen.items.map((x) => downloadOf(x.file.id));
+  const tm = transferIndex();
+  const done = folderOpen.items.map((x) => tm.get(x.file.id));
   if (done.every((t) => t?.status === 'done')) return invoke('transfer_action', { id: done[0].id, action: 'reveal' }).catch(toast);
   downloadFolder(folderOpen.items.map((x) => x.file.id));
 });
-$('folderDlg').addEventListener('close', () => { folderOpen = null; });
+$('folderDlg').addEventListener('close', () => { folderOpen = null; folderMore?.disconnect(); clearTimeout(folderTimer); folderTimer = null; });
 
 function jumpTo(id) {
   const node = document.querySelector(`#msgs .print[data-id="${CSS.escape(id)}"]`) || msgNode(id);
@@ -1398,10 +1470,26 @@ async function makeThumb(file) {
     try {
       await Promise.race([new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('video error')); }), timeout(25000, 'metadata timeout')]);
       const dur = v.duration;
-      v.currentTime = Math.min(isFinite(dur) ? dur * 0.1 : 5, 60);
-      await Promise.race([new Promise((res) => { v.onseeked = res; }), timeout(25000, 'seek timeout')]);
-      await new Promise((r) => setTimeout(r, 150));
-      return { img: draw(v, v.videoWidth, v.videoHeight), dur: isFinite(dur) ? dur : null, w: v.videoWidth, h: v.videoHeight };
+      // The player can't decode this picture (e.g. HEVC / 10-bit in .mkv): no preview rather than a black one.
+      if (!v.videoWidth || !v.videoHeight) throw new Error('no picture');
+      // A frame 10% in; if it is black (a fade, a logo screen) try a few later ones.
+      let img = null;
+      for (const at of [0.1, 0.25, 0.45, 0.65]) {
+        v.currentTime = isFinite(dur) ? Math.min(dur * at, 3600) : 5;
+        await Promise.race([new Promise((res) => { v.onseeked = res; }), timeout(25000, 'seek timeout')]);
+        await new Promise((r) => setTimeout(r, 150));
+        const probe = document.createElement('canvas');
+        probe.width = probe.height = 12;
+        const pc = probe.getContext('2d', { willReadFrequently: true });
+        pc.drawImage(v, 0, 0, 12, 12);
+        const px = pc.getImageData(0, 0, 12, 12).data;
+        let sum = 0;
+        for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2];
+        const bright = sum / (px.length / 4) / 3;
+        img = draw(v, v.videoWidth, v.videoHeight);
+        if (bright > 14 || !isFinite(dur)) break;
+      }
+      return { img, dur: isFinite(dur) ? dur : null, w: v.videoWidth, h: v.videoHeight };
     } finally {
       v.removeAttribute('src');
       v.load();
@@ -1410,15 +1498,34 @@ async function makeThumb(file) {
   return null;
 }
 
-async function ensureThumb(m) {
+// Previews are made two at a time. (Sending a folder with thousands of files used to start thousands of
+// video loads at once, which froze the whole app.)
+const thumbQueue = [];
+let thumbRunning = 0;
+function ensureThumb(m) {
   if (!m.mine || !m.file || m.thumb || thumbPending.has(m.file.id)) return;
   if (!IMAGE.test(m.file.mime) && !/^video\//i.test(m.file.mime)) return;
+  // A huge folder gets previews for its first files only; the rest show their file type.
+  if (thumbQueue.length >= 60) return;
   thumbPending.add(m.file.id);
-  try {
-    const t = await makeThumb(m.file);
-    if (t?.img && t.img.length < 280000) await invoke('set_thumb', { fileId: m.file.id, data: JSON.stringify(t) });
-  } catch {
-    // No preview for this one (e.g. a format the built-in player can't decode); the card still works.
+  thumbQueue.push(m);
+  pumpThumbs();
+}
+function pumpThumbs() {
+  while (thumbRunning < 2 && thumbQueue.length) {
+    const m = thumbQueue.shift();
+    thumbRunning++;
+    (async () => {
+      try {
+        const t = await makeThumb(m.file);
+        if (t?.img && t.img.length < 280000) await invoke('set_thumb', { fileId: m.file.id, data: JSON.stringify(t) });
+      } catch {
+        // No preview for this one (e.g. a format the built-in player can't decode); the card still works.
+      } finally {
+        thumbRunning--;
+        pumpThumbs();
+      }
+    })();
   }
 }
 
@@ -1822,6 +1929,7 @@ const isFormatError = (err) => err?.code === 3 || err?.code === 4;
 // Only where the player reliably reports decoded sound (Windows). On Linux the count can stay 0 even
 // while sound plays, so there we never guess: VLC is only used when the player itself fails.
 function watchSound(video, file, onSilent) {
+  // (Also watches the picture: some films, e.g. HEVC / 10-bit in .mkv, play their sound while the screen stays black.)
   if (!/^video\//i.test(file.mime) || S.me.platform !== 'windows') return;
   // Counts real playback time (a stream from far away often stalls at first), and decides after 3 seconds.
   let played = 0;
@@ -1834,11 +1942,15 @@ function watchSound(video, file, onSilent) {
     last = t;
     if (played < 3) return;
     clearInterval(iv);
+    // Picture: it has been playing for seconds, but no video frame was ever decoded (a black screen).
+    const q = video.getVideoPlaybackQuality?.();
+    const noFrames = (q && q.totalVideoFrames === 0) || video.videoWidth === 0 || video.webkitDecodedFrameCount === 0;
+    if (noFrames && video.isConnected) return onSilent('picture');
     const decoded = video.webkitAudioDecodedByteCount;
     if (typeof decoded !== 'number' || decoded > 0) return;
     let has = true; // can't tell: a film with no sound at all is rare, a missing codec is not
     try { has = await invoke('audio_track', { file }); } catch {}
-    if (has && video.isConnected) onSilent();
+    if (has && video.isConnected) onSilent('sound');
   }, 1000);
 }
 
@@ -2084,15 +2196,15 @@ function showInViewer(file) {
   if (/^video\//i.test(file.mime)) {
     viewerPlayer = makePlayer(body, { file, chat });
     viewerPlayer.video.addEventListener('error', showError);
-    watchSound(viewerPlayer.video, file, () => {
+    watchSound(viewerPlayer.video, file, (what = 'sound') => {
       if (token !== viewerToken || autoVlc) return;
       autoVlc = true;
       viewerPlayer?.video.pause();
-      note.textContent = 'This film’s sound can’t be played inside UaN on this computer, so it plays in VLC instead (nothing is downloaded).';
+      note.textContent = `This film’s ${what} can’t be played inside UaN on this computer, so it plays in VLC instead (nothing is downloaded).`;
       note.append(el('div', { class: 'note-actions' },
         el('button', { type: 'button', class: 'small', text: 'Open in VLC (no download)', onclick: () => { viewerPlayer?.video.pause(); openInVlc(file); } })));
       note.classList.remove('hidden');
-      openInVlc(file, 'This film’s sound can’t be played inside UaN on this computer, but VLC can play it without downloading.');
+      openInVlc(file, `This film’s ${what} can’t be played inside UaN on this computer, but VLC can play it without downloading.`);
     });
   } else {
     const src = mediaUrl(file);
@@ -2248,6 +2360,10 @@ document.addEventListener('mousedown', (e) => {
 // ---------- Menus ----------
 function showMenu(x, y, items) {
   const m = $('ctxMenu');
+  // An open dialog sits above everything else on the page, so the menu has to live inside it
+  // (otherwise it shows up behind the dialog).
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  if (m.parentElement !== host) host.append(m);
   m.replaceChildren(...items.filter(Boolean).map((it) => (it === '-'
     ? el('hr')
     : el('button', { type: 'button', class: it.danger ? 'danger-text' : '', text: it.label, onclick: () => { hideMenu(); it.run(); } }))));
@@ -2466,7 +2582,7 @@ function renderTransfers() {
     const m = (S.msgs.get(S.active) || []).find((x) => x.file?.id === btn.dataset.file);
     if (m) updateFileButton(btn, m.file, m.chat);
   });
-  if (folderOpen) renderFolder();
+  refreshFolderSoon();
 }
 function act(t, action) {
   invoke('transfer_action', { id: t.id, action }).catch(toast);
@@ -2787,9 +2903,9 @@ $('pAll').addEventListener('click', () => {
   updateBest();
 });
 $('pCancel').addEventListener('click', () => { partySetup = null; $('partyDlg').close(); });
-$('partyForm').addEventListener('submit', async (e) => {
+$('partySetupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const members = [...$('pList').querySelectorAll('input:checked')].map((b) => b.value);
+  const members =[...$('pList').querySelectorAll('input:checked')].map((b) => b.value);
   if (!members.length) return void ($('pError').textContent = 'Invite at least one person.');
   try {
     const seeder = bestHost()?.id || partySetup.file.owner;
@@ -2961,7 +3077,7 @@ function openParty(id, mode = partyMode) {
       if ((await reachability(p.file)) !== 'ok') return;
       toVlc('format');
     });
-    watchSound(v, p.file, () => toVlc('sound'));
+    watchSound(v, p.file, (what = 'sound') => toVlc(what));
   }
   v.addEventListener('ended', () => {
     const cur = S.parties.get(id);
@@ -3286,7 +3402,7 @@ function setBackdrop(c) {
     return;
   }
   root.dataset.backdrop = c.base === 'light' ? 'light' : 'dark';
-  if (backdrop?.id === c.id) { if (backdrop.video) backdrop.video.muted = !c.sound; return; }
+  if (backdrop?.id === c.id) { applyTune(c); return; }
   if (!S.me) return; // (before the app has started, the media address isn't known yet)
   backdrop?.node.remove();
   const node = el('div', { class: 'backdrop', 'aria-hidden': 'true' });
@@ -3295,7 +3411,6 @@ function setBackdrop(c) {
   if (c.kind === 'video') {
     const v = el('video', { src: themeFileUrl(c), loop: true, playsinline: true, preload: 'auto' });
     v.muted = !c.sound;
-    v.volume = 0.6;
     v.autoplay = true;
     v.disablePictureInPicture = true;
     backdrop.video = v;
@@ -3310,7 +3425,227 @@ function setBackdrop(c) {
     node.append(frame);
     invoke('theme_html', { id: c.id }).then((html) => { if (backdrop?.id === c.id) frame.srcdoc = wrapThemeHtml(html); }).catch(() => {});
   }
+  applyTune(c);
 }
+
+// ---------- Adjusting your own theme: sound on/off, volume, blur, brightness ----------
+const TUNE_DEFAULT = { vol: 60, bright: 100, blur: 0 };
+const tuneOf = (c) => ({ ...TUNE_DEFAULT, ...(c?.tune || {}) });
+function applyTune(c) {
+  if (!backdrop || backdrop.id !== c.id) return;
+  const t = tuneOf(c);
+  const s = backdrop.node.style;
+  s.setProperty('--bb', String(t.bright / 100));
+  s.setProperty('--bblur', `${t.blur}px`);
+  // Blurring fades the picture's edges into the dark; zooming in a little keeps them out of sight.
+  s.setProperty('--bz', String(1 + t.blur / 120));
+  if (backdrop.video) {
+    backdrop.video.volume = Math.min(1, Math.max(0, t.vol / 100));
+    backdrop.video.muted = !c.sound || t.vol === 0;
+  }
+}
+let tuneSaveTimer = null;
+function saveTune(c) {
+  clearTimeout(tuneSaveTimer);
+  tuneSaveTimer = setTimeout(() => {
+    invoke('theme_tune', { id: c.id, tune: c.tune || {} }).catch(() => {});
+    try { localStorage.setItem('uan.customThemes', JSON.stringify(customThemes)); } catch {}
+  }, 250);
+}
+let tuning = null; // the theme whose panel is open
+const TUNE_ICON = {
+  sound: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6"/>',
+  mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 9 4 6M21 9l-4 6"/>',
+  bright: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/>',
+  blur: '<path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11Z"/>',
+};
+function renderTune() {
+  const c = tuning;
+  if (!c) return;
+  const t = tuneOf(c);
+  $('tuneName').textContent = c.name;
+  const video = c.kind === 'video';
+  const set = (key, v) => { c.tune = { ...(c.tune || {}), [key]: v }; applyTune(c); saveTune(c); };
+  const row = (icon, label, ...ctl) => el('div', { class: 'wp-row' }, svg(TUNE_ICON[icon]), el('span', { class: 'wp-lbl', text: label }), ...ctl);
+  const slider = (key, icon, label, min, max) => {
+    const out = el('output', { text: String(t[key]) });
+    const input = el('input', { type: 'range', class: 'wp-range', min, max, step: 1, value: t[key], 'aria-label': label });
+    input.addEventListener('input', () => { out.textContent = input.value; set(key, Number(input.value)); });
+    return row(icon, label, input, out);
+  };
+  const rows = [];
+  if (video) {
+    const box = el('input', { type: 'checkbox', class: 'wp-check', 'aria-label': 'Sound' });
+    box.checked = !!c.sound;
+    box.addEventListener('change', async () => {
+      c.sound = box.checked;
+      if (c.sound && tuneOf(c).vol === 0) c.tune = { ...(c.tune || {}), vol: TUNE_DEFAULT.vol };
+      applyTune(c);
+      await invoke('theme_sound', { id: c.id, on: c.sound }).catch(toast);
+      saveTune(c);
+      renderTune();
+      renderThemeTiles();
+    });
+    rows.push(row(c.sound ? 'sound' : 'mute', 'Sound', box));
+    rows.push(slider('vol', 'sound', 'Volume', 0, 100));
+  }
+  rows.push(slider('blur', 'blur', 'Blur', 0, 40));
+  rows.push(slider('bright', 'bright', 'Brightness', 20, 160));
+  $('tuneRows').replaceChildren(...rows);
+}
+function placeTune() {
+  const panel = $('themeTune');
+  const dlg = $('settingsDlg');
+  // Wide window: the panel sits beside the settings (settings move left), so you see the background change.
+  // Narrow window: it opens right under the theme tiles.
+  const wide = innerWidth >= 460 + 260 + 48;
+  if (wide) { if (panel.parentElement !== dlg) dlg.append(panel); } else if (panel.previousElementSibling !== $('sThemes')) $('sThemes').after(panel);
+  panel.classList.toggle('side', wide);
+  dlg.classList.toggle('tuning', wide);
+}
+function openTune(c) {
+  tuning = c;
+  placeTune();
+  $('themeTune').classList.remove('hidden');
+  renderTune();
+}
+function closeTune() {
+  tuning = null;
+  $('themeTune').classList.add('hidden');
+  $('settingsDlg').classList.remove('tuning');
+}
+$('tuneClose').addEventListener('click', closeTune);
+$('tuneCopy').addEventListener('click', () => { if (tuning) copyThemeCode(tuning); });
+$('themeCodeForm').addEventListener('submit', (e) => e.preventDefault());
+$('settingsDlg').addEventListener('close', closeTune);
+$('tuneReset').addEventListener('click', () => {
+  if (!tuning) return;
+  tuning.tune = {};
+  applyTune(tuning);
+  saveTune(tuning);
+  renderTune();
+});
+
+// ---------- Share code: your theme and its settings in one piece of text ----------
+const b64u = {
+  enc(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+  dec(str) {
+    const s = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  },
+};
+const pipeBytes = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+const SHARE_EMBED_LIMIT = 4 * 1024 * 1024; // smaller themes travel inside the code; bigger ones are sent as a file
+const MIME_EXT = { 'text/html': 'html', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/x-matroska': 'mkv', 'video/quicktime': 'mov', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
+async function themeShareCode(c) {
+  const head = { v: 1, n: c.name, k: c.kind, b: c.base || 'dark', a: c.accent || null, m: c.mime, s: c.size, t: tuneOf(c), snd: !!c.sound };
+  let body = '';
+  const embed = c.size <= SHARE_EMBED_LIMIT;
+  if (embed) {
+    const r = await fetch(themeFileUrl(c));
+    if (!r.ok) throw new Error('Couldn’t read the theme file.');
+    let bytes = new Uint8Array(await r.arrayBuffer());
+    if (typeof CompressionStream === 'function' && c.kind === 'html') { bytes = await pipeBytes(bytes, new CompressionStream('deflate-raw')); head.z = 1; }
+    body = b64u.enc(bytes);
+  }
+  return { code: `UANTHEME1.${b64u.enc(new TextEncoder().encode(JSON.stringify(head)))}.${body}`, embedded: embed };
+}
+async function copyThemeCode(c) {
+  try {
+    const { code, embedded } = await themeShareCode(c);
+    await navigator.clipboard.writeText(code);
+    toast(embedded
+      ? 'Share code copied. Whoever pastes it in UaN gets this theme with your settings.'
+      : 'Share code copied (the settings). This theme is big, so also send them the file: right-click the theme → Send to friends…');
+  } catch (e) {
+    toast(e.message || e);
+  }
+}
+function cleanTune(t) {
+  const out = {};
+  const lim = { vol: [0, 100], bright: [20, 160], blur: [0, 40] };
+  for (const [k, [lo, hi]] of Object.entries(lim)) if (Number.isFinite(Number(t?.[k]))) out[k] = Math.min(hi, Math.max(lo, Math.round(Number(t[k]))));
+  return out;
+}
+let pendingCode = null; // a code whose theme file we still need
+async function applyThemeCode(head, theme) {
+  await invoke('theme_tune', { id: theme.id, tune: cleanTune(head.t) });
+  if (head.snd !== undefined && !!theme.sound !== !!head.snd && theme.kind === 'video') await invoke('theme_sound', { id: theme.id, on: !!head.snd }).catch(() => {});
+  await loadCustomThemes();
+  setTheme(`custom:${theme.id}`);
+  const c = customThemes.find((x) => x.id === theme.id);
+  if (c && $('settingsDlg').open) openTune(c);
+  toast(`Theme added: ${theme.name}.`);
+}
+async function importThemeCode(text) {
+  const m = String(text).trim().match(/UANTHEME1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)/);
+  if (!m) throw new Error('That isn’t a UaN theme code.');
+  let head;
+  try { head = JSON.parse(new TextDecoder().decode(b64u.dec(m[1]))); } catch { throw new Error('That theme code is damaged.'); }
+  if (!head || typeof head.n !== 'string' || !['html', 'video', 'image'].includes(head.k)) throw new Error('That theme code is damaged.');
+  const name = head.n.slice(0, 24);
+  const base = head.b === 'light' ? 'light' : 'dark';
+  const accent = /^#[0-9a-f]{6}$/i.test(head.a || '') ? head.a : null;
+  if (m[2]) {
+    toast('Adding the theme…');
+    let bytes = b64u.dec(m[2]);
+    if (head.z) bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'));
+    const ext = MIME_EXT[head.m] || (head.k === 'html' ? 'html' : head.k === 'video' ? 'mp4' : 'png');
+    const path = await uploadFile(new File([bytes], `${name.replace(/[\\/:*?"<>|]/g, '') || 'theme'}.${ext}`, { type: head.m }));
+    const t = await invoke('theme_add', { path, name, base, accent });
+    return applyThemeCode(head, t);
+  }
+  // Only the settings are in the code: use the same theme file if it is already here.
+  const have = customThemes.find((c) => c.kind === head.k && c.size === head.s);
+  if (have) return applyThemeCode(head, have);
+  pendingCode = { head, name, base, accent };
+  const mb = Math.max(1, Math.round(head.s / 1048576));
+  if (await ask(`This code only holds the settings of “${name}” (the theme itself is ${mb} MB, too big for a code). Pick the file your friend sent you, and UaN applies their settings to it.`, 'Choose the file…')) {
+    $('themeCodeFile').click();
+  } else {
+    pendingCode = null;
+  }
+}
+$('themeCodeFile').addEventListener('change', async () => {
+  const f = $('themeCodeFile').files[0];
+  $('themeCodeFile').value = '';
+  const p = pendingCode;
+  pendingCode = null;
+  if (!f || !p) return;
+  try {
+    toast('Adding the theme…');
+    const path = await uploadFile(f);
+    const t = await invoke('theme_add', { path, name: p.name, base: p.base, accent: p.accent });
+    await applyThemeCode(p.head, t);
+  } catch (e) {
+    toast(e.message || e);
+  }
+});
+function openCodeDlg() {
+  $('themeCodeText').value = '';
+  $('themeCodeError').textContent = '';
+  $('themeCodeDlg').showModal();
+  $('themeCodeText').focus();
+}
+$('themeCodeCancel').addEventListener('click', () => $('themeCodeDlg').close());
+$('themeCodePaste').addEventListener('click', async () => {
+  try { $('themeCodeText').value = await navigator.clipboard.readText(); } catch { $('themeCodeError').textContent = 'Couldn’t read the clipboard. Paste it with Ctrl+V instead.'; }
+});
+$('themeCodeOk').addEventListener('click', async () => {
+  $('themeCodeError').textContent = '';
+  try {
+    await importThemeCode($('themeCodeText').value);
+    $('themeCodeDlg').close();
+  } catch (e) {
+    $('themeCodeError').textContent = e.message || String(e);
+  }
+});
 async function loadCustomThemes() {
   try {
     customThemes = await invoke('themes');
@@ -3347,6 +3682,9 @@ async function themeAdded(t) {
   }
   await loadCustomThemes();
   setTheme(`custom:${t.id}`);
+  // A new theme opens its adjust panel right away (volume, brightness, position, zoom, share code).
+  const added = customThemes.find((x) => x.id === t.id);
+  if (added && $('settingsDlg').open) openTune(added);
   toast(`Theme added: ${t.name}.`);
 }
 async function removeTheme(c) {
@@ -3358,10 +3696,12 @@ async function removeTheme(c) {
 function themeMenu(c) {
   return [
     { label: theme.mode === `custom:${c.id}` ? 'In use' : 'Use this theme', run: () => setTheme(`custom:${c.id}`) },
+    { label: 'Theme settings…', run: () => { if (theme.mode !== `custom:${c.id}`) setTheme(`custom:${c.id}`); openTune(customThemes.find((x) => x.id === c.id) || c); } },
     c.kind === 'video' ? { label: c.sound ? 'Turn the sound off' : 'Turn the sound on', run: async () => {
       await invoke('theme_sound', { id: c.id, on: !c.sound }).catch(toast);
       await loadCustomThemes();
     } } : null,
+    { label: 'Copy share code', run: () => copyThemeCode(c) },
     { label: 'Send to friends…', run: () => openPick('theme', null, c) },
     '-',
     { label: 'Remove theme…', danger: true, run: () => removeTheme(c) },
@@ -3435,6 +3775,7 @@ function setTheme(id) {
   applyTheme();
   renderSwatches();
   renderThemeTiles();
+  if (!theme.mode.startsWith('custom:')) closeTune();
 }
 function renderSwatches() {
   const t = themeById(theme.mode);
@@ -3457,8 +3798,15 @@ function renderThemeTiles() {
   const sel = $('sTheme');
   if (!sel.options.length) sel.replaceChildren(...THEMES.map((t) => el('option', { value: t.id, text: t.name })));
   sel.value = theme.mode;
-  const add = el('button', { type: 'button', class: 'add-theme', title: 'Add your own theme: an .html page, a video or a picture', 'aria-label': 'Add your own theme', onclick: () => $('themeFile').click() },
-    svg('<path d="M12 5v14M5 12h14"/>'));
+  const add = el('button', { type: 'button', class: 'add-theme', title: 'Add a theme: from a file or from a share code', 'aria-label': 'Add a theme',
+    onclick: (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      showMenu(r.left, r.bottom + 4, [
+        { label: 'From a file (.html, video, picture)…', run: () => $('themeFile').click() },
+        { label: 'Paste from a share code…', run: openCodeDlg },
+      ]);
+    } },
+  svg('<path d="M12 5v14M5 12h14"/>'));
   $('sThemes').replaceChildren(...[...THEMES, ...customThemes.map(customTheme)].map((t) => {
     if (t.custom) {
       const c = t.custom;
@@ -3470,8 +3818,10 @@ function renderThemeTiles() {
         onclick: (e) => { e.stopPropagation(); removeTheme(c); }, onkeydown: (e) => { if (e.key === 'Enter') { e.stopPropagation(); removeTheme(c); } } },
       svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'));
       const sound = c.kind === 'video' && c.sound ? el('span', { class: 't-sound', title: 'Plays its sound' }, svg('<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6"/>')) : null;
-      return el('button', { type: 'button', class: 'custom-tile' + (t.id === theme.mode ? ' on' : ''), title: `${t.name} (your own theme; right-click for more)`, 'data-theme-id': t.id,
-        onclick: () => setTheme(t.id), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); showMenu(e.clientX, e.clientY, themeMenu(c)); } },
+      return el('button', { type: 'button', class: 'custom-tile' + (t.id === theme.mode ? ' on' : ''), title: `${t.name} (your own theme: double-click for its settings, right-click for more)`, 'data-theme-id': t.id,
+        onclick: () => { if (theme.mode !== t.id) setTheme(t.id); },
+        ondblclick: () => { if (theme.mode !== t.id) setTheme(t.id); const cur = customThemes.find((x) => x.id === c.id); if (cur) openTune(cur); },
+        oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); showMenu(e.clientX, e.clientY, themeMenu(c)); } },
       tile, sound, trash, el('span', { class: 't-name', text: t.name }));
     }
     const sideC = t.side || t.preview?.[0];
