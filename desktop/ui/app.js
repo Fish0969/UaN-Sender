@@ -2699,6 +2699,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sCode').classList.add('hidden');
   $('sShowCode').textContent = 'Show friend code';
   $('sError').textContent = '';
+  $('sVersion').textContent = `UaN ${S.me.version}`;
   $('settingsDlg').showModal();
 });
 $('sCancel').addEventListener('click', () => $('settingsDlg').close());

@@ -754,6 +754,7 @@ button.f-thumb:hover { transform: translateY(-1px); box-shadow: var(--print-lift
 .f-text { display: flex; flex-direction: column; min-width: 0; }
 .f-row .small { min-width: 84px; }
 .f-row:last-child { border-bottom: 0; }
+.app-version { margin-top: 10px; text-align: center; font-size: 11px; color: var(--muted); opacity: .75; user-select: text; }
 .f-more { display: block; width: calc(100% - 24px); margin: 10px 12px; }
 .f-row:hover { background: var(--hover); }
 .f-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
