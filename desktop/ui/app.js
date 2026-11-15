@@ -3352,7 +3352,13 @@ async function runSearch() {
     const who = m.mine ? { name: S.me.name, src: S.me.profile?.avatar } : senderOf(m);
     return el('div', {
       class: 'result',
-      onclick: () => { if (document.documentElement.classList.contains('phone')) closeSearch(); openChat(m.chat, m.id); },
+      title: 'Double-click to go to the message',
+      onclick: (e) => {
+        if (document.documentElement.classList.contains('phone')) { closeSearch(); openChat(m.chat, m.id); return; }
+        for (const r of $('sResults').querySelectorAll('.sel')) r.classList.remove('sel');
+        e.currentTarget.classList.add('sel');
+      },
+      ondblclick: () => { openChat(m.chat, m.id); },
     },
     m.file ? el('div', { class: 'ext', text: ext }) : avatar(who.name, { seed: m.sender, src: who.src }),
     el('div', { class: 'grow', style: 'min-width:0' },

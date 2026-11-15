@@ -19,6 +19,7 @@ async function init(env) {
       'CREATE TABLE IF NOT EXISTS mail (id INTEGER PRIMARY KEY AUTOINCREMENT, rcpt TEXT NOT NULL, sender TEXT NOT NULL, box TEXT NOT NULL, created INTEGER NOT NULL)',
     ),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_mail_rcpt ON mail (rcpt, id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_mail_created ON mail (created)'),
   ]);
   ready = true;
 }
@@ -116,7 +117,8 @@ export default {
       case '/fetch': {
         const { who, ts, sig } = body;
         if (!(await verify(who, `fetch:${who}:${ts}`, sig))) return fail('Bad signature.', 401);
-        await env.DB.prepare('DELETE FROM mail WHERE created < ?').bind(now - KEEP_MS).run();
+        // Old mail is swept now and then (the index on "created" keeps even that cheap), not on every check.
+        if (Math.random() < 0.02) await env.DB.prepare('DELETE FROM mail WHERE created < ?').bind(now - KEEP_MS).run();
         const { results } = await env.DB.prepare('SELECT id, sender, box FROM mail WHERE rcpt = ? ORDER BY id LIMIT 200').bind(who).all();
         return json({ ok: true, mail: results });
       }

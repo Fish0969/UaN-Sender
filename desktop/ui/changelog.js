@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.18', items: [
+    'In the search, click a result to mark it and double-click it to go to that message in the chat.',
+    'Your profile at the top sits in a small card of its own (the thin line is gone).',
+  ] },
   { v: '1.9.17', items: [
     'Profile background: pick a ready-made one (Aurora, Sunset, Dots, Grid …), any colour, or your own picture in Settings → Profile.',
     'The profile card is cleaner: About is just the text, the Message button is gone, and the Join date sits under Friends since (people who are not your friends show only the Join date).',

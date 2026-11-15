@@ -1312,8 +1312,9 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .history .hnote { margin: 0; padding: 12px 14px 12px 34px; border: 1px solid var(--border); border-radius: var(--r-ctl, 9px); background: var(--card); }
 .history .hnote li { margin: 4px 0; color: var(--text); }
 
-/* ---- separate your own profile from the lists ---- */
-.me { border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+/* ---- your own profile sits in a small card of its own ---- */
+.me { margin: 8px 8px 6px; padding: 8px 6px 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-ctl, 12px); }
+.search-panel .result.sel { background: var(--active); }
 .find { margin: 0 8px 6px; }
 
 /* ---- profile card with a background ---- */
