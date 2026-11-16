@@ -36,6 +36,8 @@ use tokio_util::sync::CancellationToken;
 
 const ALPN: &[u8] = b"uan/1";
 const MAX_FRAME: usize = 1 << 20;
+/// The About picture travels in one message of its own, so it must stay under the frame size.
+const BIOIMG_MAX: usize = 950_000;
 /// Version of the peer-to-peer protocol. 2: History, GroupInvite, Typing, Seen. Those are only sent to
 /// peers known to understand them (older versions drop the connection on unknown requests).
 const PROTO: u32 = 3;
@@ -290,6 +292,8 @@ pub enum Req {
         devs: Vec<DevCert>,
     },
     Profile,
+    /// The picture or GIF in someone's About (asked for on its own: it can be up to ~1 MB).
+    BioImage,
     /// Sent by a device that isn't the account's PC: who it is, with the account's signature.
     Dev { acct: String, cert: String, req: Box<Req> },
     /// Between your own devices: something that happened on the other one (`from` is who did it).
@@ -788,6 +792,9 @@ impl Node {
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN bio TEXT", []);
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN joined INTEGER", []);
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN banner TEXT", []);
+        let _ = db.execute("ALTER TABLE profiles ADD COLUMN bioimg TEXT", []);
+        let _ = db.execute("ALTER TABLE profiles ADD COLUMN bioimg_v INTEGER", []);
+        let _ = db.execute("DELETE FROM kv WHERE k = 'badge'", []);
         // When this account began: the earliest thing we know of (older versions never wrote it down).
         let _ = db.execute(
             "INSERT OR IGNORE INTO kv (k, v) SELECT 'joined', CAST(COALESCE((SELECT MIN(t) FROM (SELECT MIN(ts) AS t FROM messages UNION ALL SELECT MIN(created_at) FROM contacts)), strftime('%s','now') * 1000) AS TEXT)",
@@ -1329,7 +1336,7 @@ impl Node {
     }
 
     pub fn my_profile(&self) -> Value {
-        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "badge": self.kv("badge"), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
+        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "bioimgV": self.kv("bioimg_v").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
     }
 
     fn my_pv(&self) -> i64 {
@@ -1341,11 +1348,11 @@ impl Node {
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
-        self.set_profile(name, None, None, None, None)
+        self.set_profile(name, None, None, None, None, None)
     }
 
     /// Name, status line ("Gaming 🎮") and profile picture (a small data: URL made by the window).
-    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>, banner: Option<&str>) -> Result<(), String> {
+    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>, banner: Option<&str>, bioimg: Option<&str>) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 32 {
             return Err("Pick a name of 1–32 characters.".into());
@@ -1358,6 +1365,17 @@ impl Node {
         if let Some(b) = bio {
             let b: String = b.trim().chars().take(500).collect();
             self.set_kv("bio", &b);
+        }
+        if let Some(b) = bioimg {
+            if b.is_empty() {
+                let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k IN ('bioimg', 'bioimg_v')", []);
+            } else {
+                if !(b.starts_with("data:image/") || b.starts_with("data:video/webm")) || b.len() > BIOIMG_MAX {
+                    return Err("That picture is too big (about 700 KB at most).".into());
+                }
+                self.set_kv("bioimg", b);
+                self.set_kv("bioimg_v", &now().to_string());
+            }
         }
         if let Some(b) = banner {
             if b.is_empty() {
@@ -1428,6 +1446,16 @@ impl Node {
                 );
                 if let Some(n) = v["name"].as_str() {
                     me.update_name(&peer, n);
+                }
+                let iv = v["bioimg_v"].as_i64().unwrap_or(0);
+                let known_iv: i64 = me.db.lock().unwrap().query_row("SELECT COALESCE(bioimg_v, 0) FROM profiles WHERE id = ?1", [&peer], |r| r.get(0)).unwrap_or(0);
+                if iv == 0 && known_iv != 0 {
+                    let _ = me.db.lock().unwrap().execute("UPDATE profiles SET bioimg = NULL, bioimg_v = 0 WHERE id = ?1", [&peer]);
+                } else if iv != 0 && iv != known_iv {
+                    if let Ok(r) = me.request(&peer, &Req::BioImage).await {
+                        let img = r["img"].as_str().filter(|b| (b.starts_with("data:image/") || b.starts_with("data:video/webm")) && b.len() <= BIOIMG_MAX);
+                        let _ = me.db.lock().unwrap().execute("UPDATE profiles SET bioimg = ?2, bioimg_v = ?3 WHERE id = ?1", params![peer, img, iv]);
+                    }
                 }
                 me.emit("contacts", Value::Null);
             }
@@ -2227,9 +2255,10 @@ impl Node {
                     }
                     Ok(ok)
                 }
+                Req::BioImage => Ok(json!({ "ok": true, "img": self.kv("bioimg") })),
                 Req::Profile => {
                     let p = self.my_profile();
-                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "joined": p["joined"] }))
+                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
                 }
                 _ => Err("Not allowed.".into()),
             };
@@ -2252,12 +2281,18 @@ impl Node {
                 Ok(ok)
             }
             Req::Dev { .. } | Req::Mirror { .. } | Req::MyProfile { .. } | Req::LinkGet { .. } => Err("Not allowed.".into()),
+            Req::BioImage => {
+                if !self.known_peers().iter().any(|p| p == peer) {
+                    return Err("Not allowed.".into());
+                }
+                Ok(json!({ "ok": true, "img": self.kv("bioimg") }))
+            }
             Req::Profile => {
                 if !self.known_peers().iter().any(|p| p == peer) {
                     return Err("Not allowed.".into());
                 }
                 let p = self.my_profile();
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "joined": p["joined"] }))
+                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
             }
             Req::FriendRequest { name } => {
                 match self.contact_status(peer).as_deref() {
@@ -3338,6 +3373,14 @@ impl Node {
             self.deliver(&t, &req);
         }
         Ok(())
+    }
+
+    /// The picture or GIF in someone's About (yours too), if there is one.
+    pub fn bio_image(&self, id: &str) -> Option<String> {
+        if id == self.me_s {
+            return self.kv("bioimg");
+        }
+        self.db.lock().unwrap().query_row("SELECT bioimg FROM profiles WHERE id = ?1", [id], |r| r.get::<_, Option<String>>(0)).optional().ok().flatten().flatten()
     }
 
     pub fn reactions(&self, chat: &str) -> Vec<Value> {

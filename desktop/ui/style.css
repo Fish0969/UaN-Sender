@@ -1394,10 +1394,21 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .banner-colour.on { border-style: solid; }
 .banner-colour input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
 
-/* ---- a small badge next to a name (like on Discord) ---- */
-.me-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.badge-owner { position: relative; flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #3b2300; cursor: default; }
-.badge-owner svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
-.badge-owner::after { content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); padding: 4px 9px; border-radius: 7px; background: #111; color: #fff; font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 60; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
-.badge-owner:hover::after, .badge-owner:focus-visible::after { opacity: 1; }
+/* ---- About: formatting, one picture or GIF, and it scrolls instead of growing ---- */
 .pf-name { display: flex; align-items: center; gap: 8px; }
+.pf-bio { max-height: calc(1.45em * 22); overflow-y: auto; overscroll-behavior: contain; }
+.pf-bio code { padding: 0 4px; border-radius: 4px; background: var(--card); font-size: .92em; }
+.pf-bioimg:empty { display: none; }
+.pf-bioimg img, .pf-bioimg video { display: block; max-width: 100%; max-height: 200px; border-radius: 10px; margin-bottom: 10px; }
+.bio-head { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.bio-tools { display: flex; gap: 4px; }
+.bio-tools button { width: 28px; height: 26px; min-height: 0; padding: 0; border-radius: 6px; font-size: 13px; color: var(--text); }
+.bio-text { width: 100%; resize: vertical; min-height: 70px; max-height: 260px; margin-top: 6px; padding: 8px 10px; font: inherit; color: var(--text); background: var(--input, var(--card)); border: 1px solid var(--border); border-radius: var(--r-ctl, 9px); box-sizing: border-box; }
+.bio-media { margin-top: 8px; }
+.bio-add { display: flex; align-items: center; gap: 8px; height: 40px; min-height: 0; padding: 0 14px; border: 1px dashed var(--muted); border-radius: 10px; background: var(--card); color: var(--text); }
+.bio-add svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }
+.bio-prev { position: relative; display: inline-block; }
+.bio-prev img, .bio-prev video { display: block; max-width: 220px; max-height: 110px; border-radius: 10px; border: 1px solid var(--border); }
+.bio-prev .bio-x { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; }
+.bio-prev .bio-x svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; }
+.note.over { color: var(--danger, #ff6b6b); }

@@ -42,7 +42,7 @@
       <div class="me">
         <div class="avatar" id="meAvatar"></div>
         <div class="grow">
-          <div class="me-line"><div id="meName" class="ellipsis strong"></div><span id="meBadge" class="badge-owner hidden" data-tip="Owner" aria-label="Owner"><svg viewBox="0 0 24 24"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5Z"/></svg></span></div>
+          <div id="meName" class="ellipsis strong"></div>
           <div id="meStatus" class="sub ellipsis"></div>
           <div id="meProfile" class="sub hidden"></div>
         </div>
@@ -236,6 +236,7 @@
   <div id="ctxMenu" class="menu hidden"></div>
   <input type="file" id="subFile" accept=".srt,.vtt" hidden>
   <input type="file" id="avatarFile" accept="image/*" hidden>
+  <input type="file" id="bioFile" accept="image/*" hidden>
   <input type="file" id="bannerFile" accept="image/*" hidden>
   <input type="file" id="phoneFiles" multiple hidden>
   <input type="file" id="themeFile" accept=".html,.htm,video/*,image/*" hidden>
@@ -360,7 +361,15 @@
                 <label>Status<input id="sStatus" maxlength="60" placeholder="e.g. Gaming, Watching a film, Away"></label>
               </div>
             </div>
-            <label class="bio-label">About you<textarea id="sBio" maxlength="500" rows="4" placeholder="Say something about yourself. Your friends see this on your profile."></textarea></label>
+            <div class="bio-head"><span>About you</span>
+              <div class="bio-tools" id="sBioTools">
+                <button type="button" data-wrap="**" title="Bold"><b>B</b></button>
+                <button type="button" data-wrap="*" title="Italic"><i>I</i></button>
+                <button type="button" data-wrap="__" title="Underline"><u>U</u></button>
+                <button type="button" data-wrap="~~" title="Strike through"><s>S</s></button>
+              </div></div>
+            <textarea id="sBio" class="bio-text" maxlength="500" rows="4" placeholder="Say something about yourself. Your friends see this on your profile."></textarea>
+            <div class="bio-media" id="sBioMedia"></div>
             <div class="note" id="sBioCount"></div>
             <div class="tiles avatars" id="sAvatars" title="Ready-made pictures"></div>
             <div class="sub-title">Profile background</div>
@@ -569,7 +578,7 @@
         <div class="pf-top"><div id="pfAvatar"></div>
           <div class="grow"><div class="pf-name" id="pfName"></div><div class="pf-status" id="pfStatus"></div><div class="pf-online hidden" id="pfOnline"></div></div></div>
         <div id="pfBgPanel" class="pf-bg hidden"></div>
-        <div id="pfAboutBox"><div class="pf-sec">About</div><div class="pf-bio" id="pfBio"></div></div>
+        <div id="pfAboutBox"><div class="pf-sec">About</div><div class="pf-bioimg" id="pfBioImg"></div><div class="pf-bio" id="pfBio"></div></div>
         <div class="pf-facts" id="pfFacts"></div>
         <div class="pf-actions" id="pfActions"></div>
       </div>

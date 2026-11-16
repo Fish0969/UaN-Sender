@@ -393,10 +393,7 @@ function modeMenu(e) {
   showMenu(r.left, r.bottom + 4, ['online', 'away', 'dnd'].map((m) => ({ label: (S.me.mode === m ? '\u2022 ' : '') + MODE_NAMES[m], run: () => pick(m) })));
 }
 
-const isOwner = () => S.me?.profile?.badge === 'owner';
-const ownerBadge = () => el('span', { class: 'badge-owner', 'data-tip': 'Owner', tabindex: '0', 'aria-label': 'Owner' }, svg('<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5Z"/>'));
 function renderMe() {
-  $('meBadge').classList.toggle('hidden', !isOwner());
   $('meName').textContent = S.me.name;
   setAvatar($('meAvatar'), S.me.name, { seed: S.me.id, src: S.me.profile?.avatar, online: true, mode: S.me.mode });
   $('meAvatar').title = MODE_NAMES[S.me.mode] || 'Online';
@@ -922,12 +919,13 @@ function attachMenu(node, m, items) {
 // **bold**, *italic*, ~~strike~~, `code`, and @mentions; everything else stays plain text.
 function formatText(text) {
   const frag = document.createDocumentFragment();
-  const re = /(\*\*[^*\n]+?\*\*|\*[^*\s][^*\n]*?\*|~~[^~\n]+?~~|`[^`\n]+?`|@[\p{L}\p{N}_.-]+)/gu;
+  const re = /(\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\s][^*\n]*?\*|~~[^~\n]+?~~|`[^`\n]+?`|@[\p{L}\p{N}_.-]+)/gu;
   let last = 0;
   for (const mt of text.matchAll(re)) {
     if (mt.index > last) frag.append(text.slice(last, mt.index));
     const t = mt[0];
     if (t.startsWith('**')) frag.append(el('b', { text: t.slice(2, -2) }));
+    else if (t.startsWith('__')) frag.append(el('u', { text: t.slice(2, -2) }));
     else if (t.startsWith('~~')) frag.append(el('s', { text: t.slice(2, -2) }));
     else if (t.startsWith('`')) frag.append(el('code', { text: t.slice(1, -1) }));
     else if (t.startsWith('*')) frag.append(el('i', { text: t.slice(1, -1) }));
@@ -1392,12 +1390,21 @@ function personInfo(id) {
   const alt = m || {};
   return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, banner: base.banner || alt.banner || '', since: f?.since, online: base.online, friend: !!f };
 }
+// A picture shows as a picture; a GIF that UaN made smaller is a short silent video that loops.
+function bioMediaNode(src) {
+  if (src.startsWith('data:video/')) {
+    const v = el('video', { src, autoplay: true, loop: true, playsinline: true });
+    v.muted = true;
+    return v;
+  }
+  return el('img', { src, alt: '' });
+}
 function openProfile(id) {
   const p = personInfo(id);
   if (!p) return;
   $('pfBanner').style.background = bannerStyle(p.banner, p.id);
   $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
-  $('pfName').replaceChildren(el('span', { text: p.name }), ...(p.me && isOwner() ? [ownerBadge()] : []));
+  $('pfName').textContent = p.name;
   $('pfStatus').textContent = p.status || '';
   $('pfStatus').classList.toggle('hidden', !p.status);
   const link = S.links?.[id];
@@ -1424,8 +1431,14 @@ function openProfile(id) {
     panel.classList.remove('hidden');
   };
   $('pfAboutBox').classList.toggle('hidden', !p.bio && !p.me);
-  $('pfBio').textContent = p.bio || 'You have not written anything about yourself yet (Settings → Profile).';
+  $('pfBio').replaceChildren(p.bio ? formatText(p.bio) : (p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : ''));
   $('pfBio').classList.toggle('empty', !p.bio);
+  $('pfBioImg').replaceChildren();
+  invoke('bio_image', { id: p.id }).then((src) => {
+    if (!src || $('pfName').textContent !== p.name) return;
+    $('pfBioImg').replaceChildren(bioMediaNode(src));
+    $('pfAboutBox').classList.remove('hidden');
+  }).catch(() => {});
   const facts = [];
   if (p.friend && p.since) facts.push(['Friends since', joinFmt.format(p.since)]);
   if (p.joined) facts.push(['Join date', joinFmt.format(p.joined)]);
@@ -2950,10 +2963,11 @@ function pickGroupPicture(g) {
   };
   input.click();
 }
-function friendMenu(f) {
+function friendMenu(f, inChat = false) {
   return [
-    { label: 'Open chat', run: () => openChat(f.id) },
-    pinItem('f', f.id),
+    inChat ? null : { label: 'Open chat', run: () => openChat(f.id) },
+    inChat ? null : { label: 'Check profile', run: () => openProfile(f.id) },
+    inChat ? null : pinItem('f', f.id),
     muteItem(f.id),
     '-',
     { label: 'Clear messages for me', run: () => clearChat(f.id, false) },
@@ -3001,7 +3015,7 @@ $('chatTitle').addEventListener('contextmenu', (e) => {
   const info = chatInfo(S.active);
   if (!info || info.group) return;
   e.preventDefault();
-  showMenu(e.clientX, e.clientY, friendMenu(info.friend).slice(2));
+  showMenu(e.clientX, e.clientY, friendMenu(info.friend, true));
 });
 
 let groupDlgId = null;
@@ -3204,7 +3218,10 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sName').value = S.me.name;
   $('sStatus').value = S.me.profile?.status || '';
   $('sBio').value = S.me.profile?.bio || '';
-  $('sBioCount').textContent = `${$('sBio').value.length} / 500`;
+  pendingBioImg = null;
+  ownBioImg = '';
+  renderBioMedia();
+  if (S.me.profile?.bioimgV) invoke('bio_image', { id: S.me.id }).then((src) => { ownBioImg = src || ''; renderBioMedia(); }).catch(() => {});
   renderAvatarPick();
   $('sTheme').value = theme.mode;
   renderSwatches();
@@ -3289,15 +3306,154 @@ $('sRestore').addEventListener('click', async () => {
     await invoke('import_backup', { password });
   } catch (e) { toast(e); }
 });
-$('sBio').addEventListener('input', () => { $('sBioCount').textContent = `${$('sBio').value.length} / 500`; });
+// ---- About: the text, its formatting buttons, one picture or GIF ----
+let pendingBioImg = null; // null = unchanged, '' = removed, data URL = new
+let ownBioImg = '';
+const BIO_IMG_COST = 300; // a picture takes the place of this many characters
+const bioImgNow = () => (pendingBioImg === null ? ownBioImg || (S.me.profile?.bioimgV ? 'yes' : '') : pendingBioImg);
+const bioLimit = () => (bioImgNow() ? 500 - BIO_IMG_COST : 500);
+function updateBioCount() {
+  const n = $('sBio').value.length, lim = bioLimit();
+  $('sBioCount').textContent = n + ' / ' + lim + (bioImgNow() ? ' · the picture takes the place of ' + BIO_IMG_COST + ' characters' : '');
+  $('sBioCount').classList.toggle('over', n > lim);
+}
+function renderBioMedia() {
+  const src = pendingBioImg === null ? ownBioImg : pendingBioImg;
+  if (src) {
+    $('sBioMedia').replaceChildren(el('div', { class: 'bio-prev' }, bioMediaNode(src),
+      el('button', { type: 'button', class: 'bio-x', title: 'Remove the picture', onclick: () => { pendingBioImg = ''; renderBioMedia(); } }, svg('<path d="M6 6l12 12M18 6 6 18"/>'))));
+  } else {
+    $('sBioMedia').replaceChildren(el('button', { type: 'button', class: 'bio-add', onclick: () => { $('bioFile').value = ''; $('bioFile').click(); } },
+      svg('<path d="M12 5v14M5 12h14"/>'), 'Picture or GIF'));
+  }
+  updateBioCount();
+}
+$('sBio').addEventListener('input', updateBioCount);
+for (const b of $('sBioTools').querySelectorAll('[data-wrap]')) {
+  b.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection in the text
+  b.addEventListener('click', () => {
+    const t = $('sBio'), w = b.dataset.wrap;
+    const s = t.selectionStart, e = t.selectionEnd, v = t.value;
+    const sel = v.slice(s, e);
+    t.value = v.slice(0, s) + w + sel + w + v.slice(e);
+    t.focus();
+    if (sel) t.setSelectionRange(s, e + w.length * 2); else t.setSelectionRange(s + w.length, s + w.length);
+    updateBioCount();
+  });
+}
+// Makes the picture small enough to send: a small file stays as it is (GIFs keep moving),
+// a big GIF becomes a short silent looping video, a big still picture is shrunk.
+const BIO_MAX = 940000; // characters of the data URL
+const fileToDataUrl = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+// A tiny WebM writer: VP8 frames from the browser's own encoder, in a file any player loops.
+function webmFile(chunks, w, h, durMs) {
+  const cat = (parts) => { const n = parts.reduce((a, b) => a + b.length, 0), o = new Uint8Array(n); let k = 0; for (const x of parts) { o.set(x, k); k += x.length; } return o; };
+  const uint = (v) => { const b = []; do { b.unshift(v & 255); v = Math.floor(v / 256); } while (v > 0); return new Uint8Array(b); };
+  const size = (n) => { const b = new Uint8Array(8); b[0] = 1; for (let k = 7; k >= 1; k--) { b[k] = n & 255; n = Math.floor(n / 256); } return b; };
+  const elm = (id, data) => cat([new Uint8Array(id), size(data.length), data]);
+  const str = (s) => new TextEncoder().encode(s);
+  const f64 = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setFloat64(0, v); return b; };
+  const header = elm([0x1a, 0x45, 0xdf, 0xa3], cat([
+    elm([0x42, 0x86], uint(1)), elm([0x42, 0xf7], uint(1)), elm([0x42, 0xf2], uint(4)), elm([0x42, 0xf3], uint(8)),
+    elm([0x42, 0x82], str('webm')), elm([0x42, 0x87], uint(2)), elm([0x42, 0x85], uint(2))]));
+  const info = elm([0x15, 0x49, 0xa9, 0x66], cat([elm([0x2a, 0xd7, 0xb1], uint(1000000)), elm([0x4d, 0x80], str('UaN')), elm([0x57, 0x41], str('UaN')), elm([0x44, 0x89], f64(durMs))]));
+  const tracks = elm([0x16, 0x54, 0xae, 0x6b], elm([0xae], cat([
+    elm([0xd7], uint(1)), elm([0x73, 0xc5], uint(1)), elm([0x83], uint(1)), elm([0x86], str('V_VP8')),
+    elm([0xe0], cat([elm([0xb0], uint(w)), elm([0xba], uint(h))]))])));
+  const blocks = chunks.map((c) => {
+    const t = Math.round(c.ts / 1000);
+    return elm([0xa3], cat([new Uint8Array([0x81, (t >> 8) & 255, t & 255, c.key ? 0x80 : 0]), c.data]));
+  });
+  const cluster = elm([0x1f, 0x43, 0xb6, 0x75], cat([elm([0xe7], uint(0)), ...blocks]));
+  return cat([header, elm([0x18, 0x53, 0x80, 0x67], cat([info, tracks, cluster]))]);
+}
+async function animToWebm(dec, frames) {
+  if (!('VideoEncoder' in window)) throw new Error('no encoder');
+  const first = await dec.decode({ frameIndex: 0 });
+  const w0 = first.image.displayWidth, h0 = first.image.displayHeight;
+  first.image.close();
+  const tries = [[480, 360, 700000], [360, 270, 380000], [280, 210, 200000]];
+  for (const [mw, mh, bps] of tries) {
+    const sc = Math.min(1, mw / w0, mh / h0);
+    const w = Math.max(2, Math.round(w0 * sc / 2) * 2), h = Math.max(2, Math.round(h0 * sc / 2) * 2);
+    const cfg = { codec: 'vp8', width: w, height: h, bitrate: bps, framerate: 25 };
+    if (!(await VideoEncoder.isConfigSupported(cfg)).supported) throw new Error('no encoder');
+    const out = [];
+    let failed = null;
+    const enc = new VideoEncoder({
+      output: (chunk) => { const d = new Uint8Array(chunk.byteLength); chunk.copyTo(d); out.push({ data: d, ts: chunk.timestamp, key: chunk.type === 'key' }); },
+      error: (e) => { failed = e; },
+    });
+    enc.configure(cfg);
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    let t = 0; // microseconds
+    for (let i = 0; i < frames && t < 8000000; i++) {
+      const { image } = await dec.decode({ frameIndex: i });
+      const d = Math.max(20000, image.duration || 100000);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(image, 0, 0, w, h);
+      image.close();
+      const vf = new VideoFrame(canvas, { timestamp: t, duration: d });
+      enc.encode(vf, { keyFrame: i % 30 === 0 });
+      vf.close();
+      t += d;
+    }
+    await enc.flush();
+    enc.close();
+    if (failed || !out.length) throw new Error('no encoder');
+    const url = await fileToDataUrl(new Blob([webmFile(out, w, h, t / 1000)], { type: 'video/webm' }));
+    if (url.length <= BIO_MAX) return url;
+  }
+  throw new Error('too big');
+}
+async function prepareBioMedia(file) {
+  if (!/^image\//.test(file.type)) throw new Error('not a picture');
+  const asIs = await fileToDataUrl(file);
+  if (asIs.length <= BIO_MAX && file.size <= 650000) return asIs;
+  if ('ImageDecoder' in window) {
+    let dec = null;
+    try {
+      dec = new ImageDecoder({ data: await file.arrayBuffer(), type: file.type });
+      await dec.tracks.ready;
+      await dec.completed;
+      const frames = dec.tracks.selectedTrack?.frameCount || 1;
+      if (frames > 1) return await animToWebm(dec, frames);
+    } catch (e) {
+      if (e?.message === 'too big') throw e;
+    } finally { try { dec?.close(); } catch {} }
+  }
+  const img = await createImageBitmap(file);
+  const sc = Math.min(1, 720 / img.width, 480 / img.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * sc); canvas.height = Math.round(img.height * sc);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  let q = 0.85, out = canvas.toDataURL('image/webp', q);
+  while (out.length > BIO_MAX && q > 0.3) { q -= 0.1; out = canvas.toDataURL('image/webp', q); }
+  if (out.length > BIO_MAX) throw new Error('too big');
+  return out;
+}
+$('bioFile').addEventListener('change', async () => {
+  const file = $('bioFile').files[0];
+  if (!file) return;
+  toast('Getting the picture ready…');
+  try {
+    pendingBioImg = await prepareBioMedia(file);
+    renderBioMedia();
+    toast('Ready. Save to show it on your profile.');
+  } catch (e) {
+    toast(e?.message === 'too big' ? 'That one is too big even after shrinking. Try a shorter GIF.' : 'That file isn’t a picture or GIF UaN can read.');
+  }
+});
 $('sGithub').addEventListener('click', () => invoke('open_github').catch(() => {}));
 $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
     const status = $('sStatus').value.trim();
     const bio = $('sBio').value.trim();
-    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null || pendingBanner !== null) {
-      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio, banner: pendingBanner });
+    if (bio.length > bioLimit()) { $('sError').textContent = 'Your About is too long: ' + bioLimit() + ' characters at most' + (bioImgNow() ? ' (the picture takes the place of ' + BIO_IMG_COST + ').' : '.'); return; }
+    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null || pendingBanner !== null || pendingBioImg !== null) {
+      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio, banner: pendingBanner, bioimg: pendingBioImg });
     }
     if ($('sMailbox').value.trim() !== (S.me.mailbox || '')) {
       await invoke('set_mailbox', { url: $('sMailbox').value });
@@ -4500,7 +4656,7 @@ function bannerGrid(current, onPick, live) {
   };
   const plus = el('button', { type: 'button', class: 'banner-tile banner-plus', title: 'Use your own picture', onclick: () => { bannerTarget = onPick; $('bannerFile').value = ''; $('bannerFile').click(); } }, svg('<path d="M12 5v14M5 12h14"/>'));
   const colour = el('label', { class: 'banner-tile banner-colour', title: 'Pick any colour' },
-    svg('<path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/>'),
+    svg('<path d="M4 20c3 0 5-1 5-3.5L18.5 7a2.1 2.1 0 0 0-3-3L6 13.5C4 14 4 17 4 20Z"/><path d="m14 6 4 4"/>'),
     el('input', { type: 'color', value: '#5b6cf0', 'aria-label': 'Colour', oninput: (e) => { if (live) onPick('c:' + e.target.value); }, onchange: (e) => { if (!live) onPick('c:' + e.target.value); } }));
   wrap.append(
     el('div', { class: 'banner-label', text: 'Ready-made' }),

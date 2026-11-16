@@ -174,8 +174,8 @@ fn set_name(node: State<'_, Arc<Node>>, name: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn set_profile(node: State<'_, Arc<Node>>, name: String, status: String, avatar: Option<String>, bio: Option<String>, banner: Option<String>) -> CmdResult<()> {
-    node.set_profile(&name, Some(&status), avatar.as_deref(), bio.as_deref(), banner.as_deref())
+fn set_profile(node: State<'_, Arc<Node>>, name: String, status: String, avatar: Option<String>, bio: Option<String>, banner: Option<String>, bioimg: Option<String>) -> CmdResult<()> {
+    node.set_profile(&name, Some(&status), avatar.as_deref(), bio.as_deref(), banner.as_deref(), bioimg.as_deref())
 }
 
 #[tauri::command]
@@ -947,6 +947,11 @@ fn react(node: State<'_, Arc<Node>>, chat: String, id: String, emoji: String) ->
 }
 
 #[tauri::command]
+fn bio_image(node: State<'_, Arc<Node>>, id: String) -> Option<String> {
+    node.bio_image(&id)
+}
+
+#[tauri::command]
 fn reactions(node: State<'_, Arc<Node>>, chat: String) -> Vec<Value> {
     node.reactions(&chat)
 }
@@ -1408,6 +1413,7 @@ pub fn run() {
             vlc_close,
             open_vlc_site,
             react,
+            bio_image,
             reactions,
             media_tracks,
             audio_assist_start,

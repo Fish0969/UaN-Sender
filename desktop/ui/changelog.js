@@ -1,5 +1,12 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.21', items: [
+    'Your About can have bold, italic, underlined and struck-through text (buttons above the box).',
+    'Put one picture or GIF in your About. UaN makes it small enough by itself (a big GIF becomes a short looping clip); it takes the place of 300 characters.',
+    'A long About scrolls after about 22 lines instead of making the profile card huge.',
+    'Right-click a friend in the list and choose Check profile.',
+    'The colour tile in the background picker is a brush. The Owner badge is gone.',
+  ] },
   { v: '1.9.20', items: [
     'The lists are plain again (a row is just a row); the headings with their line stay.',
     'In the background picker the colour tile is an eyedropper.',
