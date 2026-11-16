@@ -17,7 +17,7 @@ No server, no account: everything runs on your own PC.
 <br>
 
 <img src="docs/images/chat.png" width="880" alt="UaN: a group chat, in a custom space theme">
-<br><sub>Screenshot from UaN 1.9.9, with invented demo people</sub>
+<br><sub>Screenshot from UaN 1.9.21, with invented demo people</sub>
 
 </div>
 
@@ -74,7 +74,7 @@ updates itself.
 <td width="56%" valign="top">
 
 <img src="docs/images/themes.png" alt="UaN settings: appearance, with the theme settings open">
-<br><sub>Screenshot from UaN 1.9.9, with invented demo data</sub>
+<br><sub>Screenshot from UaN 1.9.21, with invented demo data</sub>
 
 </td>
 <td valign="top">
@@ -82,6 +82,28 @@ updates itself.
 Seventeen built-in themes, or put your **own** behind the chat: a video, a picture or a small web page.
 
 Double-click your theme to open its settings: **sound**, **volume**, **blur** and **brightness**, live, with a slider or a typed number.
+
+</td>
+</tr>
+</table>
+
+## Profiles
+
+<table>
+<tr>
+<td valign="top">
+
+Click anyone's picture or name to see their profile: status, **About**, since when you're friends and when they joined.
+
+Write your About with **bold**, *italic*, <u>underline</u> and ~~strike~~, and add **one picture or GIF**. UaN shrinks it by itself.
+
+Pick a **background** for your card: a ready-made one, any colour, or your own picture, right from your own profile.
+
+</td>
+<td width="56%" valign="top">
+
+<img src="docs/images/profile.png" alt="A profile card in UaN with a background, an About text and a picture">
+<br><sub>Screenshot from UaN 1.9.21, with invented demo people</sub>
 
 </td>
 </tr>
