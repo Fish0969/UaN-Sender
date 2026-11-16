@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.24', items: [
+    'GIFs in a chat move (they were a still picture before) and have “.gif” under them. A small GIF moves for everyone at once; a bigger one (up to 8 MB) starts moving as soon as the sender’s PC can be reached, and any size moves when you open it.',
+    'The whole GIF plays in your About and as your profile picture, not only the first few seconds (up to 30 seconds).',
+  ] },
   { v: '1.9.23', items: [
     'You decide where the picture or GIF goes in your About: it shows where [picture] is in your text, before, between or after your words. “Put it where the cursor is” moves it.',
     'The auras are gone; your colour stays.',

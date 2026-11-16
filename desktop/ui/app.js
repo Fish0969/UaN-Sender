@@ -1073,8 +1073,11 @@ function sheetNode(b) {
 function printNode(m, set) {
   const f = m.file;
   const video = /^video\//i.test(f.mime);
+  const pic = el('img', { src: m.thumb?.img || mediaUrl(f), alt: '', loading: 'lazy', onload: keepBottom });
+  if (m.thumb?.img) animateGif(pic, f, m.thumb);
   return el('button', { type: 'button', class: 'print', 'data-id': m.id, title: f.name, onclick: () => openViewer(f, { list: set }) },
-  el('img', { src: m.thumb?.img || mediaUrl(f), alt: '', loading: 'lazy', onload: keepBottom }),
+  pic,
+  isGif(f.mime) ? el('span', { class: 'gif-badge', text: '.gif' }) : null,
   video ? el('span', { class: 'play-badge' }, svg(ICON.bigplay)) : null,
   video && m.thumb?.dur ? el('span', { class: 'dur', text: fmtTime(m.thumb.dur) }) : null);
 }
@@ -1832,8 +1835,10 @@ function fileCard(file, chat, thumb) {
   if (thumb?.img && (IMAGE.test(file.mime) || /^video\//i.test(file.mime))) {
     // The sender's preview: shows instantly, even when the sender's PC is off.
     const video = /^video\//i.test(file.mime);
+    const pic = el('img', { src: thumb.img, alt: '', onload: keepBottom });
+    animateGif(pic, file, thumb);
     preview = el('button', { class: 'thumb', type: 'button', title: video ? 'Play here without downloading' : 'Open', onclick: () => openViewer(file) },
-      el('img', { src: thumb.img, alt: '', onload: keepBottom }),
+      pic,
       video ? el('span', { class: 'play-badge' }, svg(ICON.bigplay)) : null,
       video && thumb.dur ? el('span', { class: 'dur', text: fmtTime(thumb.dur) }) : null);
   } else if (IMAGE.test(file.mime) && file.size <= INLINE_IMAGE_LIMIT) {
@@ -1852,6 +1857,7 @@ function fileCard(file, chat, thumb) {
     : null;
   return el('div', { class: 'file' },
     preview,
+    preview ? gifTag(file) : null,
     el('div', { class: 'file-row' },
       el('div', { class: 'ext', text: ext }),
       el('div', { class: 'grow' },
@@ -1899,6 +1905,16 @@ function keepBottom() {
 }
 
 const thumbPending = new Set();
+const isGif = (mime) => /^image\/gif$/i.test(mime || '');
+const GIF_AUTO_LIMIT = 8 * 1024 * 1024; // bigger GIFs stay a still picture until you open them
+// A GIF is shown moving: the sender's small preview is only the first frame, so the real GIF replaces it as soon as it can be reached.
+function animateGif(img, file, thumb) {
+  if (!isGif(file.mime) || thumb?.gif || file.size > GIF_AUTO_LIMIT) return;
+  const real = new Image();
+  real.onload = () => { img.src = real.src; };
+  real.src = mediaUrl(file);
+}
+const gifTag = (file) => (isGif(file.mime) ? el('div', { class: 'gif-tag', text: '.gif' }) : null);
 
 // Draws a small JPEG preview of a photo or a frame of a video (plus its length).
 async function makeThumb(file) {
@@ -1917,6 +1933,13 @@ async function makeThumb(file) {
     img.crossOrigin = 'anonymous';
     img.src = mediaUrl(file);
     await Promise.race([img.decode(), timeout(20000, 'image timeout')]);
+    // A small GIF goes as it is, so it moves for everyone at once, even when your PC is off.
+    if (isGif(file.mime) && file.size <= 170000) {
+      try {
+        const url = await fileToDataUrl(await (await fetch(mediaUrl(file))).blob());
+        if (url.length <= 250000) return { img: url, w: img.naturalWidth, h: img.naturalHeight, gif: true };
+      } catch {}
+    }
     return { img: draw(img, img.naturalWidth, img.naturalHeight), w: img.naturalWidth, h: img.naturalHeight };
   }
   if (/^video\//i.test(file.mime)) {
@@ -3481,8 +3504,8 @@ async function animToWebm(dec, frames, opts = {}) {
   const first = await dec.decode({ frameIndex: 0 });
   const w0 = first.image.displayWidth, h0 = first.image.displayHeight;
   first.image.close();
-  const tries = opts.tries || [[480, 360, 700000], [360, 270, 380000], [280, 210, 200000]];
-  const limit = opts.max || BIO_MAX, maxUs = (opts.maxMs || 8000) * 1000;
+  const tries = opts.tries || [[480, 360, 700000], [360, 270, 380000], [280, 210, 200000], [220, 165, 120000], [160, 120, 70000]];
+  const limit = opts.max || BIO_MAX, maxUs = (opts.maxMs || 30000) * 1000;
   const side0 = Math.min(w0, h0), sx = opts.square ? (w0 - side0) / 2 : 0, sy = opts.square ? (h0 - side0) / 2 : 0;
   const sw = opts.square ? side0 : w0, sh = opts.square ? side0 : h0;
   for (const [mw, mh, bps] of tries) {
@@ -3530,7 +3553,7 @@ async function movingAvatar(file) {
     const asIs = await fileToDataUrl(file);
     if (asIs.length <= 190000) return asIs;
     toast('Making the GIF small enough…');
-    return await animToWebm(dec, frames, { square: true, tries: [[160, 160, 170000], [128, 128, 110000], [96, 96, 70000]], max: 195000, maxMs: 6000 });
+    return await animToWebm(dec, frames, { square: true, tries: [[160, 160, 170000], [128, 128, 110000], [96, 96, 70000], [72, 72, 40000]], max: 195000, maxMs: 30000 });
   } finally { try { dec.close(); } catch {} }
 }
 async function prepareBioMedia(file) {
