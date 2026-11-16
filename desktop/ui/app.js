@@ -731,13 +731,17 @@ function relock(chat) {
   ch.unlocked = false;
   invoke('forget_channel', { chat }).catch(() => {});
 }
+S.drafts = new Map();
 async function openChat(chat, focusId) {
   if (S.active !== chat) {
+    if (S.active) S.drafts.set(S.active, $('msgInput').value);
     cancelReply();
     relock(S.active);
     stopInlineAudio();
   }
+  const switched = S.active !== chat;
   S.active = chat;
+  if (switched) { $('msgInput').value = S.drafts.get(chat) || ''; renderMentions(); }
   S.unread.delete(chat);
   if (isGroup(chat)) {
     S.view = groupIdOf(chat);
@@ -1895,6 +1899,10 @@ function startDownload(file, chat) {
   invoke('download', { file, chat: chat || S.active || '' }).catch(toast);
 }
 
+const toBottom = el('button', { type: 'button', class: 'to-bottom hidden', id: 'toBottom', title: 'Jump to the newest message' }, svg('<path d="M12 5v14M6 13l6 6 6-6"/>'));
+$('chat').append(toBottom);
+toBottom.addEventListener('click', () => { const b = $('msgs'); b.scrollTop = b.scrollHeight; });
+$('msgs').addEventListener('scroll', () => { const b = $('msgs'); toBottom.classList.toggle('hidden', b.scrollHeight - b.scrollTop - b.clientHeight < 420); }, { passive: true });
 let wasNearBottom = true;
 $('msgs').addEventListener('scroll', () => {
   const b = $('msgs');
@@ -2100,6 +2108,17 @@ async function uploadFile(f) {
   }
   return path;
 }
+document.addEventListener('paste', async (e) => {
+  if (!S.active || $('chat').classList.contains('hidden') || document.querySelector('dialog[open]')) return;
+  const files = [...(e.clipboardData?.files || [])].filter((f) => /^image\//.test(f.type));
+  if (!files.length) return;
+  e.preventDefault();
+  const name = chatInfo(S.active)?.name || 'this chat';
+  if (!(await ask(files.length === 1 ? 'Send the picture you pasted to ' + name + '?' : 'Send the ' + files.length + ' pictures you pasted to ' + name + '?', 'Send'))) return;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const named = files.map((f, i) => new File([f], f.name && f.name !== 'image.png' ? f.name : 'picture-' + stamp + (files.length > 1 ? '-' + (i + 1) : '') + '.' + (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg'), { type: f.type }));
+  try { await sendPhoneFiles(named); } catch (err) { toast(err); }
+});
 async function sendPhoneFiles(files) {
   const chat = S.active;
   const paths = [];
@@ -2118,6 +2137,28 @@ $('phonePhotos').addEventListener('change', () => {
   $('phonePhotos').value = '';
   if (files.length) sendPhoneFiles(files).catch(toast);
 });
+
+// ---------- Emoji picker ----------
+const EMOJIS = '😀😃😄😁😆😅😂🤣😊😇🙂😉😍🥰😘😋😛😜🤪🤔🤨😐😑🙄😏😴😎🤓🥳😭😢😤😡😱😨😰🤗🤭🫡🤫🥺😳😬🙃🫠🤯🥵🥶🤢🤮👍👎👏🙌🙏🤝💪👀👋✌️🤞🫶❤️🧡💛💚💙💜🖤🤍💔💯🔥✨🎉🎬🍿🎮🎧🎵🍕🍔🍟🍺☕🚀🌙⭐☀️🌈💀👻🤖🐱🐶'.match(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu);
+function closeEmoji() { document.querySelector('.emoji-pop')?.remove(); }
+$('emojiBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (document.querySelector('.emoji-pop')) { closeEmoji(); return; }
+  const pop = el('div', { class: 'emoji-pop' }, EMOJIS.map((em) => el('button', { type: 'button', text: em, onmousedown: (ev) => ev.preventDefault(), onclick: () => {
+    const t = $('msgInput');
+    const s = t.selectionStart ?? t.value.length, en = t.selectionEnd ?? s;
+    t.value = t.value.slice(0, s) + em + t.value.slice(en);
+    t.focus();
+    t.setSelectionRange(s + em.length, s + em.length);
+  } })));
+  document.body.append(pop);
+  const r = $('emojiBtn').getBoundingClientRect();
+  pop.style.left = Math.max(6, Math.min(innerWidth - 322, r.left)) + 'px';
+  pop.style.top = Math.max(6, r.top - pop.getBoundingClientRect().height - 8) + 'px';
+  const close = (ev) => { if (!pop.contains(ev.target)) { closeEmoji(); document.removeEventListener('pointerdown', close, true); } };
+  setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeEmoji(); });
 
 // ---------- Polls ----------
 function pollRow(value = '') {
@@ -4648,6 +4689,12 @@ const UI_STYLES = [
   { id: 'neon', name: 'Neon' },
   { id: 'terminal', name: 'Terminal' },
   { id: 'soft', name: 'Soft' },
+  { id: 'brutal', name: 'Brutal' },
+  { id: 'paper', name: 'Paper' },
+  { id: 'aero', name: 'Aero' },
+  { id: 'ink', name: 'Ink' },
+  { id: 'bubble', name: 'Bubble' },
+  { id: 'vapor', name: 'Vapor' },
 ];
 // ---------- Interface size: the whole window's zoom, kept for next time ----------
 let uiZoom = (() => { try { const z = parseFloat(localStorage.getItem('uan.zoom') || '1'); return z >= 0.7 && z <= 1.6 ? z : 1; } catch { return 1; } })();

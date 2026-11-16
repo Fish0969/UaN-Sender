@@ -1,5 +1,12 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.25', items: [
+    'Six new interface styles: Brutal, Paper, Aero, Ink, Bubble and Vapor.',
+    'Paste a picture (Ctrl+V, e.g. a screenshot) into a chat to send it; UaN asks first.',
+    'What you were typing in a chat is still there when you come back to it.',
+    'A button to jump to the newest message when you have scrolled up.',
+    'An emoji picker next to the paper clip.',
+  ] },
   { v: '1.9.24', items: [
     'GIFs in a chat move (they were a still picture before) and have “.gif” under them. A small GIF moves for everyone at once; a bigger one (up to 8 MB) starts moving as soon as the sender’s PC can be reached, and any size moves when you open it.',
     'The whole GIF plays in your About and as your profile picture, not only the first few seconds (up to 30 seconds).',
