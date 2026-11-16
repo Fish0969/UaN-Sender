@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.23', items: [
+    'You decide where the picture or GIF goes in your About: it shows where [picture] is in your text, before, between or after your words. “Put it where the cursor is” moves it.',
+    'The auras are gone; your colour stays.',
+  ] },
   { v: '1.9.22', items: [
     'Moving profile pictures: pick a GIF. A small one stays as it is; a big one becomes a short square clip, so it still moves.',
     'Your colour and aura (Settings → Profile): the colour tints your name and profile card, the aura (Glow, Pulse, Spin, Rainbow) moves around your picture.',

@@ -1417,16 +1417,6 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .avatar video, .avatar-pick video { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; display: block; }
 
 /* ---- profile colour and aura ---- */
-.aura-host { position: relative; display: inline-grid; place-items: center; border-radius: 50%; flex: none; }
-.aura-host::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; pointer-events: none; opacity: 0; z-index: 0; }
-.aura-host > * { position: relative; z-index: 1; }
-.aura-host.aura-glow::before { opacity: 1; box-shadow: 0 0 18px 5px var(--look, var(--accent)); }
-.aura-host.aura-pulse::before { opacity: 1; box-shadow: 0 0 16px 4px var(--look, var(--accent)); animation: aura-pulse 1.8s ease-in-out infinite; }
-.aura-host.aura-spin::before { opacity: 1; background: conic-gradient(var(--look, var(--accent)), transparent 28%, var(--look, var(--accent)) 50%, transparent 78%, var(--look, var(--accent))); animation: aura-spin 2.6s linear infinite; }
-.aura-host.aura-rainbow::before { opacity: 1; background: conic-gradient(#ef4444, #f59e0b, #84cc16, #06b6d4, #8b5cf6, #ec4899, #ef4444); animation: aura-spin 3.2s linear infinite; }
-@keyframes aura-spin { to { transform: rotate(360deg); } }
-@keyframes aura-pulse { 0%, 100% { opacity: .4; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.07); } }
-@media (prefers-reduced-motion: reduce) { .aura-host::before { animation: none !important; } }
 .profile-dlg.has-look { border-color: color-mix(in srgb, var(--look) 60%, var(--border)); }
 .profile-dlg.has-look .pf-name { color: var(--look); }
 .look-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
@@ -1436,11 +1426,6 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .look-sw svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
 .look-sw.brush { background: var(--card); border: 1px dashed var(--muted); color: var(--text); }
 .look-sw input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
-.aura-chip { display: flex; align-items: center; gap: 10px; height: 40px; min-height: 0; padding: 0 14px 0 10px; border-radius: 999px; }
-.aura-chip.on { border-color: var(--accent); background: var(--accent-soft); }
-.aura-chip .aura-host { width: 22px; height: 22px; }
-.aura-chip .aura-host::before { inset: -3px; }
-.aura-chip .dot { width: 22px; height: 22px; border-radius: 50%; background: var(--look, var(--accent)); }
 .sender[style] { font-weight: 600; }
 
 /* ---- now watching ---- */
@@ -1462,3 +1447,9 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .poll-edit { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
 .poll-edit .row { display: flex; gap: 6px; align-items: center; }
 .poll-edit input { flex: 1; }
+
+/* ---- the About picture sits where [picture] is in the text ---- */
+.bio-slot:empty { display: none; }
+.bio-slot img, .bio-slot video { display: block; max-width: 100%; max-height: 200px; border-radius: 10px; margin: 6px 0; }
+.bio-prev-row { display: flex; align-items: flex-start; gap: 10px; }
+.bio-place { height: 30px; min-height: 0; padding: 0 12px; font-size: 12px; }

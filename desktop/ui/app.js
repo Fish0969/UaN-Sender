@@ -1449,16 +1449,16 @@ function myWatching() {
   }
   return '';
 }
+// Where the About picture goes: this mark in the text (old versions show it as it is).
+const BIO_PIC = '[picture]';
 function openProfile(id) {
   const p = personInfo(id);
   if (!p) return;
   $('pfBanner').style.background = bannerStyle(p.banner, p.id);
   $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
-  const [lc, la] = (p.look || '').split('|');
   const col = lookColour(p.look);
   $('profileDlg').classList.toggle('has-look', !!col);
   if (col) $('profileDlg').style.setProperty('--look', col); else $('profileDlg').style.removeProperty('--look');
-  $('pfAvatar').className = 'aura-host' + (la ? ' aura-' + la : '');
   const w = watchInfo(p.watching);
   $('pfWatch').classList.toggle('hidden', !w);
   $('pfWatch').textContent = w ? '🎬 Watching ' + w.film + (w.with.length ? ' with ' + w.with.join(', ') : '') : '';
@@ -1489,12 +1489,18 @@ function openProfile(id) {
     panel.classList.remove('hidden');
   };
   $('pfAboutBox').classList.toggle('hidden', !p.bio && !p.me);
-  $('pfBio').replaceChildren(p.bio ? formatText(p.bio) : (p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : ''));
-  $('pfBio').classList.toggle('empty', !p.bio);
-  $('pfBioImg').replaceChildren();
+  const bio = p.bio || '';
+  const at = bio.indexOf(BIO_PIC);
+  const before = (at >= 0 ? bio.slice(0, at) : bio).replace(/\n$/, '');
+  const after = (at >= 0 ? bio.slice(at + BIO_PIC.length) : '').replace(/^\n/, '');
+  const slot = el('span', { class: 'bio-slot' });
+  const hasText = !!(before + after).trim();
+  $('pfBio').replaceChildren(...(hasText ? [formatText(before), slot, formatText(after)] : [p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : '', slot]));
+  $('pfBio').classList.toggle('empty', !hasText);
+  $('pfAboutBox').classList.toggle('hidden', !hasText && !p.me);
   invoke('bio_image', { id: p.id }).then((src) => {
     if (!src || $('pfName').textContent !== p.name) return;
-    $('pfBioImg').replaceChildren(bioMediaNode(src));
+    slot.replaceChildren(bioMediaNode(src));
     $('pfAboutBox').classList.remove('hidden');
   }).catch(() => {});
   const facts = [];
@@ -3398,18 +3404,33 @@ $('sRestore').addEventListener('click', async () => {
 let pendingBioImg = null; // null = unchanged, '' = removed, data URL = new
 let ownBioImg = '';
 const BIO_IMG_COST = 300; // a picture takes the place of this many characters
+let bioCaret = null; // where the cursor was last in the About box
+for (const ev of ['keyup', 'click', 'select', 'blur', 'input']) $('sBio').addEventListener(ev, () => { bioCaret = $('sBio').selectionStart; });
+function placeBioPic() {
+  const t = $('sBio');
+  let v = t.value;
+  let pos = bioCaret ?? v.length;
+  const old = v.indexOf(BIO_PIC);
+  if (old >= 0) { v = v.slice(0, old) + v.slice(old + BIO_PIC.length); if (pos > old) pos = Math.max(old, pos - BIO_PIC.length); }
+  pos = Math.min(pos, v.length);
+  t.value = v.slice(0, pos) + BIO_PIC + v.slice(pos);
+  bioCaret = pos + BIO_PIC.length;
+  updateBioCount();
+}
 const bioImgNow = () => (pendingBioImg === null ? ownBioImg || (S.me.profile?.bioimgV ? 'yes' : '') : pendingBioImg);
 const bioLimit = () => (bioImgNow() ? 500 - BIO_IMG_COST : 500);
 function updateBioCount() {
   const n = $('sBio').value.length, lim = bioLimit();
-  $('sBioCount').textContent = n + ' / ' + lim + (bioImgNow() ? ' · the picture takes the place of ' + BIO_IMG_COST + ' characters' : '');
+  $('sBioCount').textContent = n + ' / ' + lim + (bioImgNow() ? ' · the picture shows where ' + BIO_PIC + ' is in your text (it takes the place of ' + BIO_IMG_COST + ' characters)' : '');
   $('sBioCount').classList.toggle('over', n > lim);
 }
 function renderBioMedia() {
   const src = pendingBioImg === null ? ownBioImg : pendingBioImg;
   if (src) {
-    $('sBioMedia').replaceChildren(el('div', { class: 'bio-prev' }, bioMediaNode(src),
-      el('button', { type: 'button', class: 'bio-x', title: 'Remove the picture', onclick: () => { pendingBioImg = ''; renderBioMedia(); } }, svg('<path d="M6 6l12 12M18 6 6 18"/>'))));
+    $('sBioMedia').replaceChildren(el('div', { class: 'bio-prev-row' },
+      el('div', { class: 'bio-prev' }, bioMediaNode(src),
+        el('button', { type: 'button', class: 'bio-x', title: 'Remove the picture', onclick: () => { pendingBioImg = ''; $('sBio').value = $('sBio').value.split(BIO_PIC).join(''); renderBioMedia(); } }, svg('<path d="M6 6l12 12M18 6 6 18"/>'))),
+      el('button', { type: 'button', class: 'small bio-place', title: 'Click in your text first, then here', onmousedown: (e) => e.preventDefault(), onclick: placeBioPic }, 'Put it where the cursor is')));
   } else {
     $('sBioMedia').replaceChildren(el('button', { type: 'button', class: 'bio-add', onclick: () => { $('bioFile').value = ''; $('bioFile').click(); } },
       svg('<path d="M12 5v14M5 12h14"/>'), 'Picture or GIF'));
@@ -3544,6 +3565,7 @@ $('bioFile').addEventListener('change', async () => {
   toast('Getting the picture ready…');
   try {
     pendingBioImg = await prepareBioMedia(file);
+    if (!$('sBio').value.includes(BIO_PIC)) placeBioPic();
     renderBioMedia();
     toast('Ready. Save to show it on your profile.');
   } catch (e) {
@@ -4814,12 +4836,12 @@ $('bannerFile').addEventListener('change', async () => {
 });
 let pendingLook = null; // null = unchanged
 const LOOK_COLOURS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
-const AURAS = [['', 'None'], ['glow', 'Glow'], ['pulse', 'Pulse'], ['spin', 'Spin'], ['rainbow', 'Rainbow']];
 function renderLookPick() {
   const look = pendingLook === null ? (S.me.profile?.look || '') : pendingLook;
   const [c0, a0] = look.split('|');
-  const c = /^#[0-9a-fA-F]{6}$/.test(c0 || '') ? c0 : '', a = a0 || '';
-  const set = (nc, na) => { pendingLook = nc || na ? nc + '|' + na : ''; renderLookPick(); };
+  const c = /^#[0-9a-fA-F]{6}$/.test(c0 || '') ? c0 : '', a = '';
+  void a0;
+  const set = (nc) => { pendingLook = nc ? nc + '|' : ''; renderLookPick(); };
   const sw = (col) => {
     const b = el('button', { type: 'button', class: 'look-sw' + (col === c ? ' on' : '') + (col ? '' : ' none'), title: col || 'No colour', onclick: () => set(col, a) }, col ? null : svg('<path d="M6 6l12 12"/>'));
     if (col) b.style.background = col;
@@ -4830,17 +4852,6 @@ function renderLookPick() {
     el('input', { type: 'color', value: c || '#8b5cf6', onchange: (e) => set(e.target.value, a) }));
   if (custom) { brush.style.background = c; brush.style.color = '#fff'; }
   $('sLookColours').replaceChildren(sw(''), ...LOOK_COLOURS.map(sw), brush);
-  $('sLookAuras').replaceChildren(...AURAS.map(([id, name]) => {
-    const host = el('span', { class: 'aura-host' + (id ? ' aura-' + id : '') }, el('span', { class: 'dot' }));
-    if (c) host.style.setProperty('--look', c);
-    return el('button', { type: 'button', class: 'aura-chip' + (id === a ? ' on' : ''), onclick: () => set(c, id) }, host, name);
-  }));
-  // the big picture at the top shows it live
-  const btn = $('sAvatarBtn');
-  let wrap = btn.parentElement;
-  if (!wrap.classList.contains('aura-host')) { wrap = el('span', { class: 'aura-host' }); btn.before(wrap); wrap.append(btn); }
-  wrap.className = 'aura-host' + (a ? ' aura-' + a : '');
-  if (c) wrap.style.setProperty('--look', c); else wrap.style.removeProperty('--look');
 }
 function renderAvatarTiles() {
   const letterTile = el('button', { type: 'button', id: 'sLetterTile', class: 'letter-tile', title: 'Your first letter (the default)', onclick: () => { pendingAvatar = ''; renderAvatarPick(); } });
