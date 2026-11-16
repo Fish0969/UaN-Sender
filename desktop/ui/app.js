@@ -91,7 +91,7 @@ function hue(s) {
 }
 function avatar(name, { online = false, group = false, seed, src, mode, uid } = {}) {
   const a = el('div', { class: 'avatar' + (online ? ' online' : '') + (group ? ' group' : '') + (src ? ' has-img' : '') + (mode && mode !== 'online' ? ` mode-${mode}` : '') });
-  if (src) a.append(el('img', { src, alt: '' }));
+  if (src) a.append(bioMediaNode(src));
   else a.textContent = (name || '?')[0];
   a.style.setProperty('--h', hue(seed || name || '?'));
   if (uid) a.dataset.uid = uid;
@@ -514,7 +514,7 @@ function renderLists() {
     oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, friendMenu(f)); },
     title: f.status || '',
   }, avatar(f.name, { online: f.online, seed: f.id, src: f.avatar, mode: f.mode }),
-  rowText(f.name, f.status || (f.online ? (f.mode === 'away' ? 'Away' : f.mode === 'dnd' ? 'Do not disturb' : 'Online') : 'Offline'), f.lastAt,
+  rowText(f.name, f.status || (watchInfo(f.watching) ? '🎬 ' + watchInfo(f.watching).film : '') || (f.online ? (f.mode === 'away' ? 'Away' : f.mode === 'dnd' ? 'Do not disturb' : 'Online') : 'Offline'), f.lastAt,
     pinMark('f', f.id),
     S.mutes.has(f.id) ? svg(ICON.mute) : null,
     badge(f.id)))));
@@ -847,6 +847,7 @@ function blocksOf(list) {
   return out;
 }
 function renderMessages(keepPlace = false) {
+  $('pollBtn').classList.toggle('hidden', !groupOf(S.active));
   const box = $('msgs');
   const top = box.scrollTop;
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
@@ -952,7 +953,7 @@ function mentionsMe(text) {
 function senderOf(m) {
   const g = groupOf(m.chat);
   const p = (g && g.members.find((x) => x.id === m.sender)) || friendById(m.sender);
-  return { name: m.senderName || p?.name || '?', src: p?.avatar };
+  return { name: m.senderName || p?.name || '?', src: p?.avatar, look: p?.look };
 }
 // ---------- Reactions: one emoji per person per message ----------
 S.reacts = new Map(); // message id -> Map(person id -> emoji)
@@ -975,7 +976,8 @@ function reactsNode(m) {
   const mp = S.reacts.get(m.id);
   if (!mp || !mp.size) return null;
   const groups = new Map();
-  for (const [by, e] of mp) { if (!groups.has(e)) groups.set(e, []); groups.get(e).push(by); }
+  for (const [by, e] of mp) { if (e.startsWith('poll:')) continue; if (!groups.has(e)) groups.set(e, []); groups.get(e).push(by); }
+  if (!groups.size) return null;
   return el('div', { class: 'reacts' }, ...[...groups].map(([e, users]) => {
     const mine = users.includes(S.me.id);
     return el('button', { type: 'button', class: 'react-chip' + (mine ? ' mine' : ''), title: users.map(whoIs).join(', '), onclick: () => reactTo(m, mine ? '' : e) }, e, el('span', { text: String(users.length) }));
@@ -995,13 +997,40 @@ function reactPicker(btn, m) {
   setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
 }
 
+// A poll is a message like "📊 Question" + lines "• option" (readable in older UaN too).
+function parsePoll(text) {
+  if (!text || !text.startsWith('📊 ')) return null;
+  const lines = text.split('\n');
+  const q = lines[0].slice(3).trim();
+  const opts = lines.slice(1).filter((l) => l.startsWith('• ')).map((l) => l.slice(2).trim());
+  if (!q || opts.length < 2 || opts.length > 10 || opts.length !== lines.length - 1) return null;
+  return { q, opts };
+}
+function pollNode(m, poll) {
+  const votes = [...(S.reacts.get(m.id) || new Map())].filter(([, e]) => e.startsWith('poll:')).map(([by, e]) => [by, Number(e.slice(5))]).filter(([, i]) => i >= 0 && i < poll.opts.length);
+  const total = votes.length;
+  const mine = votes.find(([by]) => by === S.me.id)?.[1];
+  return el('div', { class: 'poll' },
+    el('div', { class: 'poll-head' }, svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'), 'Poll'),
+    el('div', { class: 'poll-q', text: poll.q }),
+    ...poll.opts.map((o, i) => {
+      const who = votes.filter(([, v]) => v === i).map(([by]) => by);
+      const pct = total ? Math.round((who.length / total) * 100) : 0;
+      const bar = el('span', { class: 'poll-bar' });
+      bar.style.width = pct + '%';
+      return el('button', { type: 'button', class: 'poll-opt' + (mine === i ? ' mine' : ''), title: who.length ? who.map(whoIs).join(', ') : 'No votes yet',
+        onclick: () => reactTo(m, mine === i ? '' : 'poll:' + i) },
+      bar, el('span', { class: 'poll-txt', text: o }), el('span', { class: 'poll-n', text: who.length ? pct + '% · ' + who.length : '' }));
+    }),
+    el('div', { class: 'poll-foot', text: total + (total === 1 ? ' vote' : ' votes') + ' · click to vote, click again to take it back' }));
+}
 function messageNode(m, run = true, block = null) {
   const items = block ? block.items : [m];
   const group = isGroup(m.chat);
   const quote = !block && m.reply ? el('button', { type: 'button', class: 'quote', title: 'Show the message', onclick: () => jumpTo(m.reply.id) },
     el('b', { text: m.reply.name }), m.reply.text || '') : null;
   const bubble = block ? null : m.locked ? el('div', { class: 'bubble locked-msg', text: 'Locked message. Unlock the channel to read it.' })
-    : m.text ? el('div', { class: 'bubble' }, formatText(m.text)) : null;
+    : m.text ? (parsePoll(m.text) ? pollNode(m, parsePoll(m.text)) : el('div', { class: 'bubble' }, formatText(m.text))) : null;
   const content = block ? (block.kind === 'sheet' ? sheetNode(block) : folderCard(block))
     : m.file ? fileCard(m.file, m.chat, m.thumb) : null;
   const acts = m.locked ? [] : [
@@ -1018,7 +1047,7 @@ function messageNode(m, run = true, block = null) {
   // Seen heads always sit right before the time; the actions are on the outer side.
   const meta = el('div', { class: 'meta' + (edited || pin ? ' keep-fixed' : '') + (seen ? ' keep-seen' : '') }, m.mine ? [del, ...acts, pin, edited, seen, time] : [seen, time, edited, pin, ...acts, del]);
   const theirsInGroup = group && !m.mine;
-  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
+  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
     + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
@@ -1380,7 +1409,7 @@ function bannerStyle(spec, seed) {
 function personInfo(id) {
   if (id === S.me.id) {
     const p = S.me.profile || {};
-    return { id, name: S.me.name, status: p.status || '', avatar: p.avatar, bio: p.bio || '', joined: p.joined, banner: p.banner || '', me: true };
+    return { id, name: S.me.name, status: p.status || '', avatar: p.avatar, bio: p.bio || '', joined: p.joined, banner: p.banner || '', look: p.look || '', watching: myWatching(), me: true };
   }
   const f = friendById(id);
   let m = null;
@@ -1388,7 +1417,7 @@ function personInfo(id) {
   const base = f || m;
   if (!base) return null;
   const alt = m || {};
-  return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, banner: base.banner || alt.banner || '', since: f?.since, online: base.online, friend: !!f };
+  return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, banner: base.banner || alt.banner || '', look: base.look || alt.look || '', watching: base.watching || alt.watching || '', since: f?.since, online: base.online, friend: !!f };
 }
 // A picture shows as a picture; a GIF that UaN made smaller is a short silent video that loops.
 function bioMediaNode(src) {
@@ -1399,11 +1428,40 @@ function bioMediaNode(src) {
   }
   return el('img', { src, alt: '' });
 }
+// "#rrggbb|aura" -> the colour (or '') ; what someone watches together right now
+const lookColour = (look) => { const c = (look || '').split('|')[0]; return /^#[0-9a-fA-F]{6}$/.test(c) ? c : ''; };
+function watchInfo(json) {
+  if (!json) return null;
+  try {
+    const w = JSON.parse(json);
+    if (!w?.film) return null;
+    return { film: String(w.film).replace(/\.[a-z0-9]{2,4}$/i, ''), with: Array.isArray(w.with) ? w.with.map(String).slice(0, 5) : [] };
+  } catch { return null; }
+}
+function myWatching() {
+  for (const p of S.parties.values()) {
+    if (!p || p.state === 'ended') continue;
+    const me = p.members.find((x) => x.id === S.me.id);
+    if (!me || me.left || !(me.joined || p.leader === S.me.id)) continue;
+    const film = (p.file?.name || '').split(/[\\/]/).pop();
+    const withs = p.members.filter((x) => x.id !== S.me.id && !x.left && (x.joined || x.id === p.leader)).map((x) => x.name).slice(0, 5);
+    return JSON.stringify({ film, with: withs });
+  }
+  return '';
+}
 function openProfile(id) {
   const p = personInfo(id);
   if (!p) return;
   $('pfBanner').style.background = bannerStyle(p.banner, p.id);
   $('pfAvatar').replaceChildren(avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online }));
+  const [lc, la] = (p.look || '').split('|');
+  const col = lookColour(p.look);
+  $('profileDlg').classList.toggle('has-look', !!col);
+  if (col) $('profileDlg').style.setProperty('--look', col); else $('profileDlg').style.removeProperty('--look');
+  $('pfAvatar').className = 'aura-host' + (la ? ' aura-' + la : '');
+  const w = watchInfo(p.watching);
+  $('pfWatch').classList.toggle('hidden', !w);
+  $('pfWatch').textContent = w ? '🎬 Watching ' + w.film + (w.with.length ? ' with ' + w.with.join(', ') : '') : '';
   $('pfName').textContent = p.name;
   $('pfStatus').textContent = p.status || '';
   $('pfStatus').classList.toggle('hidden', !p.status);
@@ -2030,6 +2088,34 @@ $('phonePhotos').addEventListener('change', () => {
   const files = [...$('phonePhotos').files];
   $('phonePhotos').value = '';
   if (files.length) sendPhoneFiles(files).catch(toast);
+});
+
+// ---------- Polls ----------
+function pollRow(value = '') {
+  const input = el('input', { maxlength: '80', placeholder: 'Option', value, autocomplete: 'off' });
+  const row = el('div', { class: 'row' }, input, iconBtn('x', 'Remove this option', () => { if ($('pollOpts').children.length > 2) row.remove(); }));
+  return row;
+}
+$('pollBtn').addEventListener('click', () => {
+  $('pollQ').value = '';
+  $('pollErr').textContent = '';
+  $('pollOpts').replaceChildren(pollRow(), pollRow());
+  $('pollDlg').showModal();
+  $('pollQ').focus();
+});
+$('pollAdd').addEventListener('click', () => { if ($('pollOpts').children.length < 10) { const r = pollRow(); $('pollOpts').append(r); r.querySelector('input').focus(); } });
+$('pollCancel').addEventListener('click', () => $('pollDlg').close());
+$('pollForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = $('pollQ').value.replace(/\s+/g, ' ').trim();
+  const opts = [...$('pollOpts').querySelectorAll('input')].map((i) => i.value.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!q) { $('pollErr').textContent = 'Write a question.'; return; }
+  if (opts.length < 2) { $('pollErr').textContent = 'Give at least two options.'; return; }
+  const text = '📊 ' + q + '\n' + opts.map((o) => '• ' + o).join('\n');
+  try {
+    await invoke('send_text', { chats: [S.active], text, reply: null });
+    $('pollDlg').close();
+  } catch (err) { $('pollErr').textContent = String(err); }
 });
 
 $('attachBtn').addEventListener('click', () => {
@@ -3129,7 +3215,7 @@ function renderAvatarPick() {
   const src = pendingAvatar === null ? S.me.profile?.avatar : pendingAvatar;
   btn.style.background = `hsl(${hue(S.me.id)} 45% 48%)`;
   const letter = ($('sName').value || S.me.name || '?')[0].toUpperCase();
-  btn.replaceChildren(src ? el('img', { src, alt: '' }) : letter);
+  btn.replaceChildren(src ? bioMediaNode(src) : letter);
   const lt = $('sLetterTile');
   if (lt) { lt.textContent = letter; lt.style.background = `hsl(${hue(S.me.id)} 45% 48%)`; }
 }
@@ -3239,6 +3325,8 @@ $('settingsBtn').addEventListener('click', async () => {
   renderAvatarTiles();
   pendingBanner = null;
   renderBannerTiles();
+  pendingLook = null;
+  renderLookPick();
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
@@ -3367,15 +3455,18 @@ function webmFile(chunks, w, h, durMs) {
   const cluster = elm([0x1f, 0x43, 0xb6, 0x75], cat([elm([0xe7], uint(0)), ...blocks]));
   return cat([header, elm([0x18, 0x53, 0x80, 0x67], cat([info, tracks, cluster]))]);
 }
-async function animToWebm(dec, frames) {
+async function animToWebm(dec, frames, opts = {}) {
   if (!('VideoEncoder' in window)) throw new Error('no encoder');
   const first = await dec.decode({ frameIndex: 0 });
   const w0 = first.image.displayWidth, h0 = first.image.displayHeight;
   first.image.close();
-  const tries = [[480, 360, 700000], [360, 270, 380000], [280, 210, 200000]];
+  const tries = opts.tries || [[480, 360, 700000], [360, 270, 380000], [280, 210, 200000]];
+  const limit = opts.max || BIO_MAX, maxUs = (opts.maxMs || 8000) * 1000;
+  const side0 = Math.min(w0, h0), sx = opts.square ? (w0 - side0) / 2 : 0, sy = opts.square ? (h0 - side0) / 2 : 0;
+  const sw = opts.square ? side0 : w0, sh = opts.square ? side0 : h0;
   for (const [mw, mh, bps] of tries) {
-    const sc = Math.min(1, mw / w0, mh / h0);
-    const w = Math.max(2, Math.round(w0 * sc / 2) * 2), h = Math.max(2, Math.round(h0 * sc / 2) * 2);
+    const sc = Math.min(1, mw / sw, mh / sh);
+    const w = Math.max(2, Math.round(sw * sc / 2) * 2), h = Math.max(2, Math.round(sh * sc / 2) * 2);
     const cfg = { codec: 'vp8', width: w, height: h, bitrate: bps, framerate: 25 };
     if (!(await VideoEncoder.isConfigSupported(cfg)).supported) throw new Error('no encoder');
     const out = [];
@@ -3388,11 +3479,11 @@ async function animToWebm(dec, frames) {
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext('2d');
     let t = 0; // microseconds
-    for (let i = 0; i < frames && t < 8000000; i++) {
+    for (let i = 0; i < frames && t < maxUs; i++) {
       const { image } = await dec.decode({ frameIndex: i });
       const d = Math.max(20000, image.duration || 100000);
       ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(image, 0, 0, w, h);
+      ctx.drawImage(image, sx, sy, sw, sh, 0, 0, w, h);
       image.close();
       const vf = new VideoFrame(canvas, { timestamp: t, duration: d });
       enc.encode(vf, { keyFrame: i % 30 === 0 });
@@ -3403,9 +3494,23 @@ async function animToWebm(dec, frames) {
     enc.close();
     if (failed || !out.length) throw new Error('no encoder');
     const url = await fileToDataUrl(new Blob([webmFile(out, w, h, t / 1000)], { type: 'video/webm' }));
-    if (url.length <= BIO_MAX) return url;
+    if (url.length <= limit) return url;
   }
   throw new Error('too big');
+}
+async function movingAvatar(file) {
+  if (!/gif|webp|png/.test(file.type) || !('ImageDecoder' in window)) return null;
+  const dec = new ImageDecoder({ data: await file.arrayBuffer(), type: file.type });
+  try {
+    await dec.tracks.ready;
+    await dec.completed;
+    const frames = dec.tracks.selectedTrack?.frameCount || 1;
+    if (frames < 2) return null;
+    const asIs = await fileToDataUrl(file);
+    if (asIs.length <= 190000) return asIs;
+    toast('Making the GIF small enough…');
+    return await animToWebm(dec, frames, { square: true, tries: [[160, 160, 170000], [128, 128, 110000], [96, 96, 70000]], max: 195000, maxMs: 6000 });
+  } finally { try { dec.close(); } catch {} }
 }
 async function prepareBioMedia(file) {
   if (!/^image\//.test(file.type)) throw new Error('not a picture');
@@ -3452,8 +3557,8 @@ $('settingsForm').addEventListener('submit', async (e) => {
     const status = $('sStatus').value.trim();
     const bio = $('sBio').value.trim();
     if (bio.length > bioLimit()) { $('sError').textContent = 'Your About is too long: ' + bioLimit() + ' characters at most' + (bioImgNow() ? ' (the picture takes the place of ' + BIO_IMG_COST + ').' : '.'); return; }
-    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null || pendingBanner !== null || pendingBioImg !== null) {
-      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio, banner: pendingBanner, bioimg: pendingBioImg });
+    if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null || pendingBanner !== null || pendingBioImg !== null || pendingLook !== null) {
+      await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio, banner: pendingBanner, bioimg: pendingBioImg, look: pendingLook });
     }
     if ($('sMailbox').value.trim() !== (S.me.mailbox || '')) {
       await invoke('set_mailbox', { url: $('sMailbox').value });
@@ -4019,6 +4124,14 @@ $('sName').addEventListener('input', renderAvatarPick);
 $('avatarFile').addEventListener('change', async () => {
   const file = $('avatarFile').files[0];
   if (!file) return;
+  try {
+    // A GIF stays a GIF when it is small; a big one becomes a short square clip (it still moves).
+    const moving = await movingAvatar(file);
+    if (moving) { pendingAvatar = moving; renderAvatarPick(); return; }
+  } catch (e) {
+    $('sError').textContent = e?.message === 'too big' ? 'That GIF is too big even after shrinking. Try a shorter one.' : '';
+    if (e?.message === 'too big') return;
+  }
   try {
     // Crop to a square and shrink to 160 px, so it is small enough to send to friends.
     const img = await createImageBitmap(file);
@@ -4699,6 +4812,36 @@ $('bannerFile').addEventListener('change', async () => {
     toast('That file isn’t a picture UaN can read.');
   }
 });
+let pendingLook = null; // null = unchanged
+const LOOK_COLOURS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+const AURAS = [['', 'None'], ['glow', 'Glow'], ['pulse', 'Pulse'], ['spin', 'Spin'], ['rainbow', 'Rainbow']];
+function renderLookPick() {
+  const look = pendingLook === null ? (S.me.profile?.look || '') : pendingLook;
+  const [c0, a0] = look.split('|');
+  const c = /^#[0-9a-fA-F]{6}$/.test(c0 || '') ? c0 : '', a = a0 || '';
+  const set = (nc, na) => { pendingLook = nc || na ? nc + '|' + na : ''; renderLookPick(); };
+  const sw = (col) => {
+    const b = el('button', { type: 'button', class: 'look-sw' + (col === c ? ' on' : '') + (col ? '' : ' none'), title: col || 'No colour', onclick: () => set(col, a) }, col ? null : svg('<path d="M6 6l12 12"/>'));
+    if (col) b.style.background = col;
+    return b;
+  };
+  const custom = c && !LOOK_COLOURS.includes(c);
+  const brush = el('label', { class: 'look-sw brush' + (custom ? ' on' : ''), title: 'Any colour' }, svg('<path d="M4 20c3 0 5-1 5-3.5L18.5 7a2.1 2.1 0 0 0-3-3L6 13.5C4 14 4 17 4 20Z"/><path d="m14 6 4 4"/>'),
+    el('input', { type: 'color', value: c || '#8b5cf6', onchange: (e) => set(e.target.value, a) }));
+  if (custom) { brush.style.background = c; brush.style.color = '#fff'; }
+  $('sLookColours').replaceChildren(sw(''), ...LOOK_COLOURS.map(sw), brush);
+  $('sLookAuras').replaceChildren(...AURAS.map(([id, name]) => {
+    const host = el('span', { class: 'aura-host' + (id ? ' aura-' + id : '') }, el('span', { class: 'dot' }));
+    if (c) host.style.setProperty('--look', c);
+    return el('button', { type: 'button', class: 'aura-chip' + (id === a ? ' on' : ''), onclick: () => set(c, id) }, host, name);
+  }));
+  // the big picture at the top shows it live
+  const btn = $('sAvatarBtn');
+  let wrap = btn.parentElement;
+  if (!wrap.classList.contains('aura-host')) { wrap = el('span', { class: 'aura-host' }); btn.before(wrap); wrap.append(btn); }
+  wrap.className = 'aura-host' + (a ? ' aura-' + a : '');
+  if (c) wrap.style.setProperty('--look', c); else wrap.style.removeProperty('--look');
+}
 function renderAvatarTiles() {
   const letterTile = el('button', { type: 'button', id: 'sLetterTile', class: 'letter-tile', title: 'Your first letter (the default)', onclick: () => { pendingAvatar = ''; renderAvatarPick(); } });
   $('sAvatars').replaceChildren(letterTile, ...AVATARS.map((a) => {

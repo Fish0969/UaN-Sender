@@ -1412,3 +1412,53 @@ html[data-ui="soft"] .titlebar { border-bottom: 0; box-shadow: 0 6px 18px rgba(0
 .bio-prev .bio-x { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; }
 .bio-prev .bio-x svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; }
 .note.over { color: var(--danger, #ff6b6b); }
+
+/* ---- moving profile pictures ---- */
+.avatar video, .avatar-pick video { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; display: block; }
+
+/* ---- profile colour and aura ---- */
+.aura-host { position: relative; display: inline-grid; place-items: center; border-radius: 50%; flex: none; }
+.aura-host::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; pointer-events: none; opacity: 0; z-index: 0; }
+.aura-host > * { position: relative; z-index: 1; }
+.aura-host.aura-glow::before { opacity: 1; box-shadow: 0 0 18px 5px var(--look, var(--accent)); }
+.aura-host.aura-pulse::before { opacity: 1; box-shadow: 0 0 16px 4px var(--look, var(--accent)); animation: aura-pulse 1.8s ease-in-out infinite; }
+.aura-host.aura-spin::before { opacity: 1; background: conic-gradient(var(--look, var(--accent)), transparent 28%, var(--look, var(--accent)) 50%, transparent 78%, var(--look, var(--accent))); animation: aura-spin 2.6s linear infinite; }
+.aura-host.aura-rainbow::before { opacity: 1; background: conic-gradient(#ef4444, #f59e0b, #84cc16, #06b6d4, #8b5cf6, #ec4899, #ef4444); animation: aura-spin 3.2s linear infinite; }
+@keyframes aura-spin { to { transform: rotate(360deg); } }
+@keyframes aura-pulse { 0%, 100% { opacity: .4; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.07); } }
+@media (prefers-reduced-motion: reduce) { .aura-host::before { animation: none !important; } }
+.profile-dlg.has-look { border-color: color-mix(in srgb, var(--look) 60%, var(--border)); }
+.profile-dlg.has-look .pf-name { color: var(--look); }
+.look-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.look-sw { position: relative; width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; display: grid; place-items: center; overflow: hidden; }
+.look-sw.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--accent); }
+.look-sw.none { background: var(--card); border-color: var(--border); color: var(--muted); }
+.look-sw svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+.look-sw.brush { background: var(--card); border: 1px dashed var(--muted); color: var(--text); }
+.look-sw input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
+.aura-chip { display: flex; align-items: center; gap: 10px; height: 40px; min-height: 0; padding: 0 14px 0 10px; border-radius: 999px; }
+.aura-chip.on { border-color: var(--accent); background: var(--accent-soft); }
+.aura-chip .aura-host { width: 22px; height: 22px; }
+.aura-chip .aura-host::before { inset: -3px; }
+.aura-chip .dot { width: 22px; height: 22px; border-radius: 50%; background: var(--look, var(--accent)); }
+.sender[style] { font-weight: 600; }
+
+/* ---- now watching ---- */
+.pf-watch { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 3px 11px; border-radius: 999px; font-size: 12px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
+
+/* ---- polls ---- */
+.poll { min-width: 260px; max-width: 380px; padding: 12px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); }
+.poll-head { display: flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.poll-head svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; }
+.poll-q { margin: 6px 0 10px; font-weight: 600; font-size: 15px; word-break: break-word; }
+.poll-opt { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; margin-top: 6px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--border); background: transparent; overflow: hidden; text-align: left; }
+.poll-opt:hover { border-color: var(--accent); }
+.poll-opt.mine { border-color: var(--accent); }
+.poll-bar { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 22%, transparent); transition: width .3s; }
+.poll-txt { position: relative; flex: 1; word-break: break-word; }
+.poll-n { position: relative; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.poll-opt.mine .poll-txt::after { content: " ✓"; color: var(--accent); font-weight: 700; }
+.poll-foot { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.poll-edit { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+.poll-edit .row { display: flex; gap: 6px; align-items: center; }
+.poll-edit input { flex: 1; }

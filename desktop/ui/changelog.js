@@ -1,5 +1,11 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.22', items: [
+    'Moving profile pictures: pick a GIF. A small one stays as it is; a big one becomes a short square clip, so it still moves.',
+    'Your colour and aura (Settings → Profile): the colour tints your name and profile card, the aura (Glow, Pulse, Spin, Rainbow) moves around your picture.',
+    'Now watching: while someone watches together, their profile (and the friends list) shows the film and who they watch it with.',
+    'Polls in groups: the chart button next to the paper clip. One vote per person, live results; click again to take your vote back.',
+  ] },
   { v: '1.9.21', items: [
     'Your About can have bold, italic, underlined and struck-through text (buttons above the box).',
     'Put one picture or GIF in your About. UaN makes it small enough by itself (a big GIF becomes a short looping clip); it takes the place of 300 characters.',

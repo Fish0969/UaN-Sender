@@ -36,6 +36,9 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
 - **Search.** The button next to the pins searches the open chat (Ctrl+F too) in a panel on the right: filter by type, person and time; each result shows who wrote it. The field above the lists (Ctrl+K) finds a group or a friend.
 - **Delete quickly.** Shift+Delete on a message, or on its open right-click menu, deletes it for everyone at once.
 - **About with style.** Bold, italic, underline and strike-through in your About, plus one picture or GIF (UaN shrinks it by itself). A long About scrolls.
+- **Moving pictures, colour and aura.** A GIF can be your profile picture (UaN shrinks a big one). Pick a colour for your name and card, and an aura around your picture.
+- **Now watching.** While a friend watches together, their profile and the friends list show the film and who is with them.
+- **Polls.** In a group, the chart button makes a poll; everyone votes once and sees the results live.
 - **Profiles.** Write an *About* text in *Settings → Profile*. Click anyone's picture or name (or your own, to see how others see you) to see their profile: picture, status, About and since when you are friends. In a private chat, click the name at the top for the profile and right-click it for Mute, Clear and Remove friend.
 - **Sound tracks of a film.** A film (mkv) with more than one language gets an **Audio** button in the player; the default track plays as usual, another one is decoded by a silent VLC.
 - **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)

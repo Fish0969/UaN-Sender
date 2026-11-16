@@ -287,6 +287,9 @@ pub enum Req {
         /// online | away | dnd
         #[serde(default)]
         mode: String,
+        /// What the sender is watching together right now ({"film", "with"} as JSON, or empty).
+        #[serde(default)]
+        watching: String,
         /// The sender's other devices (a phone signed in to the same account).
         #[serde(default)]
         devs: Vec<DevCert>,
@@ -316,6 +319,8 @@ pub enum Req {
         bio: Option<String>,
         #[serde(default)]
         banner: Option<String>,
+        #[serde(default)]
+        look: Option<String>,
         pv: i64,
     },
     /// A phone asks the PC for a copy of the account (with proof that it knows the pairing code).
@@ -734,6 +739,9 @@ pub struct Node {
     flushing: Mutex<HashSet<String>>,
     /// Each peer's presence mode (online | away | dnd).
     modes: Mutex<HashMap<String, String>>,
+    /// What each peer is watching together right now (JSON), and what we last told them about ourselves.
+    watching: Mutex<HashMap<String, String>>,
+    watching_told: Mutex<String>,
     /// Protocol version of each peer, learned from pings.
     protos: Mutex<HashMap<String, u32>>,
     /// The last "seen" mark each peer got from us, per chat (so it is sent once, and again after they were offline).
@@ -794,6 +802,7 @@ impl Node {
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN banner TEXT", []);
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN bioimg TEXT", []);
         let _ = db.execute("ALTER TABLE profiles ADD COLUMN bioimg_v INTEGER", []);
+        let _ = db.execute("ALTER TABLE profiles ADD COLUMN look TEXT", []);
         let _ = db.execute("DELETE FROM kv WHERE k = 'badge'", []);
         // When this account began: the earliest thing we know of (older versions never wrote it down).
         let _ = db.execute(
@@ -863,6 +872,8 @@ impl Node {
             flushing: Mutex::new(HashSet::new()),
             protos: Mutex::new(HashMap::new()),
             modes: Mutex::new(HashMap::new()),
+            watching: Mutex::new(HashMap::new()),
+            watching_told: Mutex::new(String::new()),
             reads_sent: Mutex::new(HashMap::new()),
             transfers: Mutex::new(transfers),
             running: Mutex::new(HashMap::new()),
@@ -1112,12 +1123,15 @@ impl Node {
                 self.clear_local(&chat_id(&group_id, channel.as_deref()), before);
                 Ok(ok)
             }
-            Req::MyProfile { name, status, avatar, bio, banner, pv } => {
+            Req::MyProfile { name, status, avatar, bio, banner, look, pv } => {
                 if pv > self.my_pv() && !name.trim().is_empty() {
                     self.set_kv("name", &name.chars().take(32).collect::<String>());
                     self.set_kv("status", &status.chars().take(60).collect::<String>());
                     if let Some(b) = bio {
                         self.set_kv("bio", &b.chars().take(500).collect::<String>());
+                    }
+                    if let Some(l) = look {
+                        self.set_kv("look", &clean_look(&l));
                     }
                     if let Some(b) = banner {
                         match clean_banner(&b) {
@@ -1127,7 +1141,7 @@ impl Node {
                             }
                         }
                     }
-                    match avatar.filter(|a| a.starts_with("data:image/") && a.len() <= 200_000) {
+                    match avatar.filter(|a| is_pic(a) && a.len() <= 200_000) {
                         Some(a) => self.set_kv("avatar", &a),
                         None => {
                             let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'avatar'", []);
@@ -1336,7 +1350,7 @@ impl Node {
     }
 
     pub fn my_profile(&self) -> Value {
-        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "bioimgV": self.kv("bioimg_v").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
+        json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "look": self.kv("look").unwrap_or_default(), "bioimgV": self.kv("bioimg_v").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
     }
 
     fn my_pv(&self) -> i64 {
@@ -1344,15 +1358,15 @@ impl Node {
     }
 
     fn ping_req(&self) -> Req {
-        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO, mode: self.my_mode(), devs: self.my_certs() }
+        Req::Ping { name: self.my_name(), status: self.kv("status").unwrap_or_default(), pv: self.my_pv(), proto: PROTO, mode: self.my_mode(), watching: self.my_watching(), devs: self.my_certs() }
     }
 
     pub fn set_name(self: &Arc<Self>, name: &str) -> Result<(), String> {
-        self.set_profile(name, None, None, None, None, None)
+        self.set_profile(name, None, None, None, None, None, None)
     }
 
     /// Name, status line ("Gaming 🎮") and profile picture (a small data: URL made by the window).
-    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>, banner: Option<&str>, bioimg: Option<&str>) -> Result<(), String> {
+    pub fn set_profile(self: &Arc<Self>, name: &str, status: Option<&str>, avatar: Option<&str>, bio: Option<&str>, banner: Option<&str>, bioimg: Option<&str>, look: Option<&str>) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 32 {
             return Err("Pick a name of 1–32 characters.".into());
@@ -1365,6 +1379,9 @@ impl Node {
         if let Some(b) = bio {
             let b: String = b.trim().chars().take(500).collect();
             self.set_kv("bio", &b);
+        }
+        if let Some(l) = look {
+            self.set_kv("look", &clean_look(l));
         }
         if let Some(b) = bioimg {
             if b.is_empty() {
@@ -1391,14 +1408,14 @@ impl Node {
             if a.is_empty() {
                 let _ = self.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'avatar'", []);
             } else {
-                if !a.starts_with("data:image/") || a.len() > 200_000 {
+                if !is_pic(a) || a.len() > 200_000 {
                     return Err("That picture is too big.".into());
                 }
                 self.set_kv("avatar", a);
             }
         }
         self.set_kv("pv", &now().to_string());
-        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), bio: self.kv("bio"), banner: Some(self.kv("banner").unwrap_or_default()), pv: self.my_pv() });
+        self.mirror(&self.me_s.clone(), "", &Req::MyProfile { name: name.to_string(), status: self.kv("status").unwrap_or_default(), avatar: self.kv("avatar"), bio: self.kv("bio"), banner: Some(self.kv("banner").unwrap_or_default()), look: Some(self.kv("look").unwrap_or_default()), pv: self.my_pv() });
         // Let everyone know.
         let req = self.ping_req();
         for p in self.known_peers() {
@@ -1435,14 +1452,15 @@ impl Node {
         let peer = peer.to_string();
         tauri::async_runtime::spawn(async move {
             if let Ok(v) = me.request(&peer, &Req::Profile).await {
-                let avatar = v["avatar"].as_str().filter(|a| a.starts_with("data:image/") && a.len() <= 200_000);
+                let avatar = v["avatar"].as_str().filter(|a| is_pic(a) && a.len() <= 200_000);
                 let bio: Option<String> = v["bio"].as_str().map(|b| b.chars().take(500).collect());
                 let joined = v["joined"].as_i64();
                 let banner = v["banner"].as_str().and_then(clean_banner);
+                let look = v["look"].as_str().map(clean_look);
                 let _ = me.db.lock().unwrap().execute(
-                    "INSERT INTO profiles (id, status, avatar, pv, bio, joined, banner) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, avatar = excluded.avatar, pv = excluded.pv, bio = COALESCE(excluded.bio, bio), joined = COALESCE(excluded.joined, joined), banner = excluded.banner",
-                    params![peer, v["status"].as_str().unwrap_or(""), avatar, v["pv"].as_i64().unwrap_or(pv), bio, joined, banner],
+                    "INSERT INTO profiles (id, status, avatar, pv, bio, joined, banner, look) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, avatar = excluded.avatar, pv = excluded.pv, bio = COALESCE(excluded.bio, bio), joined = COALESCE(excluded.joined, joined), banner = excluded.banner, look = excluded.look",
+                    params![peer, v["status"].as_str().unwrap_or(""), avatar, v["pv"].as_i64().unwrap_or(pv), bio, joined, banner, look],
                 );
                 if let Some(n) = v["name"].as_str() {
                     me.update_name(&peer, n);
@@ -2148,6 +2166,9 @@ impl Node {
                 let me = self.clone();
                 tauri::async_runtime::spawn(async move { me.mailbox_poll().await });
             }
+            if tick % 3 == 1 {
+                self.tell_watching();
+            }
             if tick % 60 == 2 {
                 // Ping friends and group members (each of their devices) to show who is online,
                 // and our own other devices.
@@ -2258,13 +2279,14 @@ impl Node {
                 Req::BioImage => Ok(json!({ "ok": true, "img": self.kv("bioimg") })),
                 Req::Profile => {
                     let p = self.my_profile();
-                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
+                    Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "look": p["look"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
                 }
                 _ => Err("Not allowed.".into()),
             };
         }
         match req {
-            Req::Ping { name, status, pv, proto, mode, devs } => {
+            Req::Ping { name, status, pv, proto, mode, watching, devs } => {
+                self.note_watching(peer, &watching);
                 for d in devs.iter().take(8) {
                     self.learn_dev(peer, &d.id, &d.cert, &d.name);
                 }
@@ -2292,7 +2314,7 @@ impl Node {
                     return Err("Not allowed.".into());
                 }
                 let p = self.my_profile();
-                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
+                Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "look": p["look"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
             }
             Req::FriendRequest { name } => {
                 match self.contact_status(peer).as_deref() {
@@ -3002,17 +3024,17 @@ impl Node {
         let my_mode = self.my_mode(); // (reads the database, so before it is locked below)
         let db = self.db.lock().unwrap();
         let mut stmt = db
-            .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status, p.bio, p.joined, c.created_at, p.banner FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
+            .prepare("SELECT c.id, c.name, c.status, (SELECT MAX(ts) FROM messages WHERE chat = c.id), p.avatar, p.status, p.bio, p.joined, c.created_at, p.banner, p.look FROM contacts c LEFT JOIN profiles p ON p.id = c.id ORDER BY c.name")
             .unwrap();
         #[allow(clippy::type_complexity)]
-        let rows: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<i64>, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)))
+        let rows: Vec<(String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?)))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
         let (mut friends, mut incoming, mut outgoing) = (vec![], vec![], vec![]);
-        for (id, name, status, last, avatar, mood, bio, joined, since, banner) in rows {
-            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "since": since, "banner": banner });
+        for (id, name, status, last, avatar, mood, bio, joined, since, banner, look) in rows {
+            let item = json!({ "id": id, "name": name, "online": self.is_online(&id), "mode": self.mode_of(&id), "lastAt": last, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "since": since, "banner": banner, "look": look.unwrap_or_default(), "watching": self.watching_of(&id) });
             match status.as_str() {
                 "friend" => friends.push(item),
                 "incoming" => incoming.push(item),
@@ -3044,13 +3066,13 @@ impl Node {
                 })
                 .collect();
             let mut ms = db
-                .prepare("SELECT m.member_id, m.name, p.avatar, p.status, p.bio, p.joined, p.banner FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
+                .prepare("SELECT m.member_id, m.name, p.avatar, p.status, p.bio, p.joined, p.banner, p.look FROM group_members m LEFT JOIN profiles p ON p.id = m.member_id WHERE m.group_id = ?1 ORDER BY m.name")
                 .unwrap();
             let members: Vec<Value> = ms
-                .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<i64>>(5)?, r.get::<_, Option<String>>(6)?)))
+                .query_map([&id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<i64>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, Option<String>>(7)?)))
                 .unwrap()
                 .filter_map(Result::ok)
-                .map(|(mid, mname, avatar, mood, bio, joined, banner)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "banner": banner }))
+                .map(|(mid, mname, avatar, mood, bio, joined, banner, look)| json!({ "id": mid, "name": mname, "online": mid == self.me_s || self.is_online(&mid), "mode": if mid == self.me_s { my_mode.clone() } else { self.mode_of(&mid) }, "avatar": avatar, "status": mood.unwrap_or_default(), "bio": bio.unwrap_or_default(), "joined": joined, "banner": banner, "look": look.unwrap_or_default(), "watching": self.watching_of(&mid) }))
                 .collect();
             groups.push(json!({ "id": id, "name": name, "owner": owner, "admins": admins, "avatar": gavatar, "members": members, "lastAt": last, "channels": channels }));
         }
@@ -3212,6 +3234,63 @@ impl Node {
         let before = self.modes.lock().unwrap().insert(peer.to_string(), mode.to_string());
         if before.as_deref() != Some(mode) {
             self.emit("presence", json!({ "id": peer, "online": self.is_online(peer), "mode": mode }));
+        }
+    }
+
+    /// What we are watching together right now, for our friends' profile cards.
+    fn my_watching(&self) -> String {
+        let parties = self.parties.lock().unwrap();
+        for p in parties.values() {
+            if p.state == "ended" {
+                continue;
+            }
+            let in_it = p.members.iter().any(|m| m.id == self.me_s && !m.left && (m.joined || p.leader == self.me_s));
+            if !in_it {
+                continue;
+            }
+            let film = p.file.name.rsplit(['/', '\\']).next().unwrap_or(&p.file.name).chars().take(120).collect::<String>();
+            let with: Vec<String> = p.members.iter().filter(|m| m.id != self.me_s && !m.left && (m.joined || m.id == p.leader)).map(|m| m.name.chars().take(32).collect()).take(5).collect();
+            return json!({ "film": film, "with": with }).to_string();
+        }
+        String::new()
+    }
+
+    fn note_watching(&self, peer: &str, w: &str) {
+        let w: String = if w.len() <= 600 && (w.is_empty() || w.starts_with('{')) { w.to_string() } else { String::new() };
+        let before = self.watching.lock().unwrap().insert(peer.to_string(), w.clone());
+        if before.unwrap_or_default() != w {
+            self.emit("contacts", Value::Null);
+        }
+    }
+
+    pub fn watching_of(&self, peer: &str) -> String {
+        if peer == self.me_s {
+            return self.my_watching();
+        }
+        if !self.is_online(peer) {
+            return String::new();
+        }
+        self.watching.lock().unwrap().get(peer).cloned().unwrap_or_default()
+    }
+
+    /// When what we watch changes, tell the friends who are online at once (not only at the next ping).
+    fn tell_watching(self: &Arc<Self>) {
+        let now_w = self.my_watching();
+        {
+            let mut told = self.watching_told.lock().unwrap();
+            if *told == now_w {
+                return;
+            }
+            *told = now_w;
+        }
+        let req = self.ping_req();
+        for p in self.known_peers() {
+            if self.is_online(&p) {
+                let (me, req) = (self.clone(), req.clone());
+                tauri::async_runtime::spawn(async move {
+                    let _ = me.request_all(&p, &req).await;
+                });
+            }
         }
     }
 
@@ -5632,4 +5711,17 @@ fn mentions_everyone(text: &str) -> bool {
         from = end;
     }
     false
+}
+
+/// A profile picture: a still picture, a GIF, or a short clip UaN made from a big GIF.
+fn is_pic(a: &str) -> bool {
+    a.starts_with("data:image/") || a.starts_with("data:video/webm")
+}
+
+/// A profile's colour and aura: "#rrggbb|aura" (either part may be empty).
+fn clean_look(l: &str) -> String {
+    let (c, a) = l.split_once('|').unwrap_or((l, ""));
+    let c = if c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit()) { c } else { "" };
+    let a = if ["glow", "spin", "rainbow", "pulse"].contains(&a) { a } else { "" };
+    if c.is_empty() && a.is_empty() { String::new() } else { format!("{c}|{a}") }
 }
