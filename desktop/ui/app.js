@@ -2056,8 +2056,8 @@ function onMessage(m) {
       const prev = list[list.length - 2];
       const day = dayFmt.format(m.ts);
       if (folderOf(m) || isMediaOnly(m)) {
-        // It may join the folder or photo grid above it.
-        renderMessages(!(near || m.mine));
+        // It may join the folder or photo grid above it. (Drawn once for a burst: a folder brings thousands at once.)
+        renderMessagesSoon(!(near || m.mine));
       } else {
         box.querySelector('.chat-empty')?.remove();
         if (!prev || dayFmt.format(prev.ts) !== day) box.append(el('div', { class: 'day', text: day }));
@@ -2067,12 +2067,23 @@ function onMessage(m) {
         box.append(messageNode(m, run));
         if (near || m.mine) box.scrollTop = box.scrollHeight;
       }
-      markRead();
+      soon('read', markRead);
     }
   } else if (!m.mine) {
     S.unread.set(m.chat, (S.unread.get(m.chat) || 0) + 1);
   }
-  renderLists();
+  soon('lists', renderLists);
+}
+// Runs fn once a little later, however many times it is asked for meanwhile.
+const soonTimers = new Map();
+function soon(key, fn, ms = 120) {
+  if (soonTimers.has(key)) return;
+  soonTimers.set(key, setTimeout(() => { soonTimers.delete(key); fn(); }, ms));
+}
+let soonKeep = true;
+function renderMessagesSoon(keep) {
+  soonKeep = soonKeep && keep;
+  soon('msgs', () => { const k = soonKeep; soonKeep = true; renderMessages(k); });
 }
 
 $('composer').addEventListener('submit', async (e) => {
@@ -2172,29 +2183,7 @@ function wsRender() {
       try { const r = await invoke('ws_act', { what: 'like', id: t.id, on: !t.liked }); t.liked = !t.liked; t.likes = r.likes; wsRender(); } catch (e) { toast(e); like.disabled = false; }
     });
     // Favourite: the theme is saved on this PC among your themes (Settings → Themes), to pick any time.
-    const fav = customThemes.find((c) => c.ws === t.id);
-    const use = el('button', { type: 'button', class: 'small ws-fav' + (fav ? ' on' : ' accent'), title: fav ? 'Take it out of your themes' : 'Save it among your themes' },
-      svg('<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>'), el('span', { text: fav ? 'Favourited' : 'Favourite' }));
-    use.addEventListener('click', async () => {
-      use.disabled = true;
-      if (fav) {
-        try {
-          await invoke('theme_remove', { id: fav.id });
-          if (theme.mode === 'custom:' + fav.id) setTheme('dark');
-          await loadCustomThemes();
-          toast('“' + t.name + '” is not one of your themes any more.');
-        } catch (e) { toast(e); }
-        wsRender();
-        return;
-      }
-      use.lastChild.textContent = 'Saving…';
-      try {
-        await invoke('ws_install', { id: t.id, name: t.name, author: t.author, ext: t.ext, base: t.base, accent: t.accent || null });
-        await loadCustomThemes();
-        toast('“' + t.name + '” is in your themes now: pick it in Settings → Themes.');
-      } catch (e) { toast(e); }
-      wsRender();
-    });
+    const use = wsFavButton(t, wsRender);
     const more = el('button', { type: 'button', class: 'icon small', title: 'More' }, svg('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'));
     more.addEventListener('click', (e) => {
       const r = more.getBoundingClientRect();
@@ -2215,6 +2204,63 @@ function wsRender() {
       el('div', { class: 'ws-foot' }, like, more, use));
   }));
 }
+// Favourite: the theme is saved on this PC among your themes (Settings → Themes); again, and it is taken out.
+const STAR = '<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>';
+const wsFavOf = (t) => customThemes.find((c) => c.ws === t.id);
+async function wsToggleFav(t) {
+  const fav = wsFavOf(t);
+  try {
+    if (fav) {
+      await invoke('theme_remove', { id: fav.id });
+      if (theme.mode === 'custom:' + fav.id) setTheme('dark');
+      await loadCustomThemes();
+      toast('“' + t.name + '” is not one of your themes any more.');
+    } else {
+      await invoke('ws_install', { id: t.id, name: t.name, author: t.author, ext: t.ext, base: t.base, accent: t.accent || null });
+      await loadCustomThemes();
+      toast('“' + t.name + '” is in your themes now: pick it in Settings → Themes.');
+    }
+  } catch (e) { toast(e); }
+  if ($('settingsDlg').open) renderTopThemes();
+}
+function wsFavButton(t, after) {
+  const fav = wsFavOf(t);
+  const b = el('button', { type: 'button', class: 'small ws-fav' + (fav ? ' on' : ' accent'), title: fav ? 'Take it out of your themes' : 'Save it among your themes' },
+    svg(STAR), el('span', { text: fav ? 'Favourited' : 'Favourite' }));
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    if (!fav) b.lastChild.textContent = 'Saving…';
+    await wsToggleFav(t);
+    after();
+  });
+  return b;
+}
+// Top themes: the 5 most liked, small, under the workshop in Settings → Appearance.
+var TOP = { items: [], at: 0 };
+async function loadTopThemes() {
+  if (Date.now() - TOP.at < 5 * 60_000) { renderTopThemes(); return; }
+  try {
+    const v = await invoke('ws_list', { q: '', sort: 'likes' });
+    WS.base = v.base;
+    TOP.items = (v.themes || []).filter((t) => t.status !== 'pending' && !t.hidden).slice(0, 5);
+    TOP.at = Date.now();
+  } catch { TOP.items = []; }
+  renderTopThemes();
+}
+function renderTopThemes() {
+  if (!TOP) return;
+  $('sTopWrap').classList.toggle('hidden', !TOP.items.length);
+  $('sTopThemes').replaceChildren(...TOP.items.map((t) => {
+    const fav = wsFavOf(t);
+    const tile = el('span', { class: 'tile custom' },
+      t.thumb ? el('img', { src: WS.base + '/ws/thumb/' + t.id, alt: '', loading: 'lazy' }) : svg(t.kind === 'html' ? '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12"/>' : '<path d="M8 5.5v13l11-6.5Z"/>'));
+    const star = el('span', { class: 't-star' + (fav ? ' on' : ''), role: 'button', tabindex: '0', title: fav ? 'Favourited: take it out of your themes' : 'Favourite: save it among your themes',
+      onclick: async (e) => { e.stopPropagation(); star.style.pointerEvents = 'none'; await wsToggleFav(t); },
+      onkeydown: (e) => { if (e.key === 'Enter') { e.stopPropagation(); wsToggleFav(t); } } }, svg(STAR));
+    return el('button', { type: 'button', class: 'custom-tile top-tile' + (fav && theme.mode === 'custom:' + fav.id ? ' on' : ''), title: t.name + ' by ' + t.author + ' · ' + t.likes + ' likes (click to preview)', onclick: () => wsView(t) },
+      tile, star, el('span', { class: 't-name', text: t.name }));
+  }));
+}
 // The whole theme, big: the video plays (with its sound), the picture or the page is shown. Nothing is saved.
 function wsView(t) {
   const src = WS.base + '/ws/file/' + t.id + '?view=1';
@@ -2229,6 +2275,8 @@ function wsView(t) {
   }
   $('wsViewStage').replaceChildren(media);
   $('wsViewName').textContent = t.name;
+  const favSlot = () => $('wsViewFav').replaceChildren(wsFavButton(t, () => { favSlot(); if ($('wsDlg').open) wsRender(); }));
+  favSlot();
   $('wsViewBy').textContent = 'by ' + t.author + ' · ' + (WS_KIND[t.kind] || 'Theme') + ' · ' + fmtWsSize(t.size);
   $('wsViewDlg').showModal();
   syncBackdropSound();
@@ -2454,7 +2502,7 @@ $('attachBtn').addEventListener('click', () => {
       const chat = S.active;
       try {
         const path = await invoke('pick_folder');
-        if (path) await askFolderTypes(await invoke('scan_folder', { path }), chat);
+        if (path) await askFolderTypes(await scanFolder(path), chat);
       } catch (e) { toast(e); }
     } },
   ]);
@@ -2471,31 +2519,40 @@ listen('tauri://drag-drop', async ({ payload }) => {
   // Files go at once; for a folder you first pick which file types go.
   const files = [], folders = [];
   for (const p of payload.paths) {
-    try { folders.push(await invoke('scan_folder', { path: p })); } catch { files.push(p); }
+    try { folders.push(await scanFolder(p)); } catch { files.push(p); }
   }
   if (files.length) invoke('send_paths', { paths: files, chats: [chat], text: '' }).catch(toast);
   for (const f of folders) await askFolderTypes(f, chat);
 });
 
 // ---------- Sending a folder: pick which file types go ----------
+// Counting a whole drive can take a while: a note shows meanwhile (only when it is slow).
+async function scanFolder(path) {
+  const slow = setTimeout(() => toast('Counting the files…'), 600);
+  try { return await invoke('scan_folder', { path }); } finally { clearTimeout(slow); }
+}
+const fmtCount = (n) => n.toLocaleString('en-US').replace(/,/g, ' ');
 function askFolderTypes(scan, chat) {
   return new Promise((resolve) => {
     const d = $('folderSendDlg');
+    const max = scan.max || 1000;
     $('fsTitle').textContent = `Send “${scan.name}”`;
-    $('fsInfo').textContent = `${scan.count} ${scan.count === 1 ? 'file' : 'files'} · ${fmtBytes(scan.size)}`;
-    $('fsErr').textContent = scan.tooMany ? 'Over 1000 files: zip it, or send part of it.' : '';
+    $('fsInfo').textContent = `${fmtCount(scan.count)}${scan.partial ? '+' : ''} ${scan.count === 1 ? 'file' : 'files'} · ${fmtBytes(scan.size)}${scan.partial ? '+' : ''}`;
+    $('fsErr').textContent = '';
     const rows = scan.exts.map((x) => el('label', { class: 'fs-row' },
       el('input', { type: 'checkbox', value: x.ext, checked: true, onchange: update }),
       el('span', { class: 'fs-ext', text: x.ext ? `.${x.ext}` : 'no extension' }),
-      el('span', { class: 'fs-count', text: `${x.count} ${x.count === 1 ? 'file' : 'files'}` }),
+      el('span', { class: 'fs-count', text: `${fmtCount(x.count)} ${x.count === 1 ? 'file' : 'files'}` }),
       el('span', { class: 'fs-size', text: fmtBytes(x.size) })));
     $('fsList').replaceChildren(...rows);
     function update() {
       const on = scan.exts.filter((x) => rows.find((r) => r.querySelector('input').value === x.ext).querySelector('input').checked);
       const n = on.reduce((a, x) => a + x.count, 0), size = on.reduce((a, x) => a + x.size, 0);
       $('fsAll').checked = on.length === scan.exts.length;
-      $('fsSend').disabled = !n || scan.tooMany;
-      $('fsSend').textContent = n ? `Send ${n} ${n === 1 ? 'file' : 'files'} (${fmtBytes(size)})` : 'Send';
+      $('fsSend').disabled = !n || n > max;
+      $('fsSend').textContent = n ? `Send ${fmtCount(n)} ${n === 1 ? 'file' : 'files'} (${fmtBytes(size)})` : 'Send';
+      $('fsErr').textContent = n > max ? `${fmtCount(max)} files at most at once: untick some types (like .dll or no extension), zip it, or send part of it.`
+        : scan.partial ? `This is very big: only the first ${fmtCount(scan.count)} files were counted.` : '';
     }
     $('fsAll').onchange = () => { for (const r of rows) r.querySelector('input').checked = $('fsAll').checked; update(); };
     update();
@@ -2503,7 +2560,9 @@ function askFolderTypes(scan, chat) {
       d.close();
       if (go) {
         const exts = rows.map((r) => r.querySelector('input')).filter((i) => i.checked).map((i) => i.value);
-        try { const n = await invoke('send_folder', { path: scan.path, chats: [chat], exts }); toast(`${n} ${n === 1 ? 'file' : 'files'} sent.`); } catch (e) { toast(e); }
+        const slow = setTimeout(() => toast('Sending the files…'), 800);
+        try { const n = await invoke('send_folder', { path: scan.path, chats: [chat], exts }); toast(`${fmtCount(n)} ${n === 1 ? 'file' : 'files'} sent.`); } catch (e) { toast(e); }
+        clearTimeout(slow);
       }
       resolve();
     };
@@ -3675,6 +3734,7 @@ $('settingsBtn').addEventListener('click', async () => {
   }
   showSettingsPage('profile');
   $('settingsDlg').showModal();
+  loadTopThemes();
 });
 function showSettingsPage(name) {
   document.querySelectorAll('.s-tab').forEach((b) => b.classList.toggle('on', b.dataset.page === name));
@@ -4939,6 +4999,7 @@ function renderThemeTiles() {
     return el('button', { type: 'button', class: t.id === theme.mode ? 'on' : '', title: t.id === 'system' ? 'Same as your computer (light or dark)' : t.name, 'data-theme-id': t.id, onclick: () => setTheme(t.id) },
       tile, el('span', { class: 't-name', text: t.name }));
   }), add);
+  renderTopThemes();
 }
 $('sTheme').addEventListener('change', () => setTheme($('sTheme').value));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
@@ -4957,9 +5018,9 @@ const UI_STYLES = [
   { id: 'brutal', name: 'Brutal' },
   { id: 'paper', name: 'Paper' },
   { id: 'aero', name: 'Aero' },
-  { id: 'ink', name: 'Ink' },
+  { id: 'cyber', name: 'Cyber' },
   { id: 'bubble', name: 'Bubble' },
-  { id: 'vapor', name: 'Vapor' },
+  { id: 'holo', name: 'Holo' },
 ];
 // ---------- Interface size: the whole window's zoom, kept for next time ----------
 let uiZoom = (() => { try { const z = parseFloat(localStorage.getItem('uan.zoom') || '1'); return z >= 0.7 && z <= 1.6 ? z : 1; } catch { return 1; } })();

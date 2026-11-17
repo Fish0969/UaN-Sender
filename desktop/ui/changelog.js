@@ -1,5 +1,15 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.31', items: [
+    'Settings → Appearance: the 5 top themes of the workshop, small, under the workshop. Click one to preview it, press its star to favourite it.',
+    'A video theme you favourite from the workshop plays its sound from the start.',
+    'The theme preview has a Favourite button too.',
+    'Sending a folder: the file count and sizes are right, only the file types you tick count toward the 1000-file limit, and the window doesn’t freeze while it is counted or sent.',
+    'A folder full of files no longer brings a pop-up for each file.',
+    'Two new interface styles: Cyber (cut corners, yellow and cyan) and Holo (rainbow-foil edges that shimmer). They replace Ink and Vapor.',
+    'Interface style: the little previews keep their own look under Retro, Pixel and Terminal.',
+    'Settings → Appearance: the top themes are in the same box as the Theme workshop.',
+  ] },
   { v: '1.9.30', items: [
     'Theme workshop: “Use” is now “Favourite”. A favourite goes into your themes, where you can pick it any time. Press “Favourited” to take it out again.',
     'Theme workshop: click a theme’s picture to preview it big. Videos play right there.',

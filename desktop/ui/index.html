@@ -385,7 +385,10 @@
             <h3 class="s-title">Appearance</h3>
             <div class="group">
               <select id="sTheme" class="hidden"></select>
-              <div class="ws-row"><div class="grow"><div class="strong">Theme workshop</div><div class="note">Find themes other people made, or share one of yours.</div></div><button type="button" class="accent small" id="wsOpen">Open</button></div>
+              <div class="ws-box">
+                <div class="ws-row"><div class="grow"><div class="strong">Theme workshop</div><div class="note">Find themes other people made, or share one of yours.</div></div><button type="button" class="accent small" id="wsOpen">Open</button></div>
+                <div class="top-themes hidden" id="sTopWrap"><div class="note">Top themes</div><div class="tiles themes" id="sTopThemes"></div></div>
+              </div>
               <div class="tiles themes" id="sThemes"></div>
               <div class="swatches" id="sAccent"></div>
               <div class="pc-only">
@@ -648,7 +651,7 @@
     <div class="ws-grid" id="wsGrid"></div>
   </dialog>
   <dialog id="wsViewDlg" class="ws-view-dlg">
-    <div class="ws-view-head"><div class="grow"><strong id="wsViewName"></strong><div class="note" id="wsViewBy"></div></div><button type="button" class="icon" id="wsViewClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="ws-view-head"><div class="grow"><strong id="wsViewName"></strong><div class="note" id="wsViewBy"></div></div><span id="wsViewFav"></span><button type="button" class="icon" id="wsViewClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div class="ws-view-stage" id="wsViewStage"></div>
   </dialog>
   <dialog id="wsReportDlg">

@@ -1938,6 +1938,17 @@ impl Node {
             return; // Do not disturb
         }
         if !self.window_focused() && std::env::var_os("UAN_INVISIBLE").is_none() {
+            // One per sender/chat every few seconds: a folder of thousands of files is not thousands of pop-ups.
+            static LAST: std::sync::OnceLock<Mutex<HashMap<String, i64>>> = std::sync::OnceLock::new();
+            let t = now();
+            {
+                let mut last = LAST.get_or_init(Default::default).lock().unwrap();
+                if last.get(title).is_some_and(|&at| t - at < 5_000) {
+                    return;
+                }
+                last.retain(|_, at| t - *at < 60_000);
+                last.insert(title.to_string(), t);
+            }
             let _ = self.app.notification().builder().title(title).body(body).show();
         }
     }
@@ -4041,7 +4052,7 @@ impl Node {
         if !dir.is_dir() {
             return Err("Not a folder.".into());
         }
-        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("folder").to_string();
+        let name = folder_label(&dir);
         let mut found = Vec::new();
         collect_files(&dir, &name, &mut found, 0);
         let mut by: HashMap<String, (u64, u64)> = HashMap::new();
@@ -4053,7 +4064,7 @@ impl Node {
         }
         let mut exts: Vec<Value> = by.into_iter().map(|(ext, (count, size))| json!({ "ext": ext, "count": count, "size": size })).collect();
         exts.sort_by(|a, b| b["size"].as_u64().cmp(&a["size"].as_u64()));
-        Ok(json!({ "path": path, "name": name, "count": found.len(), "size": found.iter().map(|f| f.2).sum::<u64>(), "exts": exts, "tooMany": found.len() > 1000 }))
+        Ok(json!({ "path": path, "name": name, "count": found.len(), "size": found.iter().map(|f| f.2).sum::<u64>(), "exts": exts, "max": FOLDER_MAX, "partial": found.len() >= FOLDER_SCAN_MAX }))
     }
 
     /// Sends a folder, only the files of the chosen types ("" = files without an extension).
@@ -4062,19 +4073,17 @@ impl Node {
             self.chat_targets(chat)?;
         }
         let dir = PathBuf::from(path);
-        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("folder").to_string();
+        let name = folder_label(&dir);
         let mut found = Vec::new();
         collect_files(&dir, &name, &mut found, 0);
-        if found.len() > 1000 {
-            return Err(format!("{name}: too many files (over 1000). Zip it, or send part of it."));
-        }
         let want: HashSet<String> = exts.iter().map(|e| e.to_lowercase()).collect();
+        // Only the files of the chosen types count toward the limit.
+        found.retain(|(p, _, len)| *len <= MAX_FILE_SIZE && want.contains(&p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default()));
+        if found.len() > FOLDER_MAX {
+            return Err(format!("{name}: {} files of those types, {FOLDER_MAX} at most at once. Untick some types, zip it, or send part of it.", found.len()));
+        }
         let mut sent = 0;
         for (p, rel, len) in found {
-            let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
-            if !want.contains(&ext) || len > MAX_FILE_SIZE {
-                continue;
-            }
             let file = FileMeta { id: new_id(), name: rel, size: len, mime: guess_mime(&p).to_string(), owner: self.me_s.clone(), dev: self.my_dev() };
             let _ = self.db.lock().unwrap().execute(
                 "INSERT INTO shared_files (id, path, name, size, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -4107,13 +4116,14 @@ impl Node {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
             if meta.is_dir() {
                 // A folder: every file in it (and in its subfolders) is sent, named "Folder/sub/file".
+                let name = folder_label(&path);
                 let mut found = Vec::new();
                 collect_files(&path, &name, &mut found, 0);
                 if found.is_empty() {
                     errors.push(format!("{name}: the folder is empty."));
                 }
-                if found.len() > 1000 {
-                    errors.push(format!("{name}: too many files (over 1000). Zip it, or send part of it."));
+                if found.len() > FOLDER_MAX {
+                    errors.push(format!("{name}: {} files, {FOLDER_MAX} at most at once. Zip it, or send part of it.", found.len()));
                     continue;
                 }
                 for (p, rel, len) in found {
@@ -5793,8 +5803,21 @@ pub fn has_audio_track(data: &[u8]) -> bool {
 }
 
 /// All files in `dir` and its subfolders: (path, "Folder/sub/name", size). Stops after 1001 files.
+/// How many files one folder can send at once (each is a message), and how many are counted at most.
+pub const FOLDER_MAX: usize = 1_000;
+const FOLDER_SCAN_MAX: usize = 400_000;
+
+/// A folder's name for the chat; a whole drive (D:\) is "D drive".
+fn folder_label(dir: &Path) -> String {
+    if let Some(n) = dir.file_name().and_then(|n| n.to_str()) {
+        return n.to_string();
+    }
+    let s: String = dir.to_string_lossy().chars().filter(|c| c.is_alphanumeric()).collect();
+    if s.is_empty() { "folder".into() } else { format!("{s} drive") }
+}
+
 fn collect_files(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String, u64)>, depth: usize) {
-    if depth > 20 || out.len() > 1000 {
+    if depth > 30 || out.len() >= FOLDER_SCAN_MAX {
         return;
     }
     let Ok(rd) = std::fs::read_dir(dir) else { return };
@@ -5802,18 +5825,23 @@ fn collect_files(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String, u64)>, d
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
         let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
+        // Hidden ones, and what Windows keeps for itself at the top of a drive ($Recycle.Bin, System Volume Information, pagefile.sys…)
+        if name.starts_with('.') || name.starts_with('$') || (depth == 0 && matches!(name.to_lowercase().as_str(), "system volume information" | "pagefile.sys" | "hiberfil.sys" | "swapfile.sys" | "dumpstack.log.tmp")) {
             continue;
         }
-        let Ok(meta) = e.metadata() else { continue };
+        let Ok(ft) = e.file_type() else { continue };
+        if ft.is_symlink() {
+            continue; // links (junctions like "Documents and Settings") would count things twice or loop
+        }
         let r = format!("{rel}/{name}");
-        if meta.is_dir() {
+        if ft.is_dir() {
             collect_files(&e.path(), &r, out, depth + 1);
-        } else if meta.is_file() {
+        } else if ft.is_file() {
+            let Ok(meta) = e.metadata() else { continue };
             out.push((e.path(), r, meta.len()));
-            if out.len() > 1000 {
-                return;
-            }
+        }
+        if out.len() >= FOLDER_SCAN_MAX {
+            return;
         }
     }
 }

@@ -822,7 +822,7 @@ async fn ws_selftest(node: &Arc<Node>, dir: &std::path::Path) -> Result<String, 
     let back = node.ws_download(&id).await?;
     if back != data { return Err("downloaded file differs".into()); }
     let added = ws_favourite(node, dir, &id, "Selftest", "Tester/..", "mp4", "dark", None).await?;
-    if !dir.join("themes").join(&added.file).is_file() || !added.file.starts_with("Workshop/") || added.ws.as_deref() != Some(id.as_str()) { return Err(format!("installed as {} ws {:?}", added.file, added.ws)); }
+    if !dir.join("themes").join(&added.file).is_file() || !added.file.starts_with("Workshop/") || added.ws.as_deref() != Some(id.as_str()) || !added.sound || !load_themes(dir).iter().any(|t| t.id == added.id && t.sound) { return Err(format!("installed as {} ws {:?}", added.file, added.ws)); }
     if std::fs::read(dir.join("themes").join(&added.file)).ok().as_deref() != Some(&back[..]) { return Err("favourite file differs".into()); }
     let again = ws_favourite(node, dir, &id, "Selftest", "Tester/..", "mp4", "dark", None).await?;
     if again.id != added.id || load_themes(dir).iter().filter(|t| t.ws.as_deref() == Some(id.as_str())).count() != 1 { return Err("favourited twice".into()); }
@@ -962,11 +962,14 @@ async fn ws_favourite(node: &Arc<Node>, dir: &std::path::Path, id: &str, name: &
     std::fs::write(&src, &bytes).map_err(|e| e.to_string())?;
     let mut t = theme_add_at(dir, src, name.to_string(), base.to_string(), accent, Some(readable))?;
     let mut list = load_themes(dir);
+    // A video from the workshop plays its sound from the start (it can be turned off: right-click the theme).
+    t.ws = Some(id.to_string());
+    t.sound = t.kind == "video";
     if let Some(x) = list.iter_mut().find(|x| x.id == t.id) {
-        x.ws = Some(id.to_string());
+        x.ws = t.ws.clone();
+        x.sound = t.sound;
     }
     save_themes(dir, &list)?;
-    t.ws = Some(id.to_string());
     Ok(t)
 }
 
@@ -1268,14 +1271,17 @@ async fn pick_folder(app: AppHandle) -> CmdResult<Option<String>> {
     Err("Folders can be sent from a PC.".into())
 }
 
+// A whole drive takes a while to count and to send: done off the window's thread, so nothing freezes.
 #[tauri::command]
-fn scan_folder(node: State<'_, Arc<Node>>, path: String) -> CmdResult<Value> {
-    node.scan_folder(&path)
+async fn scan_folder(node: State<'_, Arc<Node>>, path: String) -> CmdResult<Value> {
+    let node = node.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || node.scan_folder(&path)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn send_folder(node: State<'_, Arc<Node>>, path: String, chats: Vec<String>, exts: Vec<String>) -> CmdResult<usize> {
-    node.share_folder(&path, &chats, &exts)
+async fn send_folder(node: State<'_, Arc<Node>>, path: String, chats: Vec<String>, exts: Vec<String>) -> CmdResult<usize> {
+    let node = node.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || node.share_folder(&path, &chats, &exts)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
