@@ -2196,7 +2196,7 @@ function wsRender() {
     return el('div', { class: 'ws-card' + (t.hidden ? ' hidden-theme' : '') }, thumb,
       el('div', { class: 'ws-body' },
         el('div', { class: 'ws-name', title: t.name, text: t.name }),
-        el('div', { class: 'ws-by', text: 'by ' + t.author + (t.mine ? ' (you)' : '') + ' · ' + t.downloads + ' used' }),
+        el('div', { class: 'ws-by' }, 'by ' + t.author + (t.mine ? ' (you)' : ''), t.dev ? el('span', { class: 'ws-dev', title: 'Published by the developer of UaN', text: '✓ Developer' }) : null, ' · ' + t.downloads + ' used'),
         t.about ? el('div', { class: 'ws-about', title: t.about, text: t.about }) : null),
       el('div', { class: 'ws-foot' }, like, more, use));
   }));
@@ -2254,16 +2254,63 @@ $('sSuggestSend').addEventListener('click', async () => {
   $('sSuggestSend').disabled = false;
 });
 $('sDevPanel').addEventListener('click', () => invoke('dev_panel').catch(toast));
-function wsOpenPublish() {
-  const mine = customThemes.filter((c) => c.size <= 50 * 1024 * 1024);
-  $('wsPubErr').textContent = '';
-  if (!customThemes.length) { toast('Add a theme of your own first (Settings → Appearance, the + tile).'); return; }
-  $('wsPubTheme').replaceChildren(...customThemes.map((c) => el('option', { value: c.id, text: c.name + ' · ' + (WS_KIND[c.kind] || 'Theme') + ' · ' + fmtWsSize(c.size) + (c.size > 50 * 1024 * 1024 ? ' (too big)' : '') })));
-  if (mine.length) $('wsPubTheme').value = mine[0].id;
-  $('wsPubAbout').value = '';
-  $('wsPub').classList.remove('hidden');
-  $('wsPubAbout').focus();
+// What is being published: a file staged for the workshop, or one of your own themes.
+WS.pick = null; // { staged: info } | { theme: c }
+function wsShowPreview(src, kind) {
+  const prev = $('wsPreview');
+  let media;
+  if (kind === 'video') { media = el('video', { src, autoplay: true, loop: true, playsinline: true }); media.muted = true; }
+  else if (kind === 'html') media = el('iframe', { src, sandbox: 'allow-scripts', referrerpolicy: 'no-referrer', title: 'Preview' });
+  else media = el('img', { src, alt: '' });
+  prev.replaceChildren(media, el('span', { class: 'ws-kindtag', text: (WS_KIND[kind] || 'Theme') + ' · preview' }),
+    el('button', { type: 'button', class: 'small ws-change', text: 'Change', onclick: () => { $('wsFile').value = ''; $('wsFile').click(); } }));
+  prev.classList.remove('hidden');
+  $('wsDropEmpty').classList.add('hidden');
 }
+function wsClearPick() {
+  WS.pick = null;
+  $('wsPreview').replaceChildren();
+  $('wsPreview').classList.add('hidden');
+  $('wsDropEmpty').classList.remove('hidden');
+}
+async function wsStagePath(path) {
+  $('wsPubErr').textContent = '';
+  try {
+    const info = await invoke('ws_stage', { path });
+    WS.pick = { staged: info };
+    $('wsPubTheme').value = '';
+    if (!$('wsPubName').value.trim()) $('wsPubName').value = info.name;
+    wsShowPreview(themeFileUrl({ file: info.file, size: info.size, mime: info.mime }) + '?t=' + Date.now(), info.kind);
+  } catch (e) { $('wsPubErr').textContent = String(e); }
+}
+function wsOpenPublish() {
+  $('wsPubErr').textContent = '';
+  $('wsPubName').value = '';
+  $('wsPubAbout').value = '';
+  $('wsPubBase').value = 'dark';
+  wsClearPick();
+  $('wsPubTheme').replaceChildren(el('option', { value: '', text: customThemes.length ? '(none)' : 'You have no themes yet' }),
+    ...customThemes.map((c) => el('option', { value: c.id, text: c.name + ' · ' + (WS_KIND[c.kind] || 'Theme') + ' · ' + fmtWsSize(c.size) + (c.size > 50 * 1024 * 1024 ? ' (too big)' : '') })));
+  $('wsPubGo').textContent = S.me.devPanel ? 'Publish' : 'Ask to publish';
+  $('wsPub').classList.remove('hidden');
+  $('wsPubName').focus();
+}
+$('wsPickFile').addEventListener('click', () => { $('wsFile').value = ''; $('wsFile').click(); });
+$('wsFile').addEventListener('change', async () => {
+  const f = $('wsFile').files[0];
+  if (!f) return;
+  if (f.size > 50 * 1024 * 1024) { $('wsPubErr').textContent = 'A theme can be 50 MB at most.'; return; }
+  $('wsPubErr').textContent = 'Getting it ready…';
+  try { const path = await uploadFile(f); await wsStagePath(path); } catch (e) { $('wsPubErr').textContent = String(e); }
+});
+$('wsPubTheme').addEventListener('change', () => {
+  const c = customThemes.find((x) => x.id === $('wsPubTheme').value);
+  if (!c) { wsClearPick(); return; }
+  WS.pick = { theme: c };
+  $('wsPubName').value = c.name;
+  $('wsPubBase').value = c.base === 'light' ? 'light' : 'dark';
+  wsShowPreview(themeFileUrl(c), c.kind);
+});
 $('wsOpen').addEventListener('click', () => { $('wsDlg').showModal(); $('wsPub').classList.add('hidden'); wsLoad(); });
 $('wsClose').addEventListener('click', () => $('wsDlg').close());
 $('wsSort').addEventListener('change', wsLoad);
@@ -2271,21 +2318,27 @@ $('wsQ').addEventListener('input', () => { clearTimeout(WS.timer); WS.timer = se
 $('wsPublishBtn').addEventListener('click', wsOpenPublish);
 $('wsPubCancel').addEventListener('click', () => $('wsPub').classList.add('hidden'));
 $('wsPubGo').addEventListener('click', async () => {
-  const c = customThemes.find((x) => x.id === $('wsPubTheme').value);
-  if (!c) return;
+  const pick = WS.pick;
+  if (!pick) { $('wsPubErr').textContent = 'Drop a file here, choose one, or pick one of your themes.'; return; }
+  const name = $('wsPubName').value.trim();
+  if (!name) { $('wsPubErr').textContent = 'Give it a name.'; $('wsPubName').focus(); return; }
+  const c = pick.theme || { kind: pick.staged.kind, file: pick.staged.file, size: pick.staged.size, mime: pick.staged.mime, name };
   if (c.size > 50 * 1024 * 1024) { $('wsPubErr').textContent = 'That one is bigger than 50 MB.'; return; }
   const go = $('wsPubGo');
+  const label = go.textContent;
   go.disabled = true; go.textContent = 'Uploading…';
   $('wsPubErr').textContent = '';
   try {
     const thumb = await wsThumbOf(c);
-    await invoke('ws_publish', { id: c.id, about: $('wsPubAbout').value, thumb });
+    if (pick.theme) await invoke('ws_publish', { id: c.id, about: $('wsPubAbout').value, thumb, name, base: $('wsPubBase').value });
+    else await invoke('ws_publish_file', { file: c.file, name, about: $('wsPubAbout').value, base: $('wsPubBase').value, thumb });
+    wsClearPick();
     $('wsPub').classList.add('hidden');
-    toast(S.me.devPanel ? '“' + c.name + '” is in the workshop now.' : 'Sent! “' + c.name + '” shows up for everyone once it is approved.');
+    toast(S.me.devPanel ? '“' + name + '” is in the workshop now.' : 'Sent! “' + name + '” shows up for everyone once it is approved.');
     $('wsSort').value = 'new';
     wsLoad();
   } catch (e) { $('wsPubErr').textContent = String(e); }
-  go.disabled = false; go.textContent = 'Publish';
+  go.disabled = false; go.textContent = label;
 });
 
 // ---------- Emoji picker ----------
@@ -2354,10 +2407,12 @@ $('attachBtn').addEventListener('click', () => {
   ]);
 });
 
-listen('tauri://drag-enter', () => { if (S.active) $('drop').classList.remove('hidden'); });
-listen('tauri://drag-leave', () => $('drop').classList.add('hidden'));
+const wsDropping = () => $('wsDlg').open && !$('wsPub').classList.contains('hidden');
+listen('tauri://drag-enter', () => { if (wsDropping()) { $('wsDrop').classList.add('over'); return; } if (S.active) $('drop').classList.remove('hidden'); });
+listen('tauri://drag-leave', () => { $('drop').classList.add('hidden'); $('wsDrop').classList.remove('over'); });
 listen('tauri://drag-drop', async ({ payload }) => {
   $('drop').classList.add('hidden');
+  if (wsDropping()) { $('wsDrop').classList.remove('over'); if (payload.paths?.length) wsStagePath(payload.paths[0]); return; }
   if (!S.active || !payload.paths?.length) return;
   const chat = S.active;
   // Files go at once; for a folder you first pick which file types go.

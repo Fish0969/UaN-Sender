@@ -1676,7 +1676,10 @@ impl Node {
 
     pub async fn ws_list(&self, q: &str, sort: &str) -> Result<Value, String> {
         let base = self.ws_base()?;
-        let r = self.http.get(format!("{base}/ws/list")).query(&[("q", q), ("sort", sort), ("who", self.me_s.as_str())]).send().await.map_err(|_| "Can't reach the theme workshop. Check your internet.".to_string())?;
+        let ts = now().to_string();
+        // Signed, so the server shows you your own waiting themes and likes (and nobody can ask for them with just your key).
+        let sig = self.ws_sign(&format!("wslist:{}:{ts}", self.me_s));
+        let r = self.http.get(format!("{base}/ws/list")).query(&[("q", q), ("sort", sort), ("who", self.me_s.as_str()), ("ts", ts.as_str()), ("sig", sig.as_str())]).send().await.map_err(|_| "Can't reach the theme workshop. Check your internet.".to_string())?;
         let mut v = Self::ws_answer(r).await.map_err(|e| if e == "Not found." { "The theme workshop is not switched on yet on this mailbox.".to_string() } else { e })?;
         v["base"] = json!(base);
         Ok(v)
@@ -4351,12 +4354,13 @@ impl Node {
         let len = len.min(file.size.saturating_sub(start));
         if file.owner == "_theme" {
             // A video or picture of one of your own themes (UaN's data folder, themes/).
-            let rel = if let Some(rest) = file.id.strip_prefix("Workshop/") {
+            let sub = ["Workshop/", "Staging/"].into_iter().find_map(|p| file.id.strip_prefix(p).map(|rest| (p.trim_end_matches('/'), rest)));
+            let rel = if let Some((folder, rest)) = sub {
                 let ok = !rest.is_empty() && !rest.starts_with('.') && rest.chars().all(|c| c.is_alphanumeric() || " .-_()'".contains(c));
                 if !ok {
                     return Err("No such theme file.".into());
                 }
-                std::path::PathBuf::from("Workshop").join(rest)
+                std::path::PathBuf::from(folder).join(rest)
             } else {
                 let name: String = file.id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
                 if name.is_empty() || name.starts_with('.') {

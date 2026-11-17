@@ -622,12 +622,27 @@
       <button type="button" class="icon" id="wsClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
     <div class="ws-pub hidden" id="wsPub">
-      <div class="ws-pub-row">
-        <label class="grow">Your theme<select id="wsPubTheme"></select></label>
-        <label class="grow2">About it<input id="wsPubAbout" maxlength="200" placeholder="e.g. Rain on a window at night, with sound" autocomplete="off"></label>
+      <div class="ws-pub-grid">
+        <div class="ws-drop" id="wsDrop">
+          <div class="ws-drop-empty" id="wsDropEmpty">
+            <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+            <div class="strong">Drop a video, a picture or an .html page here</div>
+            <div class="note">50 MB at most</div>
+            <button type="button" class="small" id="wsPickFile">Choose a file</button>
+            <input type="file" id="wsFile" accept=".html,.htm,.mp4,.m4v,.webm,.mov,.jpg,.jpeg,.png,.webp,.gif,.avif" hidden>
+          </div>
+          <div class="ws-preview hidden" id="wsPreview"></div>
+        </div>
+        <div class="ws-pub-form">
+          <label>Name<input id="wsPubName" maxlength="24" placeholder="e.g. Rainy window" autocomplete="off"></label>
+          <label>About it<textarea id="wsPubAbout" maxlength="200" rows="3" placeholder="e.g. Rain on a window at night, with sound"></textarea></label>
+          <label>Panels over it<select id="wsPubBase"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+          <label>Or one of your themes<select id="wsPubTheme"></select></label>
+          <div class="note" id="wsPubNote">It shows up for everyone once the developer approves it. 100 themes fit in the workshop.</div>
+          <div class="error" id="wsPubErr"></div>
+          <div class="ws-pub-btns"><button type="button" class="small" id="wsPubCancel">Cancel</button><button type="button" class="accent small" id="wsPubGo">Ask to publish</button></div>
+        </div>
       </div>
-      <div class="note" id="wsPubNote">It shows up for everyone once the developer approves it. 50 MB at most; 100 themes fit in the workshop.</div>
-      <div class="ws-pub-row end"><span class="error grow" id="wsPubErr"></span><button type="button" class="small" id="wsPubCancel">Cancel</button><button type="button" class="accent small" id="wsPubGo">Publish</button></div>
     </div>
     <div class="note ws-count" id="wsCount"></div>
     <div class="ws-grid" id="wsGrid"></div>

@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.27', items: [
+    'Security updates.',
+    'Theme workshop improvements.',
+  ] },
   { v: '1.9.26', items: [
     'Theme workshop (Settings → Appearance → Open): find themes other people made, like them, and use one with a click. Publish your own (50 MB at most; 100 themes fit).',
     'Search the workshop, sort by most liked or newest. A new theme shows up once the developer approves it. Report a theme that should not be there; you can remove your own any time.',

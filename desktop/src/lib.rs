@@ -823,9 +823,20 @@ async fn ws_selftest(node: &Arc<Node>, dir: &std::path::Path) -> Result<String, 
     if !dir.join("themes").join(&added.file).is_file() || !added.file.starts_with("Workshop/") { return Err(format!("installed as {}", added.file)); }
     node.ws_suggest("An idea from the self-test").await?;
     node.ws_act("delete", &id, serde_json::json!({})).await?;
+    let pic = dir.join("Rain at night.png");
+    let png: Vec<u8> = [&[0x89u8, b'P', b'N', b'G', 13, 10, 26, 10][..], &[7u8; 3000][..]].concat();
+    std::fs::write(&pic, &png).map_err(|e| e.to_string())?;
+    let st = ws_stage_at(dir, &pic.to_string_lossy())?;
+    let sfile = st["file"].as_str().unwrap_or_default().to_string();
+    let meta: node::FileMeta = serde_json::from_value(serde_json::json!({ "id": sfile, "name": "x", "size": png.len(), "mime": "image/png", "owner": "_theme" })).map_err(|e| e.to_string())?;
+    let seen = node.read_range(&meta, 0, png.len() as u64).await?;
+    if seen != png { return Err("staged preview differs".into()); }
+    let sid = ws_publish_staged(node, dir, &sfile, "Rain", "staged upload", "light", None).await?;
+    if dir.join("themes").join(&sfile).exists() { return Err("staged copy was not removed".into()); }
+    node.ws_act("delete", &sid, serde_json::json!({})).await?;
     let after = node.ws_list("Selftest", "new").await?;
     if after["themes"].as_array().is_some_and(|a| a.iter().any(|t| t["id"] == id.as_str())) { return Err("still listed after delete".into()); }
-    Ok(format!("published (pending), listed, liked, downloaded {} bytes, installed as {}, suggested, removed (admin={})", back.len(), added.file, list["admin"]))
+    Ok(format!("published (pending), listed, liked, downloaded {} bytes, installed as {}, suggested, removed, staged {} and published it (admin={})", back.len(), added.file, sfile, list["admin"]))
 }
 
 #[tauri::command]
@@ -836,13 +847,79 @@ async fn ws_list(node: State<'_, Arc<Node>>, q: String, sort: String) -> CmdResu
 
 /// Publishes one of your own themes (with a short text and a small picture for the list).
 #[tauri::command]
-async fn ws_publish(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, id: String, about: String, thumb: Option<String>) -> CmdResult<String> {
+async fn ws_publish(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, id: String, about: String, thumb: Option<String>, name: Option<String>, base: Option<String>) -> CmdResult<String> {
     let node = node.inner().clone();
     let dir = profile.dir.clone();
     let t = load_themes(&dir).into_iter().find(|t| t.id == id).ok_or("That theme is gone.")?;
     let ext = t.file.rsplit('.').next().unwrap_or("").to_lowercase();
-    let meta = serde_json::json!({ "name": t.name, "about": about.trim().chars().take(200).collect::<String>(), "ext": ext, "base": t.base, "accent": t.accent });
+    let name = name.map(|n| n.trim().chars().take(24).collect::<String>()).filter(|n| !n.is_empty()).unwrap_or(t.name.clone());
+    let base = if base.as_deref() == Some("light") || (base.is_none() && t.base == "light") { "light" } else { "dark" };
+    let meta = serde_json::json!({ "name": name, "about": about.trim().chars().take(200).collect::<String>(), "ext": ext, "base": base, "accent": t.accent });
     node.ws_publish(&dir.join("themes").join(&t.file), meta, thumb).await
+}
+
+const WS_FILE_TYPES: [(&str, &str, &str); 12] = [
+    ("html", "html", "text/html"), ("htm", "html", "text/html"), ("mp4", "video", "video/mp4"), ("m4v", "video", "video/mp4"), ("webm", "video", "video/webm"), ("mov", "video", "video/quicktime"),
+    ("jpg", "image", "image/jpeg"), ("jpeg", "image", "image/jpeg"), ("png", "image", "image/png"), ("webp", "image", "image/webp"), ("gif", "image", "image/gif"), ("avif", "image", "image/avif"),
+];
+
+/// Gets a file ready to publish straight to the workshop (dropped on the window, or chosen): a copy in themes/Staging/ to preview and send.
+#[tauri::command]
+fn ws_stage(profile: State<'_, Profile>, path: String) -> CmdResult<serde_json::Value> {
+    ws_stage_at(&profile.dir, &path)
+}
+
+fn ws_stage_at(dir: &std::path::Path, path: &str) -> CmdResult<serde_json::Value> {
+    let src = PathBuf::from(path);
+    if !src.is_file() {
+        return Err("That's not a file.".into());
+    }
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let (_, kind, mime) = WS_FILE_TYPES.iter().find(|(e, _, _)| *e == ext).copied().ok_or("A theme can be an .html page, a video (.mp4, .webm, .mov) or a picture.")?;
+    let size = std::fs::metadata(&src).map_err(|e| e.to_string())?.len();
+    if size == 0 || size > 50 * 1024 * 1024 {
+        return Err("A theme can be 50 MB at most.".into());
+    }
+    let staging = dir.join("themes").join("Staging");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let stem = safe_file_name(src.file_stem().and_then(|s| s.to_str()).unwrap_or("Theme"));
+    let dest = staging.join(format!("{stem}.{ext}"));
+    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+    // A file that came through the window (a chosen file) was put in uploads/ first: it is not needed there any more.
+    let uploads = dir.join("uploads");
+    if src.starts_with(&uploads) {
+        let _ = std::fs::remove_file(&src);
+        if let Some(parent) = src.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+    Ok(serde_json::json!({ "file": format!("Staging/{stem}.{ext}"), "size": size, "kind": kind, "mime": mime, "name": stem.chars().take(24).collect::<String>() }))
+}
+
+/// Publishes the staged file (name, text and panels chosen in the workshop); the copy is removed afterwards.
+#[tauri::command]
+async fn ws_publish_file(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, file: String, name: String, about: String, base: String, thumb: Option<String>) -> CmdResult<String> {
+    let node = node.inner().clone();
+    let dir = profile.dir.clone();
+    ws_publish_staged(&node, &dir, &file, &name, &about, &base, thumb).await
+}
+
+async fn ws_publish_staged(node: &Arc<Node>, dir: &std::path::Path, file: &str, name: &str, about: &str, base: &str, thumb: Option<String>) -> CmdResult<String> {
+    let rest = file.strip_prefix("Staging/").ok_or("Pick a file first.")?;
+    if rest.is_empty() || rest.starts_with('.') || !rest.chars().all(|c| c.is_alphanumeric() || " .-_()'".contains(c)) {
+        return Err("Pick a file first.".into());
+    }
+    let path = dir.join("themes").join("Staging").join(rest);
+    let ext = rest.rsplit('.').next().unwrap_or("").to_lowercase();
+    let name: String = name.trim().chars().take(24).collect();
+    if name.is_empty() {
+        return Err("Give the theme a name.".into());
+    }
+    let meta = serde_json::json!({ "name": name, "about": about.trim().chars().take(200).collect::<String>(), "ext": ext, "base": if base == "light" { "light" } else { "dark" } });
+    let id = node.ws_publish(&path, meta, thumb).await?;
+    let _ = std::fs::remove_file(&path);
+    Ok(id)
 }
 
 /// Downloads a theme from the workshop and adds it to your themes.
@@ -1538,6 +1615,8 @@ pub fn run() {
             ws_install,
             ws_act,
             ws_suggest,
+            ws_stage,
+            ws_publish_file,
             dev_panel,
             bio_image,
             reactions,
