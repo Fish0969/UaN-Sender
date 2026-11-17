@@ -2138,6 +2138,156 @@ $('phonePhotos').addEventListener('change', () => {
   if (files.length) sendPhoneFiles(files).catch(toast);
 });
 
+// ---------- Theme workshop: themes other people made (and yours, to share) ----------
+const WS = { base: '', items: [], admin: false, timer: null };
+const fmtWsSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+const WS_KIND = { video: 'Video', image: 'Picture', html: 'Page' };
+async function wsLoad() {
+  $('wsCount').textContent = 'Loading…';
+  try {
+    const v = await invoke('ws_list', { q: $('wsQ').value.trim(), sort: $('wsSort').value });
+    WS.base = v.base; WS.items = v.themes || []; WS.admin = !!v.admin;
+    $('wsCount').textContent = v.count + ' of ' + v.max + ' themes in the workshop' + ($('wsQ').value.trim() ? ' · ' + WS.items.length + ' found' : '');
+    wsRender();
+  } catch (e) {
+    $('wsCount').textContent = '';
+    $('wsGrid').replaceChildren(el('div', { class: 'ws-empty', text: String(e) }));
+  }
+}
+function wsRender() {
+  if (!WS.items.length) {
+    $('wsGrid').replaceChildren(el('div', { class: 'ws-empty', text: $('wsQ').value.trim() ? 'No theme matches that.' : 'No themes yet. Be the first: press Publish a theme.' }));
+    return;
+  }
+  $('wsGrid').replaceChildren(...WS.items.map((t) => {
+    const thumb = el('div', { class: 'ws-thumb' },
+      t.thumb ? el('img', { src: WS.base + '/ws/thumb/' + t.id, alt: '', loading: 'lazy' }) : el('span', { text: WS_KIND[t.kind] || 'Theme' }),
+      el('span', { class: 'ws-kind', text: (WS_KIND[t.kind] || 'Theme') + ' · ' + fmtWsSize(t.size) }),
+      t.status === 'pending' ? el('span', { class: 'ws-flag wait', text: 'Waiting for approval' }) : t.hidden ? el('span', { class: 'ws-flag', text: 'Hidden after reports' }) : null);
+    const like = el('button', { type: 'button', class: 'ws-like small' + (t.liked ? ' on' : ''), title: t.liked ? 'Take your like back' : 'Like it' },
+      svg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"/>'), el('span', { text: String(t.likes) }));
+    like.addEventListener('click', async () => {
+      like.disabled = true;
+      try { const r = await invoke('ws_act', { what: 'like', id: t.id, on: !t.liked }); t.liked = !t.liked; t.likes = r.likes; wsRender(); } catch (e) { toast(e); like.disabled = false; }
+    });
+    const use = el('button', { type: 'button', class: 'accent small ws-use', text: 'Use' });
+    use.addEventListener('click', async () => {
+      use.disabled = true; use.textContent = 'Getting it…';
+      try {
+        const c = await invoke('ws_install', { id: t.id, name: t.name, author: t.author, ext: t.ext, base: t.base, accent: t.accent || null });
+        await loadCustomThemes();
+        setTheme('custom:' + c.id);
+        use.textContent = 'Added';
+        toast('“' + t.name + '” is one of your themes now.');
+      } catch (e) { toast(e); use.disabled = false; use.textContent = 'Use'; }
+    });
+    const more = el('button', { type: 'button', class: 'icon small', title: 'More' }, svg('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'));
+    more.addEventListener('click', (e) => {
+      const r = more.getBoundingClientRect();
+      showMenu(r.left, r.bottom + 4, [
+        !t.mine ? { label: 'Report…', run: () => wsReport(t) } : null,
+        t.mine || WS.admin ? { label: t.mine ? 'Remove from the workshop' : 'Remove (admin)', danger: true, run: async () => {
+          if (!(await ask('Remove “' + t.name + '” from the workshop for everyone? Those who already use it keep their copy.', 'Remove'))) return;
+          try { await invoke('ws_act', { what: 'delete', id: t.id }); wsLoad(); } catch (err) { toast(err); }
+        } } : null,
+      ]);
+      e.stopPropagation();
+    });
+    return el('div', { class: 'ws-card' + (t.hidden ? ' hidden-theme' : '') }, thumb,
+      el('div', { class: 'ws-body' },
+        el('div', { class: 'ws-name', title: t.name, text: t.name }),
+        el('div', { class: 'ws-by', text: 'by ' + t.author + (t.mine ? ' (you)' : '') + ' · ' + t.downloads + ' used' }),
+        t.about ? el('div', { class: 'ws-about', title: t.about, text: t.about }) : null),
+      el('div', { class: 'ws-foot' }, like, more, use));
+  }));
+}
+// A small picture of your theme for the list: a frame of the video, the picture, or none for a page.
+async function wsThumbOf(c) {
+  if (c.kind === 'html') return null;
+  const W = 320, H = 180;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  const cover = (src, w, h) => { const s = Math.max(W / w, H / h); const dw = w * s, dh = h * s; ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh); };
+  try {
+    if (c.kind === 'image') {
+      const img = new Image(); img.crossOrigin = 'anonymous'; img.src = themeFileUrl(c);
+      await img.decode();
+      cover(img, img.naturalWidth, img.naturalHeight);
+    } else {
+      const v = document.createElement('video'); v.crossOrigin = 'anonymous'; v.muted = true; v.preload = 'auto'; v.src = themeFileUrl(c);
+      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; setTimeout(rej, 15000); });
+      v.currentTime = Math.min(1.5, (v.duration || 3) / 3);
+      await new Promise((res) => { v.onseeked = res; setTimeout(res, 4000); });
+      cover(v, v.videoWidth, v.videoHeight);
+    }
+    let q = 0.72, out = cv.toDataURL('image/jpeg', q);
+    while (out.length > 38000 && q > 0.3) { q -= 0.1; out = cv.toDataURL('image/jpeg', q); }
+    return out.length <= 40000 ? out : null;
+  } catch { return null; }
+}
+function wsReport(t) {
+  $('wsReportWhy').selectedIndex = 0;
+  $('wsReportMore').value = '';
+  $('wsReportDlg').dataset.id = t.id;
+  $('wsReportDlg').showModal();
+}
+$('wsReportCancel').addEventListener('click', () => $('wsReportDlg').close());
+$('wsReportForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const reason = $('wsReportWhy').value + ($('wsReportMore').value.trim() ? ': ' + $('wsReportMore').value.trim() : '');
+  try {
+    await invoke('ws_act', { what: 'report', id: $('wsReportDlg').dataset.id, reason });
+    $('wsReportDlg').close();
+    toast('Thanks, the developer gets your report.');
+  } catch (err) { toast(err); }
+});
+// Ideas for UaN, and the dev panel (only on the PC where it is switched on)
+$('sSuggestSend').addEventListener('click', async () => {
+  const text = $('sSuggest').value.trim();
+  if (!text) return;
+  $('sSuggestSend').disabled = true;
+  try {
+    await invoke('ws_suggest', { text });
+    $('sSuggest').value = '';
+    $('sSuggestNote').textContent = 'Sent, thank you!';
+  } catch (e) { $('sSuggestNote').textContent = String(e); }
+  $('sSuggestSend').disabled = false;
+});
+$('sDevPanel').addEventListener('click', () => invoke('dev_panel').catch(toast));
+function wsOpenPublish() {
+  const mine = customThemes.filter((c) => c.size <= 50 * 1024 * 1024);
+  $('wsPubErr').textContent = '';
+  if (!customThemes.length) { toast('Add a theme of your own first (Settings → Appearance, the + tile).'); return; }
+  $('wsPubTheme').replaceChildren(...customThemes.map((c) => el('option', { value: c.id, text: c.name + ' · ' + (WS_KIND[c.kind] || 'Theme') + ' · ' + fmtWsSize(c.size) + (c.size > 50 * 1024 * 1024 ? ' (too big)' : '') })));
+  if (mine.length) $('wsPubTheme').value = mine[0].id;
+  $('wsPubAbout').value = '';
+  $('wsPub').classList.remove('hidden');
+  $('wsPubAbout').focus();
+}
+$('wsOpen').addEventListener('click', () => { $('wsDlg').showModal(); $('wsPub').classList.add('hidden'); wsLoad(); });
+$('wsClose').addEventListener('click', () => $('wsDlg').close());
+$('wsSort').addEventListener('change', wsLoad);
+$('wsQ').addEventListener('input', () => { clearTimeout(WS.timer); WS.timer = setTimeout(wsLoad, 300); });
+$('wsPublishBtn').addEventListener('click', wsOpenPublish);
+$('wsPubCancel').addEventListener('click', () => $('wsPub').classList.add('hidden'));
+$('wsPubGo').addEventListener('click', async () => {
+  const c = customThemes.find((x) => x.id === $('wsPubTheme').value);
+  if (!c) return;
+  if (c.size > 50 * 1024 * 1024) { $('wsPubErr').textContent = 'That one is bigger than 50 MB.'; return; }
+  const go = $('wsPubGo');
+  go.disabled = true; go.textContent = 'Uploading…';
+  $('wsPubErr').textContent = '';
+  try {
+    const thumb = await wsThumbOf(c);
+    await invoke('ws_publish', { id: c.id, about: $('wsPubAbout').value, thumb });
+    $('wsPub').classList.add('hidden');
+    toast(S.me.devPanel ? '“' + c.name + '” is in the workshop now.' : 'Sent! “' + c.name + '” shows up for everyone once it is approved.');
+    $('wsSort').value = 'new';
+    wsLoad();
+  } catch (e) { $('wsPubErr').textContent = String(e); }
+  go.disabled = false; go.textContent = 'Publish';
+});
+
 // ---------- Emoji picker ----------
 const EMOJIS = '😀😃😄😁😆😅😂🤣😊😇🙂😉😍🥰😘😋😛😜🤪🤔🤨😐😑🙄😏😴😎🤓🥳😭😢😤😡😱😨😰🤗🤭🫡🤫🥺😳😬🙃🫠🤯🥵🥶🤢🤮👍👎👏🙌🙏🤝💪👀👋✌️🤞🫶❤️🧡💛💚💙💜🖤🤍💔💯🔥✨🎉🎬🍿🎮🎧🎵🍕🍔🍟🍺☕🚀🌙⭐☀️🌈💀👻🤖🐱🐶'.match(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu);
 function closeEmoji() { document.querySelector('.emoji-pop')?.remove(); }
@@ -3403,6 +3553,8 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sError').textContent = '';
   $('sVersion').textContent = `UaN ${S.me.version}`;
   $('sAboutVer').textContent = `UaN ${S.me.version}`;
+  $('sDevCard').classList.toggle('hidden', !S.me.devPanel);
+  $('sSuggestNote').textContent = '';
   renderUpdateState();
   renderHistory();
   // The phone page carries the name the app gives it; pages that don't exist here (no mailbox on a phone) get no tab.
@@ -4320,7 +4472,7 @@ function wrapThemeHtml(html) {
   const m = html.match(/<!doctype[^>]*>/i);
   return m ? html.replace(m[0], m[0] + guard) : `<!doctype html>${guard}${html}`;
 }
-const themeFileUrl = (c) => `${S.me?.mediaBase || convertFileSrc('', 'media').replace(/\/$/, '')}/_theme/${c.file}/${c.size}/${encodeURIComponent(c.mime)}`;
+const themeFileUrl = (c) => `${S.me?.mediaBase || convertFileSrc('', 'media').replace(/\/$/, '')}/_theme/${encodeURIComponent(c.file)}/${c.size}/${encodeURIComponent(c.mime)}`;
 let backdrop = null;
 function setBackdrop(c) {
   const root = document.documentElement;

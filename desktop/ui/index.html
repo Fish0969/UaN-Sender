@@ -385,6 +385,7 @@
             <h3 class="s-title">Appearance</h3>
             <div class="group">
               <select id="sTheme" class="hidden"></select>
+              <div class="ws-row"><div class="grow"><div class="strong">Theme workshop</div><div class="note">Find themes other people made, or share one of yours.</div></div><button type="button" class="accent small" id="wsOpen">Open</button></div>
               <div class="tiles themes" id="sThemes"></div>
               <div class="swatches" id="sAccent"></div>
               <div class="pc-only">
@@ -460,6 +461,15 @@
               <div class="note">When a new version is out, UaN shows it in the sidebar. One click downloads it and UaN restarts by itself, nothing to install.</div>
               <div class="sub-title" id="sHistoryTitle">What is new in this version</div>
               <div id="sHistory" class="history"></div>
+              <div class="sub-title">Ideas for UaN</div>
+              <div class="suggest-box">
+                <textarea id="sSuggest" maxlength="1000" rows="3" placeholder="Something to add, change or fix? Write it here and the developer gets it."></textarea>
+                <div class="suggest-row"><span class="note grow" id="sSuggestNote"></span><button type="button" class="accent small" id="sSuggestSend">Send</button></div>
+              </div>
+              <div class="dev-card hidden" id="sDevCard">
+                <div class="grow"><div class="strong">Dev panel</div><div class="note">Approve themes, read reports and suggestions. Only on this PC.</div></div>
+                <button type="button" class="small" id="sDevPanel">Open</button>
+              </div>
             </div>
           </section>
         </div>
@@ -601,6 +611,40 @@
         <button type="button" id="pollCancel">Cancel</button>
         <button class="accent" id="pollCreate">Create poll</button>
       </div>
+    </form>
+  </dialog>
+  <dialog id="wsDlg" class="ws-dlg">
+    <div class="ws-head">
+      <strong class="ws-title">Theme workshop</strong>
+      <div class="ws-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="wsQ" placeholder="Search themes" autocomplete="off" spellcheck="false"></div>
+      <select id="wsSort"><option value="likes">Most liked</option><option value="new">Newest</option></select>
+      <button type="button" class="accent small" id="wsPublishBtn">Publish a theme</button>
+      <button type="button" class="icon" id="wsClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div class="ws-pub hidden" id="wsPub">
+      <div class="ws-pub-row">
+        <label class="grow">Your theme<select id="wsPubTheme"></select></label>
+        <label class="grow2">About it<input id="wsPubAbout" maxlength="200" placeholder="e.g. Rain on a window at night, with sound" autocomplete="off"></label>
+      </div>
+      <div class="note" id="wsPubNote">It shows up for everyone once the developer approves it. 50 MB at most; 100 themes fit in the workshop.</div>
+      <div class="ws-pub-row end"><span class="error grow" id="wsPubErr"></span><button type="button" class="small" id="wsPubCancel">Cancel</button><button type="button" class="accent small" id="wsPubGo">Publish</button></div>
+    </div>
+    <div class="note ws-count" id="wsCount"></div>
+    <div class="ws-grid" id="wsGrid"></div>
+  </dialog>
+  <dialog id="wsReportDlg">
+    <form id="wsReportForm" method="dialog">
+      <h2>Report this theme</h2>
+      <label>Why?<select id="wsReportWhy">
+        <option value="Offensive or adult">Offensive or adult</option>
+        <option value="Dangerous (a harmful page, flashing, scam)">Dangerous (a harmful page, flashing, scam)</option>
+        <option value="Not theirs to share">Not theirs to share</option>
+        <option value="Broken or doesn't work">Broken or doesn't work</option>
+        <option value="Other">Other</option>
+      </select></label>
+      <label>More (optional)<input id="wsReportMore" maxlength="200" autocomplete="off"></label>
+      <div class="note">The developer gets it. After 3 reports a theme is hidden until it is checked.</div>
+      <div class="actions"><span class="grow"></span><button type="button" id="wsReportCancel">Cancel</button><button class="accent" id="wsReportGo">Report</button></div>
     </form>
   </dialog>
   <dialog id="pinsDlg" class="wide-dlg">

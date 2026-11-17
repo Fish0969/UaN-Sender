@@ -155,6 +155,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "selftestVlc": std::env::var("UAN_SELFTEST_VLC").is_ok(),
         "selftestAssist": std::env::var("UAN_SELFTEST_ASSIST").is_ok(),
         "customChrome": cfg!(windows),
+        "devPanel": node.dev_panel_on(),
         "platform": std::env::consts::OS,
         "version": app.package_info().version.to_string(),
         "selftest": selftest.0,
@@ -723,6 +724,19 @@ fn theme_add(profile: State<'_, Profile>, path: String, name: String, base: Stri
     if !src.starts_with(&uploads) || !src.is_file() {
         return Err("That file can't be used.".into());
     }
+    theme_add_at(&profile.dir, src, name, base, accent, None)
+}
+
+/// A name that is safe as a file name and for the theme address (letters, digits, space . - _ ( ) ').
+fn safe_file_name(s: &str) -> String {
+    let t: String = s.chars().map(|c| if c.is_alphanumeric() || " .-_()'".contains(c) { c } else { ' ' }).collect();
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    let t: String = t.trim_start_matches('.').chars().take(60).collect();
+    let t = t.trim_end_matches(['.', ' ']).to_string();
+    if t.trim().is_empty() { "Theme".into() } else { t.trim().to_string() }
+}
+
+fn theme_add_at(dir: &std::path::Path, src: PathBuf, name: String, base: String, accent: Option<String>, folder_name: Option<String>) -> CmdResult<CustomTheme> {
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     let (kind, mime, limit) = match ext.as_str() {
         "html" | "htm" => ("html", "text/html", 8u64 << 20),
@@ -741,14 +755,27 @@ fn theme_add(profile: State<'_, Profile>, path: String, name: String, base: Stri
     if size == 0 || size > limit {
         return Err("That file is too big for a theme.".into());
     }
-    let mut list = load_themes(&profile.dir);
+    let mut list = load_themes(dir);
     if list.len() >= 24 {
         return Err("Remove one of your themes first (24 at most).".into());
     }
     let id: String = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
-    let file = format!("{id}.{ext}");
-    std::fs::create_dir_all(profile.dir.join("themes")).map_err(|e| e.to_string())?;
-    let dest = profile.dir.join("themes").join(&file);
+    let file = match &folder_name {
+        // e.g. "Workshop/Night drive - Leo.mp4" (a number is added when the name is taken)
+        Some(n) => {
+            std::fs::create_dir_all(dir.join("themes").join("Workshop")).map_err(|e| e.to_string())?;
+            let mut f = format!("Workshop/{n}.{ext}");
+            let mut k = 2;
+            while dir.join("themes").join(&f).exists() {
+                f = format!("Workshop/{n} ({k}).{ext}");
+                k += 1;
+            }
+            f
+        }
+        None => format!("{id}.{ext}"),
+    };
+    std::fs::create_dir_all(dir.join("themes")).map_err(|e| e.to_string())?;
+    let dest = dir.join("themes").join(&file);
     if std::fs::rename(&src, &dest).is_err() {
         std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
         let _ = std::fs::remove_file(&src);
@@ -771,8 +798,89 @@ fn theme_add(profile: State<'_, Profile>, path: String, name: String, base: Stri
         tune: Default::default(),
     };
     list.push(theme.clone());
-    save_themes(&profile.dir, &list)?;
+    save_themes(dir, &list)?;
     Ok(theme)
+}
+
+// ----- Theme workshop -----
+
+async fn ws_selftest(node: &Arc<Node>, dir: &std::path::Path) -> Result<String, String> {
+    let file = dir.join("selftest-theme.mp4");
+    let data: Vec<u8> = (0..2_000_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+    std::fs::write(&file, &data).map_err(|e| e.to_string())?;
+    let thumb = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnLz4=".to_string();
+    let id = node.ws_publish(&file, serde_json::json!({ "name": "Selftest", "about": "made by the self-test", "ext": "mp4", "base": "dark" }), Some(thumb)).await?;
+    let list = node.ws_list("Selftest", "new").await?;
+    let t = list["themes"].as_array().and_then(|a| a.iter().find(|t| t["id"] == id.as_str()).cloned()).ok_or("not in the list")?;
+    if t["mine"] != true || t["thumb"] != true || t["size"] != 2_000_000 || t["status"] != "pending" { return Err(format!("list says {t}")); }
+    let liked = node.ws_act("like", &id, serde_json::json!({ "on": true })).await?;
+    if liked["likes"] != 1 { return Err(format!("like says {liked}")); }
+    let back = node.ws_download(&id).await?;
+    if back != data { return Err("downloaded file differs".into()); }
+    let src = dir.join("selftest-dl.mp4");
+    std::fs::write(&src, &back).map_err(|e| e.to_string())?;
+    let added = theme_add_at(dir, src, "Selftest".into(), "dark".into(), None, Some(safe_file_name("Selftest - Tester/..")))?;
+    if !dir.join("themes").join(&added.file).is_file() || !added.file.starts_with("Workshop/") { return Err(format!("installed as {}", added.file)); }
+    node.ws_suggest("An idea from the self-test").await?;
+    node.ws_act("delete", &id, serde_json::json!({})).await?;
+    let after = node.ws_list("Selftest", "new").await?;
+    if after["themes"].as_array().is_some_and(|a| a.iter().any(|t| t["id"] == id.as_str())) { return Err("still listed after delete".into()); }
+    Ok(format!("published (pending), listed, liked, downloaded {} bytes, installed as {}, suggested, removed (admin={})", back.len(), added.file, list["admin"]))
+}
+
+#[tauri::command]
+async fn ws_list(node: State<'_, Arc<Node>>, q: String, sort: String) -> CmdResult<serde_json::Value> {
+    let node = node.inner().clone();
+    node.ws_list(&q, &sort).await
+}
+
+/// Publishes one of your own themes (with a short text and a small picture for the list).
+#[tauri::command]
+async fn ws_publish(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, id: String, about: String, thumb: Option<String>) -> CmdResult<String> {
+    let node = node.inner().clone();
+    let dir = profile.dir.clone();
+    let t = load_themes(&dir).into_iter().find(|t| t.id == id).ok_or("That theme is gone.")?;
+    let ext = t.file.rsplit('.').next().unwrap_or("").to_lowercase();
+    let meta = serde_json::json!({ "name": t.name, "about": about.trim().chars().take(200).collect::<String>(), "ext": ext, "base": t.base, "accent": t.accent });
+    node.ws_publish(&dir.join("themes").join(&t.file), meta, thumb).await
+}
+
+/// Downloads a theme from the workshop and adds it to your themes.
+#[tauri::command]
+async fn ws_install(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, id: String, name: String, author: String, ext: String, base: String, accent: Option<String>) -> CmdResult<CustomTheme> {
+    let node = node.inner().clone();
+    let dir = profile.dir.clone();
+    if !id.chars().all(|c| c.is_ascii_hexdigit()) || id.len() != 32 || !ext.chars().all(|c| c.is_ascii_alphanumeric()) || ext.len() > 5 {
+        return Err("Bad theme.".into());
+    }
+    let bytes = node.ws_download(&id).await?;
+    let folder = dir.join("uploads").join(format!("ws-{id}"));
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let src = folder.join(format!("theme.{}", ext.to_lowercase()));
+    std::fs::write(&src, &bytes).map_err(|e| e.to_string())?;
+    // Kept on this PC in themes/Workshop/: it stays yours even if it is removed from the workshop later.
+    let readable = safe_file_name(&format!("{} - {}", name.trim(), author.trim()));
+    theme_add_at(&dir, src, name, base, accent, Some(readable))
+}
+
+#[tauri::command]
+async fn ws_suggest(node: State<'_, Arc<Node>>, text: String) -> CmdResult<()> {
+    let node = node.inner().clone();
+    node.ws_suggest(&text).await
+}
+
+/// Opens the dev panel in the browser (only on the PC where it was switched on).
+#[tauri::command]
+fn dev_panel(node: State<'_, Arc<Node>>) -> CmdResult<()> {
+    let url = node.dev_panel_url()?;
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ws_act(node: State<'_, Arc<Node>>, what: String, id: String, on: Option<bool>, reason: Option<String>) -> CmdResult<serde_json::Value> {
+    let node = node.inner().clone();
+    let reason: String = reason.unwrap_or_default().trim().chars().take(300).collect();
+    node.ws_act(&what, &id, serde_json::json!({ "on": on.unwrap_or(false), "reason": reason })).await
 }
 
 #[tauri::command]
@@ -1292,6 +1400,18 @@ pub fn run() {
             app.manage(vlc::Vlc::default());
             // Playback self-test, used by the automatic build checks on the real downloadable packages.
             let selftest = std::env::var("UAN_SELFTEST_VIDEO").ok().and_then(|p| node.selftest_file(&p).ok());
+            // Theme workshop self-test against a given server (a local one in the build checks): publish, list, like, download, remove.
+            if let Ok(base) = std::env::var("UAN_SELFTEST_WS") {
+                let (n, d, h) = (node.clone(), dir.clone(), app.handle().clone());
+                let _ = n.set_mailbox(&base);
+                tauri::async_runtime::spawn(async move {
+                    let res = ws_selftest(&n, &d).await;
+                    if let Ok(out) = std::env::var("UAN_SELFTEST_OUT") {
+                        let _ = std::fs::write(out, match &res { Ok(s) => format!("ok {s}\n"), Err(e) => format!("fail {e}\n") });
+                    }
+                    h.exit(if res.is_ok() { 0 } else { 1 });
+                });
+            }
             app.manage(SelfTest(selftest));
             app.manage(node);
             #[cfg_attr(mobile, allow(unused_variables))]
@@ -1413,6 +1533,12 @@ pub fn run() {
             vlc_close,
             open_vlc_site,
             react,
+            ws_list,
+            ws_publish,
+            ws_install,
+            ws_act,
+            ws_suggest,
+            dev_panel,
             bio_image,
             reactions,
             media_tracks,

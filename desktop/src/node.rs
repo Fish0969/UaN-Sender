@@ -1654,6 +1654,127 @@ impl Node {
         Ok(())
     }
 
+    // ----- Theme workshop (on the mailbox's server): signed with the account key, so it is the same "you" on every device -----
+
+    fn ws_base(&self) -> Result<String, String> {
+        let url = self.mailbox_url();
+        if url.is_empty() {
+            return Err("The theme workshop lives on the mailbox: set one in Settings → Offline mailbox.".into());
+        }
+        Ok(url)
+    }
+
+    fn ws_sign(&self, msg: &str) -> String {
+        HEXLOWER.encode(&self.acct_secret.sign(msg.as_bytes()).to_bytes())
+    }
+
+    async fn ws_answer(r: reqwest::Response) -> Result<Value, String> {
+        let status = r.status();
+        let v: Value = r.json().await.map_err(|_| format!("The theme workshop did not answer properly ({status})."))?;
+        if v["ok"].as_bool() == Some(true) { Ok(v) } else { Err(v["error"].as_str().unwrap_or("Theme workshop error.").to_string()) }
+    }
+
+    pub async fn ws_list(&self, q: &str, sort: &str) -> Result<Value, String> {
+        let base = self.ws_base()?;
+        let r = self.http.get(format!("{base}/ws/list")).query(&[("q", q), ("sort", sort), ("who", self.me_s.as_str())]).send().await.map_err(|_| "Can't reach the theme workshop. Check your internet.".to_string())?;
+        let mut v = Self::ws_answer(r).await.map_err(|e| if e == "Not found." { "The theme workshop is not switched on yet on this mailbox.".to_string() } else { e })?;
+        v["base"] = json!(base);
+        Ok(v)
+    }
+
+    /// Uploads a theme file; the description goes in the address (small), the picture for the list afterwards.
+    pub async fn ws_publish(&self, path: &std::path::Path, mut meta: Value, thumb: Option<String>) -> Result<String, String> {
+        let base = self.ws_base()?;
+        let bytes = tokio::fs::read(path).await.map_err(e2s)?;
+        if bytes.len() > 50 * 1024 * 1024 {
+            return Err("A theme can be 50 MB at most.".into());
+        }
+        meta["author"] = json!(self.my_name());
+        let meta_s = meta.to_string();
+        let ts = now();
+        let sig = self.ws_sign(&format!("wsput:{}:{ts}:{}:{meta_s}", self.me_s, bytes.len()));
+        let r = self
+            .http
+            .put(format!("{base}/ws/upload"))
+            .query(&[("owner", self.me_s.as_str()), ("ts", &ts.to_string()), ("sig", &sig), ("meta", &meta_s)])
+            .timeout(Duration::from_secs(1800))
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|_| "The upload stopped. Check your internet and try again.".to_string())?;
+        let v = Self::ws_answer(r).await?;
+        let id = v["id"].as_str().ok_or("The theme workshop did not answer properly.")?.to_string();
+        if let Some(t) = thumb.filter(|t| t.starts_with("data:image/") && t.len() <= 40_000) {
+            let _ = self.ws_act("thumb", &id, json!({ "thumb": t })).await;
+        }
+        Ok(id)
+    }
+
+    /// like (extra.on), report, delete, unhide, thumb (extra.thumb)
+    pub async fn ws_act(&self, what: &str, id: &str, extra: Value) -> Result<Value, String> {
+        let base = self.ws_base()?;
+        let ts = now();
+        let me = &self.me_s;
+        let msg = match what {
+            "like" => format!("wslike:{me}:{id}:{}:{ts}", if extra["on"].as_bool() == Some(true) { 1 } else { 0 }),
+            "report" => format!("wsreport:{me}:{id}:{ts}"),
+            "delete" => format!("wsdel:{me}:{id}:{ts}"),
+            "unhide" => format!("wsunhide:{me}:{id}:{ts}"),
+            "thumb" => format!("wsthumb:{me}:{id}:{ts}:{}", HEXLOWER.encode(&Sha256::digest(extra["thumb"].as_str().unwrap_or("").as_bytes()))),
+            _ => return Err("Unknown action.".into()),
+        };
+        let mut body = json!({ "who": me, "id": id, "ts": ts, "sig": self.ws_sign(&msg) });
+        if let Some(o) = extra.as_object() {
+            for (k, v) in o {
+                body[k] = v.clone();
+            }
+        }
+        let r = self.http.post(format!("{base}/ws/{what}")).json(&body).send().await.map_err(|_| "Can't reach the theme workshop. Check your internet.".to_string())?;
+        Self::ws_answer(r).await
+    }
+
+    /// The dev panel (a web page on the workshop's server), signed in with the account key for a few hours. Only where it was switched on.
+    pub fn dev_panel_on(&self) -> bool {
+        self.kv("devpanel").is_some()
+    }
+
+    pub fn dev_panel_url(&self) -> Result<String, String> {
+        if !self.dev_panel_on() {
+            return Err("The dev panel is not on this PC.".into());
+        }
+        let base = self.ws_base()?;
+        let ts = now();
+        let sig = self.ws_sign(&format!("wsadmin:{}:{ts}", self.me_s));
+        Ok(format!("{base}/admin?who={}&ts={ts}&sig={sig}", self.me_s))
+    }
+
+    /// A suggestion for UaN, for the admin's dev panel.
+    pub async fn ws_suggest(&self, text: &str) -> Result<(), String> {
+        let base = self.ws_base()?;
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("Write something first.".into());
+        }
+        if text.encode_utf16().count() > 1000 {
+            return Err("1000 characters at most.".into());
+        }
+        let ts = now();
+        let sig = self.ws_sign(&format!("wssuggest:{}:{ts}:{}", self.me_s, HEXLOWER.encode(&Sha256::digest(text.as_bytes()))));
+        let body = json!({ "who": self.me_s, "author": self.my_name(), "text": text, "ts": ts, "sig": sig });
+        let r = self.http.post(format!("{base}/ws/suggest")).json(&body).send().await.map_err(|_| "Can't reach the server. Check your internet.".to_string())?;
+        Self::ws_answer(r).await.map(|_| ())
+    }
+
+    pub async fn ws_download(&self, id: &str) -> Result<Vec<u8>, String> {
+        let base = self.ws_base()?;
+        let r = self.http.get(format!("{base}/ws/file/{id}")).timeout(Duration::from_secs(1800)).send().await.map_err(|_| "Can't reach the theme workshop. Check your internet.".to_string())?;
+        if !r.status().is_success() {
+            return Err("That theme is gone from the workshop.".into());
+        }
+        let b = r.bytes().await.map_err(|_| "The download stopped. Try again.".to_string())?;
+        Ok(b.to_vec())
+    }
+
     fn sign_hex(&self, msg: &str) -> String {
         HEXLOWER.encode(&self.secret.sign(msg.as_bytes()).to_bytes())
     }
@@ -4230,11 +4351,20 @@ impl Node {
         let len = len.min(file.size.saturating_sub(start));
         if file.owner == "_theme" {
             // A video or picture of one of your own themes (UaN's data folder, themes/).
-            let name: String = file.id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
-            if name.is_empty() || name.starts_with('.') {
-                return Err("No such theme file.".into());
-            }
-            let mut f = tokio::fs::File::open(self.dir.join("themes").join(name)).await.map_err(e2s)?;
+            let rel = if let Some(rest) = file.id.strip_prefix("Workshop/") {
+                let ok = !rest.is_empty() && !rest.starts_with('.') && rest.chars().all(|c| c.is_alphanumeric() || " .-_()'".contains(c));
+                if !ok {
+                    return Err("No such theme file.".into());
+                }
+                std::path::PathBuf::from("Workshop").join(rest)
+            } else {
+                let name: String = file.id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
+                if name.is_empty() || name.starts_with('.') {
+                    return Err("No such theme file.".into());
+                }
+                std::path::PathBuf::from(name)
+            };
+            let mut f = tokio::fs::File::open(self.dir.join("themes").join(rel)).await.map_err(e2s)?;
             f.seek(SeekFrom::Start(start)).await.map_err(e2s)?;
             let mut buf = vec![0u8; len as usize];
             let mut got = 0;

@@ -1,5 +1,11 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.26', items: [
+    'Theme workshop (Settings → Appearance → Open): find themes other people made, like them, and use one with a click. Publish your own (50 MB at most; 100 themes fit).',
+    'Search the workshop, sort by most liked or newest. A new theme shows up once the developer approves it. Report a theme that should not be there; you can remove your own any time.',
+    'A theme you use from the workshop is saved on your PC (themes/Workshop) and stays yours, even if it leaves the workshop.',
+    'Send ideas for UaN from Settings → About & updates.',
+  ] },
   { v: '1.9.25', items: [
     'Six new interface styles: Brutal, Paper, Aero, Ink, Bubble and Vapor.',
     'Paste a picture (Ctrl+V, e.g. a screenshot) into a chat to send it; UaN asks first.',

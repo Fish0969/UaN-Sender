@@ -41,6 +41,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
 - **Polls.** In a group, the chart button makes a poll; everyone votes once and sees the results live.
 - **GIFs.** A GIF in a chat moves right in the message, with “.gif” under it; the whole GIF plays, also in an About and as a profile picture.
 - **Paste, drafts and emoji.** Ctrl+V sends a pasted picture (after asking), the text you were typing waits in each chat, a button jumps to the newest message, and an emoji picker sits by the paper clip.
+- **Theme workshop.** *Settings → Appearance → Open*: browse, search and like themes other people published, and use one with a click. Publish your own (50 MB at most, 100 themes in all); report one that should not be there.
 - **Profiles.** Write an *About* text in *Settings → Profile*. Click anyone's picture or name (or your own, to see how others see you) to see their profile: picture, status, About and since when you are friends. In a private chat, click the name at the top for the profile and right-click it for Mute, Clear and Remove friend.
 - **Sound tracks of a film.** A film (mkv) with more than one language gets an **Audio** button in the player; the default track plays as usual, another one is decoded by a silent VLC.
 - **Delete messages.** Hover a message and click × (on the phone: press and hold): delete it just for you, or (your own)
