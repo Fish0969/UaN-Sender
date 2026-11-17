@@ -1,5 +1,12 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.32', items: [
+    'The Android app is back, with everything the PC version has.',
+    'Top themes are bigger and fill their row (on a phone they scroll sideways).',
+    'A nicer Ideas for UaN box, with a counter.',
+    'The Cyber interface style is gone.',
+    'Theme workshop on a phone: the pictures of the themes show again.',
+  ] },
   { v: '1.9.31', items: [
     'Settings → Appearance: the 5 top themes of the workshop, small, under the workshop. Click one to preview it, press its star to favourite it.',
     'A video theme you favourite from the workshop plays its sound from the start.',

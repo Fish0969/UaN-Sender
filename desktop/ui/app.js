@@ -2250,6 +2250,7 @@ async function loadTopThemes() {
 function renderTopThemes() {
   if (!TOP) return;
   $('sTopWrap').classList.toggle('hidden', !TOP.items.length);
+  $('sTopThemes').style.setProperty('--n', String(Math.max(4, TOP.items.length)));
   $('sTopThemes').replaceChildren(...TOP.items.map((t) => {
     const fav = wsFavOf(t);
     const tile = el('span', { class: 'tile custom' },
@@ -2324,6 +2325,13 @@ $('wsReportForm').addEventListener('submit', async (e) => {
   } catch (err) { toast(err); }
 });
 // Ideas for UaN, and the dev panel (only on the PC where it is switched on)
+function suggestCount() {
+  const n = $('sSuggest').value.length;
+  $('sSuggestCount').textContent = n + ' / 1000';
+  $('sSuggestCount').classList.toggle('full', n >= 950);
+  $('sSuggestSend').disabled = !$('sSuggest').value.trim();
+}
+$('sSuggest').addEventListener('input', () => { $('sSuggestNote').textContent = ''; $('sSuggestNote').classList.remove('ok'); suggestCount(); });
 $('sSuggestSend').addEventListener('click', async () => {
   const text = $('sSuggest').value.trim();
   if (!text) return;
@@ -2331,9 +2339,10 @@ $('sSuggestSend').addEventListener('click', async () => {
   try {
     await invoke('ws_suggest', { text });
     $('sSuggest').value = '';
-    $('sSuggestNote').textContent = 'Sent, thank you!';
-  } catch (e) { $('sSuggestNote').textContent = String(e); }
-  $('sSuggestSend').disabled = false;
+    $('sSuggestNote').textContent = '✓ Sent, thank you!';
+    $('sSuggestNote').classList.add('ok');
+  } catch (e) { $('sSuggestNote').textContent = String(e); $('sSuggestNote').classList.remove('ok'); }
+  suggestCount();
 });
 $('sDevPanel').addEventListener('click', () => invoke('dev_panel').catch(toast));
 // What is being published: a file staged for the workshop, or one of your own themes.
@@ -3722,6 +3731,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sAboutVer').textContent = `UaN ${S.me.version}`;
   $('sDevCard').classList.toggle('hidden', !S.me.devPanel);
   $('sSuggestNote').textContent = '';
+  suggestCount();
   renderUpdateState();
   renderHistory();
   // The phone page carries the name the app gives it; pages that don't exist here (no mailbox on a phone) get no tab.
@@ -5018,7 +5028,6 @@ const UI_STYLES = [
   { id: 'brutal', name: 'Brutal' },
   { id: 'paper', name: 'Paper' },
   { id: 'aero', name: 'Aero' },
-  { id: 'cyber', name: 'Cyber' },
   { id: 'bubble', name: 'Bubble' },
   { id: 'holo', name: 'Holo' },
 ];

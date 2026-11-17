@@ -461,13 +461,16 @@
                   <button type="button" id="sGithub" title="Opens UaN's page on GitHub: downloads, release notes and the source">GitHub page</button>
                 </div>
               </div>
-              <div class="note">When a new version is out, UaN shows it in the sidebar. One click downloads it and UaN restarts by itself, nothing to install.</div>
               <div class="sub-title" id="sHistoryTitle">What is new in this version</div>
               <div id="sHistory" class="history"></div>
-              <div class="sub-title">Ideas for UaN</div>
               <div class="suggest-box">
-                <textarea id="sSuggest" maxlength="1000" rows="3" placeholder="Something to add, change or fix? Write it here and the developer gets it."></textarea>
-                <div class="suggest-row"><span class="note grow" id="sSuggestNote"></span><button type="button" class="accent small" id="sSuggestSend">Send</button></div>
+                <div class="suggest-head">
+                  <span class="suggest-ico"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3Z"/></svg></span>
+                  <div class="grow"><div class="strong">Ideas for UaN</div><div class="note">Something to add, change or fix? The developer reads every one.</div></div>
+                </div>
+                <textarea id="sSuggest" maxlength="1000" rows="3" placeholder="My idea is…"></textarea>
+                <div class="suggest-row"><span class="note grow" id="sSuggestNote"></span><span class="suggest-count" id="sSuggestCount">0 / 1000</span>
+                  <button type="button" class="accent small" id="sSuggestSend" disabled><svg viewBox="0 0 24 24"><path d="M4 12 20 4l-4 16-4-7Z"/><path d="m12 13 8-9"/></svg>Send</button></div>
               </div>
               <div class="dev-card hidden" id="sDevCard">
                 <div class="grow"><div class="strong">Dev panel</div><div class="note">Approve themes, read reports and suggestions. Only on this PC.</div></div>

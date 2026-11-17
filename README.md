@@ -10,7 +10,7 @@ No server, no account: everything runs on your own PC.
 [![Latest release](https://img.shields.io/github/v/release/Fish0969/UaN-Sender?style=flat-square&color=ffb04f&label=latest)](../../releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Fish0969/UaN-Sender/total?style=flat-square&color=ffb04f)](../../releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/Fish0969/UaN-Sender/build.yml?style=flat-square&label=build)](../../actions/workflows/build.yml)
-![Platforms](https://img.shields.io/badge/Windows%20%7C%20Linux-2b2d36?style=flat-square)
+![Platforms](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20Android-2b2d36?style=flat-square)
 
 [**Download**](../../releases/latest) &nbsp;·&nbsp; [How it works](#how-it-works) &nbsp;·&nbsp; [Features](docs/FEATURES.md) &nbsp;·&nbsp; [Build it yourself](BUILDING.md)
 
@@ -57,6 +57,7 @@ Get the newest version from the **[Releases page](../../releases/latest)**. Ever
 | **Windows** | `UaN_…_x64-setup.exe` | Run it. If Windows says *unknown publisher*: *More info → Run anyway*. Allow it through the firewall on first start. |
 | **Ubuntu, Mint, Debian, Pop!_OS** | `UaN_…_amd64.deb` | Double-click it and press *Install*, or `sudo apt install ./UaN_*_amd64.deb` |
 | **Any other Linux** | `UaN_…_amd64.AppImage` | Allow executing (*Properties → Allow executing as program*), then double-click |
+| **Android** | `UaN_…_android.apk` | Open it on the phone and allow installing from this source. Sign in with your PC's account (Settings → Phone on the PC). |
 
 Already have UaN? You don't need to come back here: when a new version is out, a card appears in the app. One click and it
 updates itself.
@@ -127,7 +128,6 @@ Everything, in detail: **[docs/FEATURES.md](docs/FEATURES.md)**
 
 - **Big files need both PCs on once.** The sender's PC must be on, with UaN running, until the friend has watched or downloaded the file. Automatic downloads (Settings) make that happen in the background.
 - **Direct is fast, a relay is slow.** The chat header says which one you have. Speed is also limited by the sender's upload.
-- **The Android app is paused** (the last version is 1.9.2). It is on the [Releases page](https://github.com/Fish0969/UaN-Sender/releases) if you want it.
 
 ## Build it yourself
 
