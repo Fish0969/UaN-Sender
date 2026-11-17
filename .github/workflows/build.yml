@@ -166,10 +166,7 @@ jobs:
 
   # The Android app (APK), built from the same code. Signed with UaN's key (GitHub secrets), so a new
   # version installs over the old one.
-  # Paused since 1.9.3 at the owner's request: the phone app is not updated for now (the code stays).
-  # Set ANDROID_BUILD to true to build it again.
   android:
-    if: ${{ vars.ANDROID_BUILD == 'true' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
