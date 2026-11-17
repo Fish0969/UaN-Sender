@@ -1,5 +1,8 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.28', items: [
+    'The sound of your theme comes back after you close the Settings.',
+  ] },
   { v: '1.9.27', items: [
     'Security updates.',
     'Theme workshop improvements.',

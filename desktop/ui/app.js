@@ -4570,7 +4570,8 @@ const tuneOf = (c) => ({ ...TUNE_DEFAULT, ...(c?.tune || {}) });
 // Something else is playing (the film viewer, a watch party, a sound in a message): the background stays quiet.
 function mediaBusy() {
   if (!$('viewer').classList.contains('hidden') || !$('party').classList.contains('hidden')) return true;
-  return [...document.querySelectorAll('video, audio')].some((m) => m !== backdrop?.video && !m.paused && !m.ended);
+  // Only what can be heard counts: a moving profile picture or an About GIF is a silent clip and must not quiet the theme.
+  return [...document.querySelectorAll('video, audio')].some((m) => m !== backdrop?.video && !m.paused && !m.ended && !m.muted && m.volume > 0);
 }
 function syncBackdropSound() { if (backdrop?.c) applyTune(backdrop.c); }
 for (const ev of ['play', 'pause', 'ended']) document.addEventListener(ev, syncBackdropSound, true);
@@ -4680,6 +4681,10 @@ function closeTune() {
 }
 $('tuneClose').addEventListener('click', closeTune);
 $('settingsDlg').addEventListener('close', closeTune);
+// Closed windows don't keep clips running in the background (pictures, previews), and the theme gets its sound back.
+for (const d of ['settingsDlg', 'profileDlg', 'wsDlg']) {
+  $(d).addEventListener('close', () => { for (const v of $(d).querySelectorAll('video')) v.pause(); syncBackdropSound(); });
+}
 $('tuneReset').addEventListener('click', () => {
   if (!tuning) return;
   tuning.tune = {};
