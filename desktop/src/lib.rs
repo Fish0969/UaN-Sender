@@ -501,6 +501,12 @@ fn set_autodl(node: State<'_, Arc<Node>>, on: bool, gb: u64) {
     node.set_autodl(on, gb)
 }
 
+/// The folder automatic downloads go to, typed in ("" = Downloads/UaN).
+#[tauri::command]
+fn set_autodl_dir(node: State<'_, Arc<Node>>, dir: String) -> CmdResult<()> {
+    node.set_autodl_dir(&dir)
+}
+
 /// A new friend code (the old one stops working; friends stay friends).
 #[tauri::command]
 fn new_friend_code(node: State<'_, Arc<Node>>) -> String {
@@ -1727,6 +1733,7 @@ pub fn run() {
             set_autodl,
             set_autodl_chat,
             new_friend_code,
+            set_autodl_dir,
             pick_autodl_dir,
             check_update,
             install_update,

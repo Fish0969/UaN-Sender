@@ -1,5 +1,10 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.34', items: [
+    'A message that tags someone has its own colour (yellow when you are the one tagged).',
+    'The folder for automatic downloads can be typed in, or chosen with Change…',
+    'Start UaN when your computer starts: saved as soon as you tick it.',
+  ] },
   { v: '1.9.33', items: [
     'Automatic downloads only happen in the chats where you switch them on (right-click a friend or a group → Automatic downloads here). The setting is marked in red: it is not fully safe.',
     'You can choose the folder automatic downloads go to.',

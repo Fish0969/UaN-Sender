@@ -1663,7 +1663,7 @@ html.phone #settingsDlg .top-themes > .note { display: block; }
 .warn-ico { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #e5484d; color: #fff; font-size: 12px; font-weight: 800; flex: none; }
 .autodl-box .note.warn { color: color-mix(in srgb, #ff8a8d 85%, var(--text)); margin-top: 4px; }
 .autodl-dir { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
-.autodl-dir b { word-break: break-all; }
+#sAutoDlDir { flex: 1; min-width: 180px; height: 30px; }
 
 .s-title-row { display: flex; align-items: center; gap: 10px; }
 .s-title-row .s-title { flex: 1; }
@@ -1679,3 +1679,8 @@ html.phone #settingsDlg .top-themes > .note { display: block; }
 
 .wp-color { width: 44px; height: 28px; padding: 0 2px; border: 1px solid var(--border); border-radius: 6px; background: transparent; cursor: pointer; margin-left: auto; }
 .wp-auto { height: 26px; min-height: 0; padding: 0 9px; }
+
+/* A message that tags someone: the whole bubble gets its own colour (and yellow when it is you who is tagged) */
+.msg.has-mention .bubble { background: color-mix(in srgb, #7c5cff 32%, var(--theirs)); box-shadow: inset 3px 0 0 #9b84ff; }
+.msg.mine.has-mention .bubble { background: color-mix(in srgb, #7c5cff 45%, var(--mine)); box-shadow: inset -3px 0 0 #b9a8ff; }
+.msg.mentions-me .bubble { background: color-mix(in srgb, #f0b232 26%, var(--theirs)); box-shadow: inset 3px 0 0 #f0b232, 0 0 0 1px color-mix(in srgb, #f0b232 55%, transparent); }

@@ -1091,7 +1091,7 @@ function messageNode(m, run = true, block = null) {
   const theirsInGroup = group && !m.mine;
   const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
-    + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (block ? ` block-${block.kind}` : '');
+    + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (m.text && /(^|[^p{L}p{N}])@[p{L}p{N}_.-]+/u.test(m.text) ? ' has-mention' : '') + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
   let node;
   if (!theirsInGroup) node = el('div', attrs, body);
@@ -3787,7 +3787,7 @@ $('settingsBtn').addEventListener('click', async () => {
   renderLookPick();
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
-  $('sAutoDlDir').textContent = S.me.autodlDir || 'Downloads/UaN';
+  $('sAutoDlDir').value = S.me.autodlDir || '';
   $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
   $('sError').textContent = '';
@@ -4072,7 +4072,6 @@ async function saveSettings() {
       await invoke('set_mailbox', { url: $('sMailbox').value });
       invoke('check_mailbox').catch(() => {});
     }
-    if (!S.me.profileName && $('sAuto').checked !== S.me.autostart) await invoke('set_autostart', { enabled: $('sAuto').checked });
     await invoke('set_autodl', { on: $('sAutoDl').checked, gb: Math.max(1, Number($('sAutoDlGb').value) || 10) });
     await invoke('set_privacy', { typing: $('sTyping').checked, receipts: $('sReceipts').checked });
     try { localStorage.setItem('uan.onlineHeads', $('sHeads').checked ? '1' : '0'); } catch {}
@@ -5542,11 +5541,28 @@ $('galleryClose').addEventListener('click', () => $('galleryDlg').close());
 boot();
 
 // Where automatic downloads go
+$('sAuto').addEventListener('change', async () => {
+  if (S.me.profileName) return;
+  try {
+    const on = await invoke('set_autostart', { enabled: $('sAuto').checked });
+    S.me.autostart = on;
+    $('sAuto').checked = on;
+    toast(on ? 'UaN starts with your computer now.' : 'UaN no longer starts with your computer.');
+  } catch (e) { $('sAuto').checked = S.me.autostart; toast(e); }
+});
+$('sAutoDlDir').addEventListener('change', async () => {
+  try {
+    await invoke('set_autodl_dir', { dir: $('sAutoDlDir').value });
+    S.me.autodlDir = $('sAutoDlDir').value.trim();
+    $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
+    toast(S.me.autodlDir ? 'Automatic downloads go to ' + S.me.autodlDir + ' now.' : 'Automatic downloads go to Downloads/UaN.');
+  } catch (e) { toast(e); $('sAutoDlDir').value = S.me.autodlDir || ''; }
+});
 $('sAutoDlPick').addEventListener('click', async () => {
-  try { const d = await invoke('pick_autodl_dir', { reset: false }); S.me.autodlDir = d; $('sAutoDlDir').textContent = d || 'Downloads/UaN'; $('sAutoDlReset').classList.toggle('hidden', !d); } catch (e) { toast(e); }
+  try { const d = await invoke('pick_autodl_dir', { reset: false }); S.me.autodlDir = d; $('sAutoDlDir').value = d || ''; $('sAutoDlReset').classList.toggle('hidden', !d); } catch (e) { toast(e); }
 });
 $('sAutoDlReset').addEventListener('click', async () => {
-  try { await invoke('pick_autodl_dir', { reset: true }); S.me.autodlDir = ''; $('sAutoDlDir').textContent = 'Downloads/UaN'; $('sAutoDlReset').classList.add('hidden'); } catch (e) { toast(e); }
+  try { await invoke('pick_autodl_dir', { reset: true }); S.me.autodlDir = ''; $('sAutoDlDir').value = ''; $('sAutoDlReset').classList.add('hidden'); } catch (e) { toast(e); }
 });
 
 $('sAutoUpd').addEventListener('change', () => setAutoUpdate($('sAutoUpd').checked));
