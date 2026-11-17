@@ -7,3 +7,5 @@ node_modules/
 # Local tools and logs
 .claude/
 *.log
+# The mailbox server lives in its own (private) repository
+mailbox/

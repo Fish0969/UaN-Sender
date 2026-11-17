@@ -33,21 +33,13 @@ npx @tauri-apps/cli@2 build
   as `~/.local/share/UaN/bin/uan-<version>`; the AppImage checks it with `--uan-version` and starts it.
 - `desktop/src/main.rs`: the window, tray icon, autostart and commands for the UI.
 - `desktop/ui/`: the interface (plain HTML, CSS and JavaScript).
-- `mailbox/`: the offline mailbox, a Cloudflare Worker with a D1 database (free tier).
 
 ## Offline mailbox
 
 Messages are encrypted for the recipient before they leave the PC, and every request is signed with
 the user's UaN key, so the mailbox can't read or tamper with anything. Files are never stored there.
 
-```bash
-cd mailbox
-npm install
-npx wrangler login
-npx wrangler d1 create uan-mailbox
-npx wrangler deploy
-```
-
-Put the database id from `d1 create` into `wrangler.toml` before deploying, then set the address as
-`DEFAULT_MAILBOX` in `desktop/src/node.rs`.
+The mailbox server is not part of this repository. A build of UaN uses the public one
+(`DEFAULT_MAILBOX` in `desktop/src/node.rs`); anyone can point UaN at another one in
+*Settings → Offline mailbox*.
 
