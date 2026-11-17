@@ -2160,8 +2160,9 @@ function wsRender() {
     return;
   }
   $('wsGrid').replaceChildren(...WS.items.map((t) => {
-    const thumb = el('div', { class: 'ws-thumb' },
+    const thumb = el('div', { class: 'ws-thumb', title: 'Preview', onclick: () => wsView(t) },
       t.thumb ? el('img', { src: WS.base + '/ws/thumb/' + t.id, alt: '', loading: 'lazy' }) : el('span', { text: WS_KIND[t.kind] || 'Theme' }),
+      el('span', { class: 'ws-play' }, svg(t.kind === 'video' ? '<path d="M8 5.5v13l11-6.5Z"/>' : '<path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6Z"/><circle cx="12" cy="12" r="2.6"/>')),
       el('span', { class: 'ws-kind', text: (WS_KIND[t.kind] || 'Theme') + ' · ' + fmtWsSize(t.size) }),
       t.status === 'pending' ? el('span', { class: 'ws-flag wait', text: 'Waiting for approval' }) : t.hidden ? el('span', { class: 'ws-flag', text: 'Hidden after reports' }) : null);
     const like = el('button', { type: 'button', class: 'ws-like small' + (t.liked ? ' on' : ''), title: t.liked ? 'Take your like back' : 'Like it' },
@@ -2170,16 +2171,29 @@ function wsRender() {
       like.disabled = true;
       try { const r = await invoke('ws_act', { what: 'like', id: t.id, on: !t.liked }); t.liked = !t.liked; t.likes = r.likes; wsRender(); } catch (e) { toast(e); like.disabled = false; }
     });
-    const use = el('button', { type: 'button', class: 'accent small ws-use', text: 'Use' });
+    // Favourite: the theme is saved on this PC among your themes (Settings → Themes), to pick any time.
+    const fav = customThemes.find((c) => c.ws === t.id);
+    const use = el('button', { type: 'button', class: 'small ws-fav' + (fav ? ' on' : ' accent'), title: fav ? 'Take it out of your themes' : 'Save it among your themes' },
+      svg('<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>'), el('span', { text: fav ? 'Favourited' : 'Favourite' }));
     use.addEventListener('click', async () => {
-      use.disabled = true; use.textContent = 'Getting it…';
+      use.disabled = true;
+      if (fav) {
+        try {
+          await invoke('theme_remove', { id: fav.id });
+          if (theme.mode === 'custom:' + fav.id) setTheme('dark');
+          await loadCustomThemes();
+          toast('“' + t.name + '” is not one of your themes any more.');
+        } catch (e) { toast(e); }
+        wsRender();
+        return;
+      }
+      use.lastChild.textContent = 'Saving…';
       try {
-        const c = await invoke('ws_install', { id: t.id, name: t.name, author: t.author, ext: t.ext, base: t.base, accent: t.accent || null });
+        await invoke('ws_install', { id: t.id, name: t.name, author: t.author, ext: t.ext, base: t.base, accent: t.accent || null });
         await loadCustomThemes();
-        setTheme('custom:' + c.id);
-        use.textContent = 'Added';
-        toast('“' + t.name + '” is one of your themes now.');
-      } catch (e) { toast(e); use.disabled = false; use.textContent = 'Use'; }
+        toast('“' + t.name + '” is in your themes now: pick it in Settings → Themes.');
+      } catch (e) { toast(e); }
+      wsRender();
     });
     const more = el('button', { type: 'button', class: 'icon small', title: 'More' }, svg('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'));
     more.addEventListener('click', (e) => {
@@ -2201,6 +2215,26 @@ function wsRender() {
       el('div', { class: 'ws-foot' }, like, more, use));
   }));
 }
+// The whole theme, big: the video plays (with its sound), the picture or the page is shown. Nothing is saved.
+function wsView(t) {
+  const src = WS.base + '/ws/file/' + t.id + '?view=1';
+  let media;
+  if (t.kind === 'video') media = el('video', { src, autoplay: true, loop: true, controls: true, playsinline: true });
+  else if (t.kind === 'html') media = el('iframe', { src, sandbox: 'allow-scripts', referrerpolicy: 'no-referrer', title: t.name });
+  else media = el('img', { src, alt: t.name });
+  if (t.kind === 'video') {
+    media.addEventListener('error', () => $('wsViewStage').replaceChildren(el('div', { class: 'ws-empty', text: 'This video can’t be played here (its format isn’t supported).' })));
+    // While it plays with sound, the theme behind keeps quiet.
+    for (const ev of ['play', 'pause', 'volumechange']) media.addEventListener(ev, syncBackdropSound);
+  }
+  $('wsViewStage').replaceChildren(media);
+  $('wsViewName').textContent = t.name;
+  $('wsViewBy').textContent = 'by ' + t.author + ' · ' + (WS_KIND[t.kind] || 'Theme') + ' · ' + fmtWsSize(t.size);
+  $('wsViewDlg').showModal();
+  syncBackdropSound();
+}
+$('wsViewClose').addEventListener('click', () => { $('wsViewStage').replaceChildren(); $('wsViewDlg').close(); syncBackdropSound(); });
+$('wsViewDlg').addEventListener('close', () => $('wsViewStage').replaceChildren());
 // A small picture of your theme for the list: a frame of the video, the picture, or none for a page.
 async function wsThumbOf(c) {
   if (c.kind === 'html') return null;
@@ -4701,7 +4735,7 @@ function closeTune() {
 $('tuneClose').addEventListener('click', closeTune);
 $('settingsDlg').addEventListener('close', closeTune);
 // Closed windows don't keep clips running in the background (pictures, previews), and the theme gets its sound back.
-for (const d of ['settingsDlg', 'profileDlg', 'wsDlg']) {
+for (const d of ['settingsDlg', 'profileDlg', 'wsDlg', 'wsViewDlg']) {
   $(d).addEventListener('close', () => { for (const v of $(d).querySelectorAll('video')) v.pause(); syncBackdropSound(); });
 }
 $('tuneReset').addEventListener('click', () => {

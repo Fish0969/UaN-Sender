@@ -699,6 +699,9 @@ struct CustomTheme {
     /// How the background is shown: volume, brightness, position (x, y) and zoom. Empty = defaults.
     #[serde(default)]
     tune: serde_json::Map<String, serde_json::Value>,
+    /// The workshop theme this one came from (a favourite), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ws: Option<String>,
 }
 
 fn load_themes(dir: &std::path::Path) -> Vec<CustomTheme> {
@@ -796,6 +799,7 @@ fn theme_add_at(dir: &std::path::Path, src: PathBuf, name: String, base: String,
         accent,
         sound: false,
         tune: Default::default(),
+        ws: None,
     };
     list.push(theme.clone());
     save_themes(dir, &list)?;
@@ -817,10 +821,11 @@ async fn ws_selftest(node: &Arc<Node>, dir: &std::path::Path) -> Result<String, 
     if liked["likes"] != 1 { return Err(format!("like says {liked}")); }
     let back = node.ws_download(&id).await?;
     if back != data { return Err("downloaded file differs".into()); }
-    let src = dir.join("selftest-dl.mp4");
-    std::fs::write(&src, &back).map_err(|e| e.to_string())?;
-    let added = theme_add_at(dir, src, "Selftest".into(), "dark".into(), None, Some(safe_file_name("Selftest - Tester/..")))?;
-    if !dir.join("themes").join(&added.file).is_file() || !added.file.starts_with("Workshop/") { return Err(format!("installed as {}", added.file)); }
+    let added = ws_favourite(node, dir, &id, "Selftest", "Tester/..", "mp4", "dark", None).await?;
+    if !dir.join("themes").join(&added.file).is_file() || !added.file.starts_with("Workshop/") || added.ws.as_deref() != Some(id.as_str()) { return Err(format!("installed as {} ws {:?}", added.file, added.ws)); }
+    if std::fs::read(dir.join("themes").join(&added.file)).ok().as_deref() != Some(&back[..]) { return Err("favourite file differs".into()); }
+    let again = ws_favourite(node, dir, &id, "Selftest", "Tester/..", "mp4", "dark", None).await?;
+    if again.id != added.id || load_themes(dir).iter().filter(|t| t.ws.as_deref() == Some(id.as_str())).count() != 1 { return Err("favourited twice".into()); }
     node.ws_suggest("An idea from the self-test").await?;
     node.ws_act("delete", &id, serde_json::json!({})).await?;
     let pic = dir.join("Rain at night.png");
@@ -922,22 +927,47 @@ async fn ws_publish_staged(node: &Arc<Node>, dir: &std::path::Path, file: &str, 
     Ok(id)
 }
 
-/// Downloads a theme from the workshop and adds it to your themes.
+/// Favourites a theme from the workshop: downloads it and adds it to your themes (once).
 #[tauri::command]
 async fn ws_install(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, id: String, name: String, author: String, ext: String, base: String, accent: Option<String>) -> CmdResult<CustomTheme> {
     let node = node.inner().clone();
     let dir = profile.dir.clone();
+    ws_favourite(&node, &dir, &id, &name, &author, &ext, &base, accent).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn ws_favourite(node: &Arc<Node>, dir: &std::path::Path, id: &str, name: &str, author: &str, ext: &str, base: &str, accent: Option<String>) -> CmdResult<CustomTheme> {
     if !id.chars().all(|c| c.is_ascii_hexdigit()) || id.len() != 32 || !ext.chars().all(|c| c.is_ascii_alphanumeric()) || ext.len() > 5 {
         return Err("Bad theme.".into());
     }
-    let bytes = node.ws_download(&id).await?;
-    let folder = dir.join("uploads").join(format!("ws-{id}"));
-    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-    let src = folder.join(format!("theme.{}", ext.to_lowercase()));
-    std::fs::write(&src, &bytes).map_err(|e| e.to_string())?;
+    let ext = ext.to_lowercase();
     // Kept on this PC in themes/Workshop/: it stays yours even if it is removed from the workshop later.
     let readable = safe_file_name(&format!("{} - {}", name.trim(), author.trim()));
-    theme_add_at(&dir, src, name, base, accent, Some(readable))
+    let mut list = load_themes(dir);
+    // Already a favourite (or got with "Use" before favourites existed): no second copy.
+    let legacy = format!("Workshop/{readable}.{ext}");
+    if let Some(t) = list.iter().find(|t| t.ws.as_deref() == Some(id)) {
+        return Ok(t.clone());
+    }
+    if let Some(t) = list.iter_mut().find(|t| t.ws.is_none() && t.file == legacy) {
+        t.ws = Some(id.to_string());
+        let t = t.clone();
+        save_themes(dir, &list)?;
+        return Ok(t);
+    }
+    let bytes = node.ws_download(id).await?;
+    let folder = dir.join("uploads").join(format!("ws-{id}"));
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let src = folder.join(format!("theme.{ext}"));
+    std::fs::write(&src, &bytes).map_err(|e| e.to_string())?;
+    let mut t = theme_add_at(dir, src, name.to_string(), base.to_string(), accent, Some(readable))?;
+    let mut list = load_themes(dir);
+    if let Some(x) = list.iter_mut().find(|x| x.id == t.id) {
+        x.ws = Some(id.to_string());
+    }
+    save_themes(dir, &list)?;
+    t.ws = Some(id.to_string());
+    Ok(t)
 }
 
 #[tauri::command]

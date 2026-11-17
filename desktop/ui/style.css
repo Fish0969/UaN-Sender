@@ -1595,7 +1595,20 @@ html[data-ui="brutal"] :is(.bubble, button:not(.ap-btn):not(.avatar-pick), input
 .ws-like svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
 .ws-like.on { color: #ff4d6d; border-color: color-mix(in srgb, #ff4d6d 60%, transparent); }
 .ws-like.on svg { fill: currentColor; }
-.ws-foot .ws-use { margin-left: auto; height: 28px; min-height: 0; }
+.ws-foot .ws-fav { margin-left: auto; display: flex; align-items: center; gap: 5px; height: 28px; min-height: 0; padding: 0 11px; }
+.ws-fav svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.ws-fav.on { color: #f5b301; border-color: color-mix(in srgb, #f5b301 60%, transparent); }
+.ws-fav.on svg { fill: currentColor; }
+.ws-thumb { cursor: pointer; }
+.ws-play { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; background: rgba(0, 0, 0, .55); display: grid; place-items: center; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.ws-play svg { width: 18px; height: 18px; fill: #fff; stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+.ws-play svg circle { fill: rgba(0, 0, 0, .55); }
+.ws-thumb:hover .ws-play { opacity: 1; }
+.ws-view-dlg { width: min(1100px, calc(100vw - 32px)); padding: 0; overflow: hidden; }
+.ws-view-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.ws-view-stage { aspect-ratio: 16 / 9; max-height: calc(100vh - 140px); background: #000; display: grid; place-items: center; }
+.ws-view-stage > video, .ws-view-stage > img, .ws-view-stage > iframe { width: 100%; height: 100%; object-fit: contain; border: 0; display: block; }
+.ws-view-stage > .ws-empty { color: #ccc; }
 .ws-empty { grid-column: 1 / -1; padding: 40px 10px; text-align: center; color: var(--muted); }
 @media (max-width: 640px) { .ws-head { flex-wrap: wrap; } .ws-pub-row { flex-direction: column; align-items: stretch; } }
 

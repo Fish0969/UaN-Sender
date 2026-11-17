@@ -1,5 +1,10 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.30', items: [
+    'Theme workshop: “Use” is now “Favourite”. A favourite goes into your themes, where you can pick it any time. Press “Favourited” to take it out again.',
+    'Theme workshop: click a theme’s picture to preview it big. Videos play right there.',
+    'Theme workshop improvements.',
+  ] },
   { v: '1.9.29', items: [
     'Theme workshop: “Panels over it” is Automatic by default. UaN picks dark or light panels from how bright the theme is.',
   ] },
