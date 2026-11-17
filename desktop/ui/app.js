@@ -2267,6 +2267,22 @@ function wsShowPreview(src, kind) {
   prev.classList.remove('hidden');
   $('wsDropEmpty').classList.add('hidden');
 }
+// How bright a picture is, 0 (black) to 1 (white), the way eyes see it.
+async function brightnessOf(src) {
+  try {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const cv = document.createElement('canvas');
+    cv.width = 32; cv.height = 18;
+    const x = cv.getContext('2d');
+    x.drawImage(img, 0, 0, 32, 18);
+    const d = x.getImageData(0, 0, 32, 18).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    return sum / (d.length / 4) / 255;
+  } catch { return 0; }
+}
 function wsClearPick() {
   WS.pick = null;
   $('wsPreview').replaceChildren();
@@ -2287,7 +2303,7 @@ function wsOpenPublish() {
   $('wsPubErr').textContent = '';
   $('wsPubName').value = '';
   $('wsPubAbout').value = '';
-  $('wsPubBase').value = 'dark';
+  $('wsPubBase').value = 'auto';
   wsClearPick();
   $('wsPubTheme').replaceChildren(el('option', { value: '', text: customThemes.length ? '(none)' : 'You have no themes yet' }),
     ...customThemes.map((c) => el('option', { value: c.id, text: c.name + ' · ' + (WS_KIND[c.kind] || 'Theme') + ' · ' + fmtWsSize(c.size) + (c.size > 50 * 1024 * 1024 ? ' (too big)' : '') })));
@@ -2308,7 +2324,7 @@ $('wsPubTheme').addEventListener('change', () => {
   if (!c) { wsClearPick(); return; }
   WS.pick = { theme: c };
   $('wsPubName').value = c.name;
-  $('wsPubBase').value = c.base === 'light' ? 'light' : 'dark';
+  $('wsPubBase').value = 'auto';
   wsShowPreview(themeFileUrl(c), c.kind);
 });
 $('wsOpen').addEventListener('click', () => { $('wsDlg').showModal(); $('wsPub').classList.add('hidden'); wsLoad(); });
@@ -2330,8 +2346,11 @@ $('wsPubGo').addEventListener('click', async () => {
   $('wsPubErr').textContent = '';
   try {
     const thumb = await wsThumbOf(c);
-    if (pick.theme) await invoke('ws_publish', { id: c.id, about: $('wsPubAbout').value, thumb, name, base: $('wsPubBase').value });
-    else await invoke('ws_publish_file', { file: c.file, name, about: $('wsPubAbout').value, base: $('wsPubBase').value, thumb });
+    // Automatic: light panels over a bright picture, dark ones over a dark picture (a page without a picture gets dark ones).
+    let base = $('wsPubBase').value;
+    if (base === 'auto') base = thumb && (await brightnessOf(thumb)) > 0.58 ? 'light' : 'dark';
+    if (pick.theme) await invoke('ws_publish', { id: c.id, about: $('wsPubAbout').value, thumb, name, base });
+    else await invoke('ws_publish_file', { file: c.file, name, about: $('wsPubAbout').value, base, thumb });
     wsClearPick();
     $('wsPub').classList.add('hidden');
     toast(S.me.devPanel ? '“' + name + '” is in the workshop now.' : 'Sent! “' + name + '” shows up for everyone once it is approved.');

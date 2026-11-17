@@ -1,5 +1,8 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.29', items: [
+    'Theme workshop: “Panels over it” is Automatic by default. UaN picks dark or light panels from how bright the theme is.',
+  ] },
   { v: '1.9.28', items: [
     'The sound of your theme comes back after you close the Settings.',
   ] },
