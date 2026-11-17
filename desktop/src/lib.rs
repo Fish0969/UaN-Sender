@@ -161,6 +161,8 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "selftest": selftest.0,
         "autodl": node.autodl().0,
         "autodlGb": node.autodl().1,
+        "autodlDir": node.autodl_dir(),
+        "autodlChats": node.autodl_chats(),
         "typing": node.privacy().0,
         "receipts": node.privacy().1,
         "mode": node.my_mode(),
@@ -497,6 +499,40 @@ fn set_thumb(node: State<'_, Arc<Node>>, file_id: String, data: String) -> CmdRe
 #[tauri::command]
 fn set_autodl(node: State<'_, Arc<Node>>, on: bool, gb: u64) {
     node.set_autodl(on, gb)
+}
+
+/// A new friend code (the old one stops working; friends stay friends).
+#[tauri::command]
+fn new_friend_code(node: State<'_, Arc<Node>>) -> String {
+    node.new_friend_code()
+}
+
+#[tauri::command]
+fn set_autodl_chat(node: State<'_, Arc<Node>>, chat: String, on: bool) {
+    node.set_autodl_chat(&chat, on)
+}
+
+/// Picks the folder automatic downloads go to ("" puts it back to Downloads/UaN).
+#[tauri::command]
+#[cfg_attr(mobile, allow(unused_variables))]
+async fn pick_autodl_dir(app: AppHandle, node: State<'_, Arc<Node>>, reset: bool) -> CmdResult<String> {
+    if reset {
+        node.set_autodl_dir("")?;
+        return Ok(String::new());
+    }
+    #[cfg(desktop)]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog().file().set_title("Where should automatic downloads go?").pick_folder(move |f| {
+            let _ = tx.send(f);
+        });
+        let Some(dir) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else { return Ok(node.autodl_dir()) };
+        let d = dir.to_string_lossy().into_owned();
+        node.set_autodl_dir(&d)?;
+        Ok(d)
+    }
+    #[cfg(mobile)]
+    Err("The folder can be chosen on a PC.".into())
 }
 
 // ---------- VLC ----------
@@ -991,6 +1027,15 @@ async fn ws_act(node: State<'_, Arc<Node>>, what: String, id: String, on: Option
     let node = node.inner().clone();
     let reason: String = reason.unwrap_or_default().trim().chars().take(300).collect();
     node.ws_act(&what, &id, serde_json::json!({ "on": on.unwrap_or(false), "reason": reason })).await
+}
+
+/// The interface colour that goes with one of your themes (None = the usual one).
+#[tauri::command]
+fn theme_accent(profile: State<'_, Profile>, id: String, accent: Option<String>) -> CmdResult<()> {
+    let mut list = load_themes(&profile.dir);
+    let t = list.iter_mut().find(|t| t.id == id).ok_or("That theme is gone.")?;
+    t.accent = accent.filter(|a| a.len() == 7 && a.starts_with('#') && a[1..].chars().all(|c| c.is_ascii_hexdigit()));
+    save_themes(&profile.dir, &list)
 }
 
 #[tauri::command]
@@ -1504,6 +1549,7 @@ pub fn run() {
                 let _ = app.notification().request_permission();
             }
             let node = tauri::async_runtime::block_on(Node::start(app.handle().clone(), dir.clone()))?;
+            node.load_autodl_dir();
             node.resume_downloads();
             // WebKitGTK (Linux) can't stream video from custom schemes, so the player uses a local HTTP server there.
             let http_base = tauri::async_runtime::block_on(node::start_media_server(node.clone())).unwrap_or_default();
@@ -1649,6 +1695,7 @@ pub fn run() {
             ws_list,
             ws_publish,
             ws_install,
+            theme_accent,
             ws_act,
             ws_suggest,
             ws_stage,
@@ -1678,6 +1725,9 @@ pub fn run() {
             party_full,
             set_thumb,
             set_autodl,
+            set_autodl_chat,
+            new_friend_code,
+            pick_autodl_dir,
             check_update,
             install_update,
             upload_part,

@@ -355,7 +355,7 @@
       <div class="s-main">
         <div class="s-pages">
           <section class="s-page" data-page="profile">
-            <h3 class="s-title">Profile</h3>
+            <div class="s-title-row"><h3 class="s-title">Profile</h3><button type="button" class="small" id="sSeeProfile"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>See how others see you</button></div>
             <div class="profile-row">
               <button type="button" id="sAvatarBtn" class="avatar-pick" title="Change profile picture"></button>
               <div class="grow">
@@ -415,13 +415,18 @@
               <label class="check"><input type="checkbox" id="sReceipts"> Show others when I’ve seen their messages</label>
               <label class="check"><input type="checkbox" id="sHeads"> Show who is online (small pictures) in group headers</label>
             </div>
+            <div class="sub-title">Friend code</div>
+            <div class="ws-row"><div class="grow"><div class="strong">Make a new friend code</div><div class="note">If your code got out by mistake: the old one stops working, your friends stay your friends.</div></div><button type="button" class="small" id="sNewCode">New code</button></div>
           </section>
           <section class="s-page hidden" data-page="files">
             <h3 class="s-title">Downloads &amp; start-up</h3>
             <div class="group">
               <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when your computer starts (runs in the tray)</label>
-              <label class="check"><input type="checkbox" id="sAutoDl"> Automatically download files friends send, up to <input id="sAutoDlGb" type="number" min="1" max="4096" class="gb"> GB</label>
-              <div class="note">Off by default: films stream without downloading. If on, files are saved to Downloads/UaN, so they still open when the sender’s PC is off later.</div>
+              <div class="autodl-box">
+                <label class="check"><input type="checkbox" id="sAutoDl"> <span class="warn-ico" title="Not fully safe">!</span> Automatically download files friends send, up to <input id="sAutoDlGb" type="number" min="1" max="4096" class="gb"> GB</label>
+                <div class="note warn">Not fully safe: files land on your PC without you opening them. Only for people you trust. It works only in the chats where you switch it on (right-click a friend or a group → Automatic downloads here).</div>
+                <div class="autodl-dir"><span class="note">Saved to</span> <b id="sAutoDlDir">Downloads/UaN</b> <button type="button" class="small" id="sAutoDlPick">Change…</button> <button type="button" class="small hidden" id="sAutoDlReset">Back to Downloads/UaN</button></div>
+              </div>
               <div class="note">UaN keeps running in the tray when you close the window, so friends can watch and download what you sent them. Quit it from the tray icon.</div>
             </div>
           </section>
@@ -461,6 +466,7 @@
                   <button type="button" id="sGithub" title="Opens UaN's page on GitHub: downloads, release notes and the source">GitHub page</button>
                 </div>
               </div>
+              <label class="check"><input type="checkbox" id="sAutoUpd"> Auto update: when UaN starts and a new version is out, it updates by itself</label>
               <div class="sub-title" id="sHistoryTitle">What is new in this version</div>
               <div id="sHistory" class="history"></div>
               <div class="suggest-box">
@@ -481,9 +487,9 @@
         </div>
         <div id="sError" class="error"></div>
         <div class="actions">
+          <span class="s-saved" id="sSaved">✓ Saved</span>
           <span class="grow"></span>
-          <button type="button" id="sCancel">Cancel</button>
-          <button class="accent">Save</button>
+          <button class="accent">Done</button>
         </div>
       </div>
     </form>
@@ -623,7 +629,7 @@
     <div class="ws-head">
       <strong class="ws-title">Theme workshop</strong>
       <div class="ws-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="wsQ" placeholder="Search themes" autocomplete="off" spellcheck="false"></div>
-      <select id="wsSort"><option value="likes">Most liked</option><option value="new">Newest</option></select>
+      <select id="wsSort"><option value="likes">Most liked</option><option value="new">Newest</option><option value="liked">Liked by you</option><option value="favs">Your favourites</option></select>
       <button type="button" class="accent small" id="wsPublishBtn">Publish a theme</button>
       <button type="button" class="icon" id="wsClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>

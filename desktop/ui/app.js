@@ -247,10 +247,19 @@ async function showNotes(u) {
   if (await ask('UaN ' + u.version + ': what’s new\n\n' + notes, 'Update now')) installUpdate(u, [$('sUpdNow')]);
 }
 // One click: downloads the new version and switches over by itself (the buttons are the ones to disable meanwhile).
-async function installUpdate(u, btns) {
-  if (!u.url) return toast('No download for this system in that release yet.');
+// Auto update (off unless you turn it on): a new version found when UaN starts is installed straight away.
+const autoUpdateOn = () => { try { return localStorage.getItem('uan.autoUpdate') === '1'; } catch { return false; } };
+function setAutoUpdate(on) {
+  try { localStorage.setItem('uan.autoUpdate', on ? '1' : '0'); } catch {}
+  $('sAutoUpd').checked = on;
+  $('updAutoBtn')?.classList.toggle('hidden', on);
+}
+let firstUpdateCheck = true;
+async function installUpdate(u, btns, quiet = false) {
+  if (!u.url) return quiet ? undefined : toast('No download for this system in that release yet.');
   const size = u.size ? ` (${fmtBytes(u.size)})` : '';
-  if (!(await ask(`Update to UaN ${u.version}${size}? It downloads the new version and switches over by itself, nothing to install. UaN restarts in a few seconds.`, 'Update'))) return;
+  if (quiet) toast(`Updating to UaN ${u.version} by itself (auto update is on)…`);
+  else if (!(await ask(`Update to UaN ${u.version}${size}? It downloads the new version and switches over by itself, nothing to install. UaN restarts in a few seconds.`, 'Update'))) return;
   const labels = btns.map((b) => b.textContent);
   const busy = (on) => btns.forEach((b, i) => { b.disabled = on; b.textContent = on ? 'Downloading…' : labels[i]; });
   busy(true);
@@ -285,12 +294,16 @@ async function checkUpdate() {
   if (u) {
     const btn = el('button', { type: 'button', text: 'Update' });
     btn.onclick = () => installUpdate(u, [btn, $('sUpdNow')]);
+    const auto = el('button', { type: 'button', class: 'upd-auto' + (autoUpdateOn() ? ' hidden' : ''), id: 'updAutoBtn', title: 'From now on, new versions install by themselves when UaN starts', text: 'Turn on auto update' });
+    auto.onclick = () => { setAutoUpdate(true); toast('Auto update is on: new versions install by themselves when UaN starts. (Settings → About & updates)'); installUpdate(u, [btn, $('sUpdNow')], true); };
     bar.replaceChildren(
       el('div', { class: 'upd-ico' }, svg('<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>')),
       el('div', { class: 'upd-text' }, el('b', { text: 'Update available' }), el('span', { text: `UaN ${u.version}` }),
         updateNotes(u) ? el('button', { type: 'button', class: 'link upd-notes', text: 'What’s new', onclick: () => showNotes(u) }) : null),
-      btn);
+      el('div', { class: 'upd-btns' }, btn, auto));
+    if (firstUpdateCheck && autoUpdateOn()) installUpdate(u, [btn, $('sUpdNow')], true);
   }
+  firstUpdateCheck = false;
   renderUpdateState();
   return u;
 }
@@ -426,7 +439,30 @@ function toggleCode(force) {
   clearTimeout(codeTimer);
   if (show) codeTimer = setTimeout(() => toggleCode(false), 20000);
 }
-$('showCode').addEventListener('click', () => toggleCode());
+// Showing the code takes two presses: the first asks "Are you sure?" (it may be seen, e.g. while you stream your screen).
+let codeAsk = null;
+$('showCode').addEventListener('click', () => {
+  const hidden = $('codeText').classList.contains('hidden');
+  if (!hidden) { toggleCode(false); return; }
+  if (!codeAsk) {
+    $('showCode').textContent = 'Are you sure?';
+    $('showCode').classList.add('confirm');
+    codeAsk = setTimeout(() => { codeAsk = null; $('showCode').classList.remove('confirm'); $('showCode').textContent = 'Show friend code'; }, 3500);
+    return;
+  }
+  clearTimeout(codeAsk); codeAsk = null;
+  $('showCode').classList.remove('confirm');
+  toggleCode(true);
+});
+$('sNewCode').addEventListener('click', async () => {
+  if (!(await ask('Make a new friend code? Your current code stops working: people who have it can’t add you with it any more. Your friends stay your friends.', 'Make a new one'))) return;
+  try {
+    const code = await invoke('new_friend_code');
+    S.me.code = code;
+    $('codeText').textContent = code;
+    toast('Done. Your new friend code is ready: Copy friend code copies it.');
+  } catch (e) { toast(e); }
+});
 
 // ---------- Live events ----------
 listen('message', ({ payload: m }) => onMessage(m));
@@ -600,13 +636,14 @@ function renderChannels() {
       avatar(m.name, { online: m.online, seed: m.id, src: m.id === S.me.id ? S.me.profile?.avatar : m.avatar, uid: m.id }),
       el('span', { class: 'grow ellipsis', text: m.id === S.me.id ? `${m.name} (you)` : m.name }))));
   }
+  $('addChanBtn').classList.toggle('hidden', !isManager(groupById(S.view)));
   // Legacy layout: tabs above the messages.
   const ag = groupOf(S.active);
   const tabs = !document.body.classList.contains('modern') && ag;
   $('chanTabs').classList.toggle('hidden', !tabs);
   if (tabs) {
     $('chanTabs').replaceChildren(...channelsOf(ag).map((ch) => channelItem(ag, ch, 'tab')),
-      el('button', { type: 'button', title: 'Create a channel', onclick: () => openChanDlg(ag) }, svg('<path d="M12 5v14M5 12h14"/>')));
+      isManager(ag) ? el('button', { type: 'button', title: 'Create a channel', onclick: () => openChanDlg(ag) }, svg('<path d="M12 5v14M5 12h14"/>')) : '');
   }
 }
 $('sideGroupName').addEventListener('click', () => {
@@ -642,6 +679,7 @@ function channelMenu(g, ch) {
 
 let chanDlgGroup = null;
 function openChanDlg(g) {
+  if (!isManager(g)) { toast('Only the group’s owner and co-owners can make channels.'); return; }
   chanDlgGroup = g;
   $('chanName').value = '';
   $('chanPw').value = '';
@@ -1502,12 +1540,16 @@ function openProfile(id) {
   const after = (at >= 0 ? bio.slice(at + BIO_PIC.length) : '').replace(/^\n/, '');
   const slot = el('span', { class: 'bio-slot' });
   const hasText = !!(before + after).trim();
-  $('pfBio').replaceChildren(...(hasText ? [formatText(before), slot, formatText(after)] : [p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : '', slot]));
+  const emptyNote = el('span', { text: p.me ? 'You have not written anything about yourself yet (Settings → Profile).' : '' });
+  $('pfBio').replaceChildren(...(hasText ? [formatText(before), slot, formatText(after)] : [emptyNote, slot]));
   $('pfBio').classList.toggle('empty', !hasText);
   $('pfAboutBox').classList.toggle('hidden', !hasText && !p.me);
   invoke('bio_image', { id: p.id }).then((src) => {
     if (!src || $('pfName').textContent !== p.name) return;
     slot.replaceChildren(bioMediaNode(src));
+    // A picture or GIF is something written about you too: no "nothing yet" note.
+    emptyNote.remove();
+    $('pfBio').classList.remove('empty');
     $('pfAboutBox').classList.remove('hidden');
   }).catch(() => {});
   const facts = [];
@@ -2156,9 +2198,13 @@ const WS_KIND = { video: 'Video', image: 'Picture', html: 'Page' };
 async function wsLoad() {
   $('wsCount').textContent = 'Loading…';
   try {
-    const v = await invoke('ws_list', { q: $('wsQ').value.trim(), sort: $('wsSort').value });
-    WS.base = v.base; WS.items = v.themes || []; WS.admin = !!v.admin;
-    $('wsCount').textContent = v.count + ' of ' + v.max + ' themes in the workshop' + ($('wsQ').value.trim() ? ' · ' + WS.items.length + ' found' : '');
+    // "Liked by you": the themes you gave a like (and "Your favourites": the ones saved among your themes).
+    const view = $('wsSort').value;
+    const v = await invoke('ws_list', { q: $('wsQ').value.trim(), sort: view === 'liked' || view === 'favs' ? 'likes' : view });
+    WS.base = v.base; WS.admin = !!v.admin;
+    WS.items = (v.themes || []).filter((t) => view === 'liked' ? t.liked : view === 'favs' ? !!wsFavOf(t) : true);
+    $('wsCount').textContent = view === 'liked' ? WS.items.length + ' theme' + (WS.items.length === 1 ? '' : 's') + ' you liked'
+      : view === 'favs' ? WS.items.length + ' of your favourites' : v.count + ' of ' + v.max + ' themes in the workshop' + ($('wsQ').value.trim() ? ' · ' + WS.items.length + ' found' : '');
     wsRender();
   } catch (e) {
     $('wsCount').textContent = '';
@@ -2167,7 +2213,8 @@ async function wsLoad() {
 }
 function wsRender() {
   if (!WS.items.length) {
-    $('wsGrid').replaceChildren(el('div', { class: 'ws-empty', text: $('wsQ').value.trim() ? 'No theme matches that.' : 'No themes yet. Be the first: press Publish a theme.' }));
+    const view = $('wsSort').value;
+    $('wsGrid').replaceChildren(el('div', { class: 'ws-empty', text: view === 'liked' ? 'You haven’t liked any theme yet: press the heart on one you like.' : view === 'favs' ? 'No favourites yet: press Favourite on a theme.' : $('wsQ').value.trim() ? 'No theme matches that.' : 'No themes yet. Be the first: press Publish a theme.' }));
     return;
   }
   $('wsGrid').replaceChildren(...WS.items.map((t) => {
@@ -3386,6 +3433,19 @@ document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxMen
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMenu(); });
 window.addEventListener('blur', hideMenu);
 
+// Automatic downloads happen only in the chats where you switch them on (and only while they are on in Settings).
+function autoDlItem(chat) {
+  const list = S.me?.autodlChats || [];
+  const on = list.includes(chat);
+  return { label: on ? '✓ Automatic downloads here' : 'Automatic downloads here', run: async () => {
+    try {
+      await invoke('set_autodl_chat', { chat, on: !on });
+      S.me.autodlChats = on ? list.filter((c) => c !== chat) : [...list, chat];
+      toast(on ? 'Files in this chat are no longer downloaded by themselves.'
+        : S.me.autodl ? 'Files sent here are downloaded by themselves now.' : 'Switched on for this chat. Automatic downloads are off in Settings → Downloads & start-up: turn them on there too.');
+    } catch (e) { toast(e); }
+  } };
+}
 function muteItem(chat) {
   const on = S.mutes.has(chat);
   return { label: on ? 'Unmute notifications' : 'Mute notifications', run: async () => {
@@ -3420,6 +3480,7 @@ function groupMenu(g) {
     { label: 'Add people…', run: () => openPick('add', g) },
     pinItem('g', g.id),
     muteItem(`g:${g.id}`),
+    autoDlItem(`g:${g.id}`),
     { label: 'Members and details', run: () => openGroupInfo(g.id) },
     manager ? { label: 'Change group picture…', run: () => pickGroupPicture(g) } : null,
     '-',
@@ -3451,6 +3512,7 @@ function friendMenu(f, inChat = false) {
     inChat ? null : { label: 'Check profile', run: () => openProfile(f.id) },
     inChat ? null : pinItem('f', f.id),
     muteItem(f.id),
+    autoDlItem(f.id),
     '-',
     { label: 'Clear messages for me', run: () => clearChat(f.id, false) },
     { label: 'Remove friend', danger: true, run: async () => {
@@ -3725,6 +3787,8 @@ $('settingsBtn').addEventListener('click', async () => {
   renderLookPick();
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
+  $('sAutoDlDir').textContent = S.me.autodlDir || 'Downloads/UaN';
+  $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
   $('sError').textContent = '';
   $('sVersion').textContent = `UaN ${S.me.version}`;
@@ -3744,6 +3808,7 @@ $('settingsBtn').addEventListener('click', async () => {
   }
   showSettingsPage('profile');
   $('settingsDlg').showModal();
+  settingsReady = true;
   loadTopThemes();
 });
 function showSettingsPage(name) {
@@ -3752,7 +3817,13 @@ function showSettingsPage(name) {
   $('settingsDlg').querySelector('.s-pages').scrollTop = 0;
 }
 document.querySelectorAll('.s-tab').forEach((b) => b.addEventListener('click', () => showSettingsPage(b.dataset.page)));
-$('sCancel').addEventListener('click', () => $('settingsDlg').close());
+$('sSeeProfile').addEventListener('click', async () => { await saveSettingsNow(); openProfile(S.me.id); });
+// The window can be moved by its title bar while a window like Settings is open (the bar is under its shade).
+document.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target.tagName !== 'DIALOG' || !document.documentElement.classList.contains('chrome')) return;
+  const bar = $('titlebar').getBoundingClientRect();
+  if (e.clientY <= bar.bottom) { e.preventDefault(); winCtl('drag'); }
+});
 
 function askPassword({ title, note, ok, twice }) {
   return new Promise((resolve) => {
@@ -3967,14 +4038,35 @@ $('bioFile').addEventListener('change', async () => {
   }
 });
 $('sGithub').addEventListener('click', () => invoke('open_github').catch(() => {}));
+// Settings save themselves: a moment after each change, and when the window closes (however it is closed).
+let settingsSaving = Promise.resolve(true), settingsTimer = null, settingsReady = false;
+function saveSettingsSoon(e) {
+  if (!settingsReady || e?.target?.id === 'sSuggest') return;
+  clearTimeout(settingsTimer);
+  settingsTimer = setTimeout(() => { settingsSaving = settingsSaving.then(() => saveSettings()); }, 900);
+}
+function saveSettingsNow() {
+  clearTimeout(settingsTimer);
+  settingsSaving = settingsSaving.then(() => saveSettings());
+  return settingsSaving;
+}
+$('settingsForm').addEventListener('input', saveSettingsSoon);
+$('settingsForm').addEventListener('change', saveSettingsSoon);
+$('settingsDlg').addEventListener('close', () => { if (settingsReady) { settingsReady = false; saveSettingsNow(); } });
 $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (await saveSettingsNow()) $('settingsDlg').close();
+});
+async function saveSettings() {
+  $('sError').textContent = '';
   try {
     const status = $('sStatus').value.trim();
     const bio = $('sBio').value.trim();
-    if (bio.length > bioLimit()) { $('sError').textContent = 'Your About is too long: ' + bioLimit() + ' characters at most' + (bioImgNow() ? ' (the picture takes the place of ' + BIO_IMG_COST + ').' : '.'); return; }
+    if (!$('sName').value.trim()) { $('sError').textContent = 'Your name can’t be empty.'; return false; }
+    if (bio.length > bioLimit()) { $('sError').textContent = 'Your About is too long: ' + bioLimit() + ' characters at most' + (bioImgNow() ? ' (the picture takes the place of ' + BIO_IMG_COST + ').' : '.'); return false; }
     if ($('sName').value.trim() !== S.me.name || status !== (S.me.profile?.status || '') || bio !== (S.me.profile?.bio || '') || pendingAvatar !== null || pendingBanner !== null || pendingBioImg !== null || pendingLook !== null) {
       await invoke('set_profile', { name: $('sName').value, status, avatar: pendingAvatar, bio, banner: pendingBanner, bioimg: pendingBioImg, look: pendingLook });
+      pendingAvatar = null; pendingBanner = null; pendingBioImg = null; pendingLook = null;
     }
     if ($('sMailbox').value.trim() !== (S.me.mailbox || '')) {
       await invoke('set_mailbox', { url: $('sMailbox').value });
@@ -3987,9 +4079,12 @@ $('settingsForm').addEventListener('submit', async (e) => {
     renderChatHead();
     S.me = await invoke('state');
     renderMe();
-    $('settingsDlg').close();
-  } catch (err) { $('sError').textContent = err; }
-});
+    $('sSaved').classList.add('show');
+    clearTimeout(saveSettings.t);
+    saveSettings.t = setTimeout(() => $('sSaved').classList.remove('show'), 1600);
+    return true;
+  } catch (err) { $('sError').textContent = err; return false; }
+}
 
 // ---------- Search ----------
 function chatLabel(chat) {
@@ -4727,6 +4822,7 @@ const TUNE_ICON = {
   mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 9 4 6M21 9l-4 6"/>',
   bright: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/>',
   blur: '<path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11Z"/>',
+  color: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.1-4-7.4-9-7.4Z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>',
 };
 function renderTune() {
   const c = tuning;
@@ -4778,6 +4874,25 @@ function renderTune() {
   }
   rows.push(slider('blur', 'blur', 'Blur', 0, 40, true));
   rows.push(slider('bright', 'bright', 'Brightness', 20, 160));
+  // The interface colour (buttons, links, highlights) that goes with this theme.
+  const pick = el('input', { type: 'color', class: 'wp-color', value: c.accent || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim().slice(0, 7) || '#4cc2ff', 'aria-label': 'Interface colour' });
+  const auto = el('button', { type: 'button', class: 'small wp-auto' + (c.accent ? '' : ' hidden'), text: 'Auto', title: 'Back to the usual colour' });
+  let colorT;
+  pick.addEventListener('input', () => {
+    c.accent = pick.value;
+    auto.classList.remove('hidden');
+    applyTheme();
+    clearTimeout(colorT);
+    colorT = setTimeout(() => invoke('theme_accent', { id: c.id, accent: c.accent }).then(loadCustomThemes).catch(toast), 400);
+  });
+  auto.addEventListener('click', async () => {
+    c.accent = null;
+    auto.classList.add('hidden');
+    await invoke('theme_accent', { id: c.id, accent: null }).catch(toast);
+    await loadCustomThemes();
+    renderTune();
+  });
+  rows.push(row('color', 'Interface colour', pick, auto));
   $('tuneRows').replaceChildren(...rows);
 }
 // The panel opens in the Appearance page itself, right under the theme tiles (above the colours),
@@ -5425,3 +5540,14 @@ $('galleryBtn').addEventListener('click', openGallery);
 $('galleryClose').addEventListener('click', () => $('galleryDlg').close());
 
 boot();
+
+// Where automatic downloads go
+$('sAutoDlPick').addEventListener('click', async () => {
+  try { const d = await invoke('pick_autodl_dir', { reset: false }); S.me.autodlDir = d; $('sAutoDlDir').textContent = d || 'Downloads/UaN'; $('sAutoDlReset').classList.toggle('hidden', !d); } catch (e) { toast(e); }
+});
+$('sAutoDlReset').addEventListener('click', async () => {
+  try { await invoke('pick_autodl_dir', { reset: true }); S.me.autodlDir = ''; $('sAutoDlDir').textContent = 'Downloads/UaN'; $('sAutoDlReset').classList.add('hidden'); } catch (e) { toast(e); }
+});
+
+$('sAutoUpd').addEventListener('change', () => setAutoUpdate($('sAutoUpd').checked));
+setAutoUpdate(autoUpdateOn());

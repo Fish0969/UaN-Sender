@@ -1,5 +1,20 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.33', items: [
+    'Automatic downloads only happen in the chats where you switch them on (right-click a friend or a group → Automatic downloads here). The setting is marked in red: it is not fully safe.',
+    'You can choose the folder automatic downloads go to.',
+    'Settings save by themselves (no Save button needed), and the window can be moved while Settings is open.',
+    'Settings → Profile: "See how others see you".',
+    'Settings → Privacy: make a new friend code (the old one stops working, your friends stay).',
+    'Show friend code asks "Are you sure?" first.',
+    'Auto update (off by default): turn it on in About & updates, or with the button next to Update.',
+    '@mentions are shown in a little box.',
+    'Theme workshop: see the themes you liked, and your favourites.',
+    'Theme properties: choose the interface colour that goes with the theme.',
+    'Only a group’s owner and co-owners can make channels.',
+    'Your profile doesn’t say "you have not written anything" when it has a picture or GIF.',
+    'Chat fixes.',
+  ] },
   { v: '1.9.32', items: [
     'The Android app is back, with everything the PC version has.',
     'Top themes are bigger and fill their row (on a phone they scroll sideways).',

@@ -44,6 +44,9 @@ const PROTO: u32 = 3;
 const MEDIA_CHUNK: u64 = 8 * 1024 * 1024;
 const MEDIA_WHOLE_LIMIT: u64 = 32 * 1024 * 1024;
 const ONLINE_WINDOW: Duration = Duration::from_secs(150);
+/// The folder automatic downloads go to, when you picked one (Settings → Downloads).
+static AUTO_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 pub const MAX_FILE_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 1024; // 4 TB
 // Watch together streams instead of downloading: keep a window of pieces around the playhead.
 const STREAM_AHEAD_BLOCKS: u64 = 96; // ~768 MB ahead of the playhead
@@ -80,6 +83,7 @@ CREATE TABLE IF NOT EXISTS thumbs (file_id TEXT PRIMARY KEY, data TEXT NOT NULL)
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT '', avatar TEXT, pv INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY, peer TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS gone (id TEXT PRIMARY KEY, by TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS pins (chat TEXT NOT NULL, msg_id TEXT NOT NULL, by TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, msg_id));
 CREATE TABLE IF NOT EXISTS reactions (chat TEXT NOT NULL, msg_id TEXT NOT NULL, by TEXT NOT NULL, emoji TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (msg_id, by));
 CREATE TABLE IF NOT EXISTS reads (chat TEXT NOT NULL, who TEXT NOT NULL, msg_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (chat, who));
@@ -330,7 +334,12 @@ pub enum Req {
         name: String,
         part: u32,
     },
-    FriendRequest { name: String },
+    FriendRequest {
+        name: String,
+        /// The changeable part of the friend code it was sent with (a new friend code makes old ones stop working).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     FriendAccept { name: String },
     FriendRemove,
     Msg { msg: WireMsg },
@@ -480,6 +489,17 @@ fn new_id() -> String {
 
 fn parse_id(s: &str) -> Result<EndpointId, String> {
     EndpointId::from_str(s).map_err(|_| "Invalid user id.".to_string())
+}
+
+/// A friend code: "UAN-<account>" or, after you made a new one, "UAN-<account>-<key>".
+pub fn parse_code_key(code: &str) -> Result<(EndpointId, Option<String>), String> {
+    let upper = code.trim().to_uppercase();
+    let body = upper.strip_prefix("UAN-").unwrap_or(&upper);
+    let (main, key) = match body.rsplit_once('-') {
+        Some((m, k)) if k.len() == 8 && k.chars().all(|c| c.is_ascii_alphanumeric()) => (m, Some(k.to_string())),
+        _ => (body, None),
+    };
+    Ok((parse_code(main)?, key))
 }
 
 pub fn parse_code(code: &str) -> Result<EndpointId, String> {
@@ -917,7 +937,20 @@ impl Node {
     }
 
     pub fn friend_code(&self) -> String {
-        format!("UAN-{}", BASE32_NOPAD.encode(self.acct_secret.public().as_bytes()))
+        let base = format!("UAN-{}", BASE32_NOPAD.encode(self.acct_secret.public().as_bytes()));
+        match self.kv("invite_key") {
+            Some(k) if !k.is_empty() => format!("{base}-{k}"),
+            _ => base,
+        }
+    }
+
+    /// Makes a new friend code: the old one stops working (friends you already have stay).
+    pub fn new_friend_code(&self) -> String {
+        // Unguessable: a signature with the account key over the time (no one else can make it).
+        let sig = self.sign_hex(&format!("invite:{}:{}", now(), self.kv("invite_key").unwrap_or_default()));
+        let b = HEXLOWER.decode(&sig.as_bytes()[..10]).unwrap_or_default();
+        self.set_kv("invite_key", &BASE32_NOPAD.encode(&b));
+        self.friend_code()
     }
 
     // ----- Devices: one account on a PC and a phone -----
@@ -1102,7 +1135,7 @@ impl Node {
                 }
                 Ok(ok)
             }
-            Req::FriendRequest { name } => {
+            Req::FriendRequest { name, .. } => {
                 if !chat.is_empty() && parse_id(chat).is_ok() && self.contact_status(chat).as_deref() != Some("friend") {
                     self.set_contact(chat, &name, "outgoing");
                 }
@@ -1531,6 +1564,41 @@ impl Node {
     /// (A new key: the old "autodl" setting was on by default and is ignored.)
     pub fn autodl(&self) -> (bool, u64) {
         (self.kv("auto_download").map(|v| v == "1").unwrap_or(false), self.kv("autodl_gb").and_then(|v| v.parse().ok()).unwrap_or(10))
+    }
+
+    /// Chats where files are downloaded by themselves (only these, and only while automatic downloads are on).
+    pub fn autodl_chats(&self) -> Vec<String> {
+        self.kv("autodl_chats").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
+    }
+
+    pub fn set_autodl_chat(&self, chat: &str, on: bool) {
+        let mut list = self.autodl_chats();
+        list.retain(|c| c != chat);
+        if on {
+            list.push(chat.to_string());
+        }
+        self.set_kv("autodl_chats", &serde_json::to_string(&list).unwrap_or_default());
+    }
+
+    /// Where automatic downloads go ("" = Downloads/UaN).
+    pub fn autodl_dir(&self) -> String {
+        self.kv("autodl_dir").unwrap_or_default()
+    }
+
+    pub fn set_autodl_dir(&self, dir: &str) -> Result<(), String> {
+        let d = dir.trim();
+        if !d.is_empty() && !Path::new(d).is_dir() {
+            return Err("That folder doesn't exist.".into());
+        }
+        self.set_kv("autodl_dir", d);
+        *AUTO_DIR.lock().unwrap() = (!d.is_empty()).then(|| PathBuf::from(d));
+        Ok(())
+    }
+
+    /// Reads the saved automatic-download folder (at start).
+    pub fn load_autodl_dir(&self) {
+        let d = self.autodl_dir();
+        *AUTO_DIR.lock().unwrap() = (!d.is_empty() && Path::new(&d).is_dir()).then(|| PathBuf::from(d));
     }
 
     pub fn set_autodl(&self, on: bool, gb: u64) {
@@ -2451,8 +2519,14 @@ impl Node {
                 let p = self.my_profile();
                 Ok(json!({ "ok": true, "name": self.my_name(), "status": p["status"], "avatar": p["avatar"], "pv": p["pv"], "bio": p["bio"], "banner": p["banner"], "look": p["look"], "bioimg_v": p["bioimgV"], "joined": p["joined"] }))
             }
-            Req::FriendRequest { name } => {
-                match self.contact_status(peer).as_deref() {
+            Req::FriendRequest { name, key } => {
+                // After you made a new friend code, a request with an old one is refused (unless you asked them too).
+                let mine = self.kv("invite_key").filter(|k| !k.is_empty());
+                let status = self.contact_status(peer);
+                if mine.is_some() && key != mine && !matches!(status.as_deref(), Some("friend") | Some("outgoing") | Some("incoming")) {
+                    return Err("That friend code is no longer used. Ask for the new one.".into());
+                }
+                match status.as_deref() {
                     Some("friend") => {
                         self.deliver(peer, &Req::FriendAccept { name: self.my_name() });
                     }
@@ -2517,7 +2591,7 @@ impl Node {
                     self.update_name(peer, &name);
                     if let Some(f) = &msg.file {
                         let (on, gb) = self.autodl();
-                        if on && f.size <= gb.saturating_mul(1024 * 1024 * 1024) && self.local_copy(f).is_none() {
+                        if on && self.autodl_chats().iter().any(|c| *c == chat || chat.starts_with(&format!("{c}#"))) && f.size <= gb.saturating_mul(1024 * 1024 * 1024) && self.local_copy(f).is_none() {
                             let _ = self.download_into(f.clone(), chat.clone(), true);
                         }
                     }
@@ -2617,6 +2691,7 @@ impl Node {
             }
             Req::Unsend { msg_id } => {
                 // Only the person who sent a message can delete it for everyone.
+                self.mark_gone(&msg_id, peer);
                 if let Some((_, _, Some(f))) = self.remove_message(&msg_id, Some(peer)) {
                     self.forget_file(&f.id);
                 }
@@ -2666,6 +2741,7 @@ impl Node {
                 if !self.load_group(&group_id).is_some_and(|g| g.manager(peer)) {
                     return Err("Not allowed.".into());
                 }
+                self.mark_gone(&msg_id, "*");
                 let in_group: Option<String> = self.db.lock().unwrap().query_row("SELECT chat FROM messages WHERE id = ?1", [&msg_id], |r| r.get(0)).optional().ok().flatten();
                 if in_group.as_deref().and_then(split_chat).is_some_and(|(g, _)| g == group_id) {
                     if let Some((_, from, Some(f))) = self.remove_message(&msg_id, None) {
@@ -2696,7 +2772,8 @@ impl Node {
                 Ok(ok)
             }
             Req::ChannelAdd { group_id, channel } => {
-                if self.group_owner(&group_id).as_deref() != Some(self.me_s.as_str()) || !self.is_member(&group_id, peer) {
+                // Only the owner and co-owners make channels.
+                if self.group_owner(&group_id).as_deref() != Some(self.me_s.as_str()) || !self.load_group(&group_id).is_some_and(|g| g.manager(peer)) {
                     return Err("Not allowed.".into());
                 }
                 self.add_channel_local(&group_id, channel)?;
@@ -2876,6 +2953,9 @@ impl Node {
     fn store_message(&self, id: &str, chat: &str, sender: &str, name: &str, text: Option<&str>, file: Option<&FileMeta>, ts: i64, sealed: Option<&str>, reply: Option<&ReplyRef>) -> bool {
         let file_json = file.map(|f| serde_json::to_string(f).unwrap());
         let reply_json = reply.map(|r| serde_json::to_string(r).unwrap());
+        if sender != self.me_s && self.is_gone(id, sender, chat, ts) {
+            return false;
+        }
         let n = self
             .db
             .lock()
@@ -3106,7 +3186,7 @@ impl Node {
     }
 
     pub fn add_friend(self: &Arc<Self>, code: &str) -> Result<String, String> {
-        let peer = parse_code(code)?;
+        let (peer, key) = parse_code_key(code)?;
         if peer.to_string() == self.me_s || peer == self.me {
             return Err("That's your own code. Send it to a friend instead.".into());
         }
@@ -3120,8 +3200,8 @@ impl Node {
             _ => {}
         }
         self.set_contact(&p, "Pending…", "outgoing");
-        self.mirror(&self.me_s.clone(), &p, &Req::FriendRequest { name: "Pending…".into() });
-        self.deliver(&p, &Req::FriendRequest { name: self.my_name() });
+        self.mirror(&self.me_s.clone(), &p, &Req::FriendRequest { name: "Pending…".into(), key: None });
+        self.deliver(&p, &Req::FriendRequest { name: self.my_name(), key });
         Ok("Friend request sent. It arrives as soon as they are online.".into())
     }
 
@@ -3277,6 +3357,9 @@ impl Node {
         let group = self.load_group(g).ok_or("That group no longer exists.")?;
         if !group.members.iter().any(|m| m.id == self.me_s) {
             return Err("You are not in that group.".into());
+        }
+        if !group.manager(&self.me_s) {
+            return Err("Only the group's owner and co-owners can make channels.".into());
         }
         let name = name.trim().trim_start_matches('#').trim();
         if name.is_empty() || name.chars().count() > 32 {
@@ -3687,7 +3770,25 @@ impl Node {
     }
 
     /// Deletes the messages of a chat on this PC (up to `before`, a time in ms).
+    /// A message deleted for everyone (by its sender, or "*" = a group's owner or co-owner), or older than a clear of its chat:
+    /// it is not stored again when it arrives late (from someone's outbox or the mailbox, after the friend's PC was off).
+    fn is_gone(&self, id: &str, sender: &str, chat: &str, ts: i64) -> bool {
+        let cleared = self.kv(&format!("cleared:{chat}")).and_then(|v| v.parse::<i64>().ok()).unwrap_or(i64::MIN);
+        if ts <= cleared {
+            return true;
+        }
+        self.db.lock().unwrap().query_row("SELECT 1 FROM gone WHERE id = ?1 AND (by = ?2 OR by = '*')", params![id, sender], |_| Ok(())).is_ok()
+    }
+
+    fn mark_gone(&self, id: &str, by: &str) {
+        let db = self.db.lock().unwrap();
+        let _ = db.execute("INSERT OR REPLACE INTO gone (id, by, at) VALUES (?1, ?2, ?3)", params![id, by, now()]);
+        let _ = db.execute("DELETE FROM gone WHERE at < ?1", [now() - 60 * 24 * 3600 * 1000]);
+    }
+
     fn clear_local(&self, chat: &str, before: i64) {
+        let had = self.kv(&format!("cleared:{chat}")).and_then(|v| v.parse::<i64>().ok()).unwrap_or(i64::MIN);
+        self.set_kv(&format!("cleared:{chat}"), &before.max(had).to_string());
         {
             let db = self.db.lock().unwrap();
             let _ = db.execute("DELETE FROM messages WHERE chat = ?1 AND ts <= ?2", params![chat, before]);
@@ -4542,8 +4643,10 @@ impl Node {
 
     fn auto_dir() -> Result<PathBuf, String> {
         // UAN_DOWNLOADS: tests keep their files out of the real Downloads folder.
+        let chosen = AUTO_DIR.lock().unwrap().clone();
         let dir = match std::env::var_os("UAN_DOWNLOADS") {
             Some(d) => PathBuf::from(d),
+            None if chosen.is_some() => chosen.unwrap_or_default(),
             None => dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")?.join("UaN"),
         };
         std::fs::create_dir_all(&dir).map_err(e2s)?;
