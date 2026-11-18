@@ -1,5 +1,10 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.35', items: [
+    'A message where you tag someone has a colour of its own, and a message that tags you (or @everyone) has another. Choose both colours in Settings → Appearance or in a theme’s Properties.',
+    'Automatic downloads go to a UaN folder in your user folder (not Downloads). Change… opens in the folder they go to now, and Open UaN folder opens it.',
+    'The Interface size slider goes all the way to both ends at any size.',
+  ] },
   { v: '1.9.34', items: [
     'A message that tags someone has its own colour (yellow when you are the one tagged).',
     'The folder for automatic downloads can be typed in, or chosen with Change…',

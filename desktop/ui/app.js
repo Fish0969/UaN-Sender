@@ -1091,7 +1091,7 @@ function messageNode(m, run = true, block = null) {
   const theirsInGroup = group && !m.mine;
   const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
-    + (!m.mine && group && mentionsMe(m.text) ? ' mentions-me' : '') + (m.text && /(^|[^p{L}p{N}])@[p{L}p{N}_.-]+/u.test(m.text) ? ' has-mention' : '') + (block ? ` block-${block.kind}` : '');
+    + (!m.mine && mentionsMe(m.text) ? ' mentions-me' : '') + (m.mine && m.text && /(^|[^p{L}p{N}])@[p{L}p{N}_.-]+/u.test(m.text) ? ' pings-out' : '') + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
   let node;
   if (!theirsInGroup) node = el('div', attrs, body);
@@ -3788,6 +3788,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sAutoDlDir').value = S.me.autodlDir || '';
+  $('sAutoDlDir').placeholder = S.me.autodlPath || 'UaN folder';
   $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
   $('sAutoRow').classList.toggle('hidden', !!S.me.profileName);
   $('sError').textContent = '';
@@ -4294,7 +4295,7 @@ function renderInviteBar() {
     svg(ICON.bigplay),
     el('span', { class: 'grow ellipsis', text: `${host} invited you to watch “${p.file.name}” together` }),
     el('button', { class: 'accent small', type: 'button', text: 'Join', title: 'Streams the film, nothing is downloaded', onclick: async () => { await invoke('party_join', { id: p.id, full: false }).catch(toast); openParty(p.id); } }),
-    el('button', { class: 'small', type: 'button', text: 'Join, download first', title: 'Downloads the whole film before it starts (smoothest; kept in Downloads/UaN)', onclick: async () => { await invoke('party_join', { id: p.id, full: true }).catch(toast); openParty(p.id); } }),
+    el('button', { class: 'small', type: 'button', text: 'Join, download first', title: 'Downloads the whole film before it starts (smoothest; kept in your UaN folder)', onclick: async () => { await invoke('party_join', { id: p.id, full: true }).catch(toast); openParty(p.id); } }),
     el('button', { class: 'small', type: 'button', text: 'Not now', onclick: () => { invoke('party_leave', { id: p.id }); S.parties.delete(p.id); renderInviteBar(); } }));
 }
 
@@ -4536,7 +4537,7 @@ function renderParty(p) {
   $('partyFull').textContent = mine?.full ? 'Just stream instead' : 'Download whole film first';
   $('partyFull').title = mine?.full
     ? 'Stop downloading and stream the film like the others (what is downloaded so far is kept)'
-    : 'Download the whole film before watching: smoothest playback, the party waits for you. A copy is kept in Downloads/UaN.';
+    : 'Download the whole film before watching: smoothest playback, the party waits for you. A copy is kept in your UaN folder.';
   $('partyStart').classList.toggle('hidden', !(leader && p.state === 'loading'));
   $('partyEnd').classList.toggle('hidden', !leader);
 
@@ -4892,6 +4893,9 @@ function renderTune() {
     renderTune();
   });
   rows.push(row('color', 'Interface colour', pick, auto));
+  const pk = pingPickers();
+  rows.push(row('color', 'Your pings', ...pk.out));
+  rows.push(row('color', 'Pings to you', ...pk.in));
   $('tuneRows').replaceChildren(...rows);
 }
 // The panel opens in the Appearance page itself, right under the theme tiles (above the colours),
@@ -5151,6 +5155,7 @@ function setZoom(z, save = true) {
   uiZoom = Math.min(1.6, Math.max(0.7, Math.round(z * 20) / 20));
   if (save) { try { if (uiZoom === 1) localStorage.removeItem('uan.zoom'); else localStorage.setItem('uan.zoom', String(uiZoom)); } catch {} }
   document.documentElement.style.zoom = uiZoom === 1 ? '' : String(uiZoom);
+  document.documentElement.style.setProperty('--uiz', String(uiZoom));
   if ($('sZoom')) { $('sZoom').value = String(Math.round(uiZoom * 100)); $('sZoomVal').textContent = Math.round(uiZoom * 100) + '%'; }
 }
 $('sZoom').addEventListener('input', () => { $('sZoomVal').textContent = $('sZoom').value + '%'; });
@@ -5555,7 +5560,7 @@ $('sAutoDlDir').addEventListener('change', async () => {
     await invoke('set_autodl_dir', { dir: $('sAutoDlDir').value });
     S.me.autodlDir = $('sAutoDlDir').value.trim();
     $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
-    toast(S.me.autodlDir ? 'Automatic downloads go to ' + S.me.autodlDir + ' now.' : 'Automatic downloads go to Downloads/UaN.');
+    toast(S.me.autodlDir ? 'Automatic downloads go to ' + S.me.autodlDir + ' now.' : 'Automatic downloads go to the UaN folder in your user folder.');
   } catch (e) { toast(e); $('sAutoDlDir').value = S.me.autodlDir || ''; }
 });
 $('sAutoDlPick').addEventListener('click', async () => {
@@ -5567,3 +5572,49 @@ $('sAutoDlReset').addEventListener('click', async () => {
 
 $('sAutoUpd').addEventListener('change', () => setAutoUpdate($('sAutoUpd').checked));
 setAutoUpdate(autoUpdateOn());
+
+// ---------- Ping colours: one for your messages that tag someone, one for messages that tag you (or @everyone) ----------
+const PING_DEFAULT = { out: '#6d4aff', in: '#d99a12' };
+function pingColors() {
+  try { return { ...PING_DEFAULT, ...JSON.parse(localStorage.getItem('uan.pings') || '{}') }; } catch { return { ...PING_DEFAULT }; }
+}
+// Dark or light text, whichever reads better on the colour.
+const inkOn = (hex) => { const n = parseInt(hex.slice(1), 16); const l = (0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255; return l > 0.6 ? '#141414' : '#ffffff'; };
+function applyPings() {
+  const p = pingColors();
+  const s = document.documentElement.style;
+  s.setProperty('--ping-out', p.out); s.setProperty('--ping-out-ink', inkOn(p.out));
+  s.setProperty('--ping-in', p.in); s.setProperty('--ping-in-ink', inkOn(p.in));
+}
+function setPing(which, color) {
+  const p = pingColors();
+  if (color) p[which] = color; else p[which] = PING_DEFAULT[which];
+  try { localStorage.setItem('uan.pings', JSON.stringify(p)); } catch {}
+  applyPings();
+  renderPingRows();
+}
+function pingPickers() {
+  const p = pingColors();
+  const one = (which, label, hint) => {
+    const pick = el('input', { type: 'color', class: 'wp-color', value: p[which], 'aria-label': label, title: hint });
+    pick.addEventListener('input', () => { const q = pingColors(); q[which] = pick.value; try { localStorage.setItem('uan.pings', JSON.stringify(q)); } catch {} applyPings(); });
+    pick.addEventListener('change', renderPingRows);
+    const reset = el('button', { type: 'button', class: 'small wp-auto' + (p[which] === PING_DEFAULT[which] ? ' hidden' : ''), text: 'Auto', title: 'Back to the usual colour', onclick: () => setPing(which, null) });
+    return [pick, reset];
+  };
+  return { out: one('out', 'When you tag someone', 'Your messages that tag someone'), in: one('in', 'When you are tagged', 'Messages that tag you or @everyone') };
+}
+function renderPingRows() {
+  const box = $('sPingColors');
+  if (box) {
+    const k = pingPickers();
+    box.replaceChildren(
+      el('span', { class: 'ping-lbl' }, el('i', { class: 'ping-dot out' }), 'Your pings'), ...k.out,
+      el('span', { class: 'ping-lbl' }, el('i', { class: 'ping-dot in' }), 'Pings to you (and @everyone)'), ...k.in);
+  }
+  if (typeof tuning !== 'undefined' && tuning) renderTune();
+}
+applyPings();
+renderPingRows();
+
+$('sAutoDlOpen').addEventListener('click', () => invoke('open_autodl_dir').catch(toast));

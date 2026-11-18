@@ -162,6 +162,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "autodl": node.autodl().0,
         "autodlGb": node.autodl().1,
         "autodlDir": node.autodl_dir(),
+        "autodlPath": node.auto_dir_path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
         "autodlChats": node.autodl_chats(),
         "typing": node.privacy().0,
         "receipts": node.privacy().1,
@@ -501,10 +502,18 @@ fn set_autodl(node: State<'_, Arc<Node>>, on: bool, gb: u64) {
     node.set_autodl(on, gb)
 }
 
-/// The folder automatic downloads go to, typed in ("" = Downloads/UaN).
+/// The folder automatic downloads go to, typed in ("" = the UaN folder).
 #[tauri::command]
 fn set_autodl_dir(node: State<'_, Arc<Node>>, dir: String) -> CmdResult<()> {
     node.set_autodl_dir(&dir)
+}
+
+/// Opens the folder automatic downloads go to (in Explorer / the file manager).
+#[tauri::command]
+fn open_autodl_dir(node: State<'_, Arc<Node>>) -> CmdResult<String> {
+    let dir = node.auto_dir_path()?;
+    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// A new friend code (the old one stops working; friends stay friends).
@@ -518,7 +527,7 @@ fn set_autodl_chat(node: State<'_, Arc<Node>>, chat: String, on: bool) {
     node.set_autodl_chat(&chat, on)
 }
 
-/// Picks the folder automatic downloads go to ("" puts it back to Downloads/UaN).
+/// Picks the folder automatic downloads go to ("" puts it back to the UaN folder).
 #[tauri::command]
 #[cfg_attr(mobile, allow(unused_variables))]
 async fn pick_autodl_dir(app: AppHandle, node: State<'_, Arc<Node>>, reset: bool) -> CmdResult<String> {
@@ -529,7 +538,12 @@ async fn pick_autodl_dir(app: AppHandle, node: State<'_, Arc<Node>>, reset: bool
     #[cfg(desktop)]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        app.dialog().file().set_title("Where should automatic downloads go?").pick_folder(move |f| {
+        let mut dlg = app.dialog().file().set_title("Where should automatic downloads go?");
+        // It opens in the folder they go to now.
+        if let Ok(now) = node.auto_dir_path() {
+            dlg = dlg.set_directory(now);
+        }
+        dlg.pick_folder(move |f| {
             let _ = tx.send(f);
         });
         let Some(dir) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else { return Ok(node.autodl_dir()) };
@@ -1733,6 +1747,7 @@ pub fn run() {
             set_autodl,
             set_autodl_chat,
             new_friend_code,
+            open_autodl_dir,
             set_autodl_dir,
             pick_autodl_dir,
             check_update,

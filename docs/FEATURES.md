@@ -23,7 +23,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   pauses for everyone if someone falls behind. If the host leaves, someone else takes over.
   A chat and a **playlist** sit next to the film (the next film starts by itself).
   Everyone chooses for themselves: just stream it, or **download the whole film first** (smoothest;
-  the party waits for you, and a copy is kept in `Downloads/UaN`).
+  the party waits for you, and a copy is kept in your UaN folder).
 - **Sound the player can't decode (AC3, DTS …).** The film still plays inside UaN: a silent VLC in the background decodes just
   the sound and UaN plays it level with the picture, also after you jump around, and in a watch party. If VLC is
   missing, UaN offers to install it with one click. If this doesn't work, the film opens in VLC's window instead.
@@ -74,7 +74,7 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   encrypted in a free mailbox, so they arrive even if you have turned your PC off by the time your
   friend comes online.
 - **Automatic downloads** (off by default, turn on in Settings): files friends send are downloaded in
-  the background to `Downloads/UaN`, so they still open later when the sender is offline.
+  the background to your UaN folder (in your user folder; you can choose another one), so they still open later when the sender is offline.
 - **Search** (Ctrl+F), a **gallery** of each chat's photos, videos and files, **subtitles**
   (send `film.srt` next to `film.mp4`, or **+ Subtitles** in the player; **CC** turns them on or off),
   **profile picture** (upload one or pick a ready-made one), **status**, **17 themes** (including a Christmas one with falling

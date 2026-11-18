@@ -1580,7 +1580,7 @@ impl Node {
         self.set_kv("autodl_chats", &serde_json::to_string(&list).unwrap_or_default());
     }
 
-    /// Where automatic downloads go ("" = Downloads/UaN).
+    /// Where automatic downloads go ("" = the UaN folder in your user folder).
     pub fn autodl_dir(&self) -> String {
         self.kv("autodl_dir").unwrap_or_default()
     }
@@ -4583,7 +4583,7 @@ impl Node {
         self.download_into(file, chat, false)
     }
 
-    /// Files saved automatically go to Downloads/UaN.
+    /// Files saved automatically go to the UaN folder (or the one you chose).
     /// Drops things still waiting in the outbox (to anyone, also inside copies for our other devices).
     fn purge_outbox(&self, hit: impl Fn(&Req) -> bool) {
         let db = self.db.lock().unwrap();
@@ -4641,13 +4641,19 @@ impl Node {
         });
     }
 
+    /// Where automatic downloads go right now (made if it isn't there yet).
+    pub fn auto_dir_path(&self) -> Result<PathBuf, String> {
+        Self::auto_dir()
+    }
+
     fn auto_dir() -> Result<PathBuf, String> {
         // UAN_DOWNLOADS: tests keep their files out of the real Downloads folder.
         let chosen = AUTO_DIR.lock().unwrap().clone();
         let dir = match std::env::var_os("UAN_DOWNLOADS") {
             Some(d) => PathBuf::from(d),
             None if chosen.is_some() => chosen.unwrap_or_default(),
-            None => dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")?.join("UaN"),
+            // Its own "UaN" folder in your user folder (not in Downloads); you can move it in Settings.
+            None => dirs::home_dir().or_else(dirs::download_dir).ok_or("Couldn't find your user folder.")?.join("UaN"),
         };
         std::fs::create_dir_all(&dir).map_err(e2s)?;
         Ok(dir)
@@ -5321,7 +5327,7 @@ impl Node {
         Ok(())
     }
 
-    /// Your own choice in a watch party: download the whole film first (smoothest, kept in Downloads/UaN),
+    /// Your own choice in a watch party: download the whole film first (smoothest, kept in the UaN folder),
     /// or just stream it around the playhead (nothing is kept). The party waits until you are ready.
     pub fn party_full(self: &Arc<Self>, id: &str, full: bool) -> Result<(), String> {
         let party = self.parties.lock().unwrap().get(id).cloned().ok_or("That watch party has ended.")?;

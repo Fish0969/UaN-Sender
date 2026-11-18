@@ -12,7 +12,7 @@ No server, no account: everything runs on your own PC.
 [![Build](https://img.shields.io/github/actions/workflow/status/Fish0969/UaN-Sender/build.yml?style=flat-square&label=build)](../../actions/workflows/build.yml)
 ![Platforms](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20Android-2b2d36?style=flat-square)
 
-[**Download**](../../releases/latest) &nbsp;·&nbsp; [How it works](#how-it-works) &nbsp;·&nbsp; [Features](docs/FEATURES.md) &nbsp;·&nbsp; [Build it yourself](BUILDING.md)
+[**Download**](../../releases/latest) &nbsp;·&nbsp; [How it works](#how-it-works) &nbsp;·&nbsp; [Features](docs/FEATURES.md)
 
 <br>
 
@@ -128,12 +128,6 @@ Everything, in detail: **[docs/FEATURES.md](docs/FEATURES.md)**
 
 - **Big files need both PCs on once.** The sender's PC must be on, with UaN running, until the friend has watched or downloaded the file. Automatic downloads (Settings) make that happen in the background.
 - **Direct is fast, a relay is slow.** The chat header says which one you have. Speed is also limited by the sender's upload.
-
-## Build it yourself
-
-Rust and a few system libraries are all it takes. The steps are in **[BUILDING.md](BUILDING.md)**. The app is a
-[Tauri](https://tauri.app) program (Rust) with a plain HTML, CSS and JavaScript interface; the peer-to-peer part uses
-[iroh](https://www.iroh.computer).
 
 <br>
 
