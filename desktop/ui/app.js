@@ -978,6 +978,13 @@ function formatText(text) {
   if (last < text.length) frag.append(text.slice(last));
   return frag;
 }
+// A message that tags you or @everyone (whoever wrote it, you too) stands out in the theme's opposite colour;
+// one that tags only someone else is a slightly different shade of its usual bubble.
+function pingClass(m) {
+  if (!m.text || m.locked) return '';
+  if (mentionsMe(m.text)) return ' mentions-me';
+  return /(^|[^\p{L}\p{N}])@[\p{L}\p{N}_.-]+/u.test(m.text) ? ' pings-out' : '';
+}
 function mentionsMe(text) {
   if (!text || !S.me?.name) return false;
   if (/(^|[^\p{L}\p{N}])@everyone(?![\p{L}\p{N}])/iu.test(text)) return true;
@@ -1091,7 +1098,7 @@ function messageNode(m, run = true, block = null) {
   const theirsInGroup = group && !m.mine;
   const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
-    + (!m.mine && mentionsMe(m.text) ? ' mentions-me' : '') + (m.mine && m.text && /(^|[^\p{L}\p{N}])@[\p{L}\p{N}_.-]+/u.test(m.text) ? ' pings-out' : '') + (block ? ` block-${block.kind}` : '');
+    + pingClass(m) + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
   let node;
   if (!theirsInGroup) node = el('div', attrs, body);

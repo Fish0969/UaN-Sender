@@ -1691,6 +1691,8 @@ html.phone #settingsDlg .top-themes > .note { display: block; }
     box-shadow: 0 0 0 2px oklch(from var(--accent) 0.8 max(c, 0.13) calc(h + 180) / .45), 0 4px 14px -4px oklch(from var(--accent) 0.6 max(c, 0.13) calc(h + 180) / .6);
   }
 }
+/* Someone else's message that tags another person: their bubble, tinted a little */
+.msg.pings-out:not(.mine) .bubble { background: var(--ping-out, color-mix(in oklab, var(--theirs) 74%, var(--accent) 26%)) !important; color: var(--ping-out-ink, var(--text)) !important; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
 .msg.pings-out .bubble .mention, .msg.mentions-me .bubble .mention { color: inherit; }
 .ping-colors { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; font-size: 13px; }
 .ping-colors .wp-color { margin-left: 0; }
