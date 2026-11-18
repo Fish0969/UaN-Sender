@@ -1,5 +1,11 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.36', items: [
+    'Click an @mention in a message: a small profile card pops up (View profile, Message).',
+    'Ping colours work for every name (they only worked for some names before).',
+    'Your theme’s Properties: choose Dark or Light panels over it.',
+    'The ping colours are set in one place: Settings → Appearance.',
+  ] },
   { v: '1.9.35', items: [
     'A message where you tag someone has a colour of its own, and a message that tags you (or @everyone) has another. Choose both colours in Settings → Appearance or in a theme’s Properties.',
     'Automatic downloads go to a UaN folder in your user folder (not Downloads). Change… opens in the folder they go to now, and Open UaN folder opens it.',

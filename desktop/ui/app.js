@@ -1091,7 +1091,7 @@ function messageNode(m, run = true, block = null) {
   const theirsInGroup = group && !m.mine;
   const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
-    + (!m.mine && mentionsMe(m.text) ? ' mentions-me' : '') + (m.mine && m.text && /(^|[^p{L}p{N}])@[p{L}p{N}_.-]+/u.test(m.text) ? ' pings-out' : '') + (block ? ` block-${block.kind}` : '');
+    + (!m.mine && mentionsMe(m.text) ? ' mentions-me' : '') + (m.mine && m.text && /(^|[^\p{L}\p{N}])@[\p{L}\p{N}_.-]+/u.test(m.text) ? ' pings-out' : '') + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
   let node;
   if (!theirsInGroup) node = el('div', attrs, body);
@@ -4822,6 +4822,7 @@ const TUNE_ICON = {
   mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 9 4 6M21 9l-4 6"/>',
   bright: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/>',
   blur: '<path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11Z"/>',
+  panels: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
   color: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.1-4-7.4-9-7.4Z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>',
 };
 function renderTune() {
@@ -4893,9 +4894,16 @@ function renderTune() {
     renderTune();
   });
   rows.push(row('color', 'Interface colour', pick, auto));
-  const pk = pingPickers();
-  rows.push(row('color', 'Your pings', ...pk.out));
-  rows.push(row('color', 'Pings to you', ...pk.in));
+  // The panels over the theme: dark or light glass.
+  const seg = el('div', { class: 'wp-seg' }, ...['dark', 'light'].map((b) => el('button', { type: 'button', class: c.base === b ? 'on' : '', text: b === 'dark' ? 'Dark' : 'Light', onclick: async () => {
+    if (c.base === b) return;
+    c.base = b;
+    applyTheme();
+    await invoke('theme_base', { id: c.id, base: b }).catch(toast);
+    await loadCustomThemes();
+    renderTune();
+  } })));
+  rows.push(row('panels', 'Panels', seg));
   $('tuneRows').replaceChildren(...rows);
 }
 // The panel opens in the Appearance page itself, right under the theme tiles (above the colours),
@@ -5612,9 +5620,70 @@ function renderPingRows() {
       el('span', { class: 'ping-lbl' }, el('i', { class: 'ping-dot out' }), 'Your pings'), ...k.out,
       el('span', { class: 'ping-lbl' }, el('i', { class: 'ping-dot in' }), 'Pings to you (and @everyone)'), ...k.in);
   }
-  if (typeof tuning !== 'undefined' && tuning) renderTune();
 }
 applyPings();
 renderPingRows();
 
 $('sAutoDlOpen').addEventListener('click', () => invoke('open_autodl_dir').catch(toast));
+
+// ---------- Click an @mention: a small profile card pops up next to it (like on Discord) ----------
+function personByName(name) {
+  const n = name.toLowerCase();
+  if (S.me?.name?.toLowerCase() === n) return S.me.id;
+  const g = groupOf(S.active);
+  const pools = [g ? g.members : [], S.friends || [], ...S.groups.map((x) => x.members)];
+  for (const pool of pools) {
+    const hit = pool.find((x) => (x.name || '').toLowerCase() === n);
+    if (hit) return hit.id;
+  }
+  // "@Tsa" for "TsaRuben": the one name that starts like it
+  for (const pool of pools) {
+    const hits = pool.filter((x) => (x.name || '').toLowerCase().startsWith(n));
+    if (hits.length === 1) return hits[0].id;
+  }
+  return null;
+}
+function closeMiniProfile() { document.querySelector('.mini-pf')?.remove(); }
+function openMiniProfile(id, anchor) {
+  closeMiniProfile();
+  const p = personInfo(id);
+  if (!p) return;
+  const col = lookColour(p.look);
+  const bio = (p.bio || '').replace(BIO_PIC, '').trim();
+  const online = p.me ? 'You' : p.online ? 'Online' : 'Offline';
+  const card = el('div', { class: 'mini-pf', role: 'dialog', 'aria-label': p.name },
+    el('div', { class: 'mini-banner' }),
+    el('div', { class: 'mini-av' }, avatar(p.name, { seed: p.id, src: p.avatar, online: !!p.online })),
+    el('div', { class: 'mini-body' },
+      el('div', { class: 'mini-name', text: p.name }),
+      el('div', { class: 'mini-sub', text: online }),
+      p.status ? el('div', { class: 'mini-status', text: p.status }) : null,
+      bio ? el('div', { class: 'mini-bio' }, formatText(bio.length > 220 ? bio.slice(0, 220) + '…' : bio)) : null,
+      el('div', { class: 'mini-acts' },
+        el('button', { type: 'button', class: 'small accent', text: p.me ? 'See your profile' : 'View profile', onclick: () => { closeMiniProfile(); openProfile(id); } }),
+        p.friend ? el('button', { type: 'button', class: 'small', text: 'Message', onclick: () => { closeMiniProfile(); openChat(id); } }) : null)));
+  card.querySelector('.mini-banner').style.background = bannerStyle(p.banner, p.id);
+  if (col) { card.style.setProperty('--look', col); card.classList.add('has-look'); }
+  document.body.append(card);
+  // Next to the mention, kept inside the window.
+  const r = anchor.getBoundingClientRect();
+  const w = card.offsetWidth, h = card.offsetHeight;
+  let x = r.right + 8, y = r.top - 20;
+  if (x + w > innerWidth - 8) x = r.left - w - 8;
+  if (x < 8) x = Math.max(8, Math.min(innerWidth - w - 8, r.left));
+  if (y + h > innerHeight - 8) y = innerHeight - h - 8;
+  card.style.left = Math.max(8, x) + 'px';
+  card.style.top = Math.max(8, y) + 'px';
+}
+document.addEventListener('click', (e) => {
+  const m = e.target.closest?.('.bubble .mention');
+  if (!m) return;
+  e.stopPropagation();
+  const name = m.textContent.replace(/^@/, '');
+  if (name.toLowerCase() === 'everyone') { toast('@everyone tags the whole group.'); return; }
+  const id = personByName(name);
+  if (id) openMiniProfile(id, m); else toast('UaN doesn’t know who ' + m.textContent + ' is.');
+}, true);
+document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('.mini-pf') && !e.target.closest?.('.bubble .mention')) closeMiniProfile(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMiniProfile(); });
+$('msgs').addEventListener('wheel', closeMiniProfile, { passive: true });

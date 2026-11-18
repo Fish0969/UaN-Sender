@@ -1049,6 +1049,15 @@ async fn ws_act(node: State<'_, Arc<Node>>, what: String, id: String, on: Option
     node.ws_act(&what, &id, serde_json::json!({ "on": on.unwrap_or(false), "reason": reason })).await
 }
 
+/// Dark or light panels over one of your themes.
+#[tauri::command]
+fn theme_base(profile: State<'_, Profile>, id: String, base: String) -> CmdResult<()> {
+    let mut list = load_themes(&profile.dir);
+    let t = list.iter_mut().find(|t| t.id == id).ok_or("That theme is gone.")?;
+    t.base = if base == "light" { "light".into() } else { "dark".into() };
+    save_themes(&profile.dir, &list)
+}
+
 /// The interface colour that goes with one of your themes (None = the usual one).
 #[tauri::command]
 fn theme_accent(profile: State<'_, Profile>, id: String, accent: Option<String>) -> CmdResult<()> {
@@ -1716,6 +1725,7 @@ pub fn run() {
             ws_publish,
             ws_install,
             theme_accent,
+            theme_base,
             ws_act,
             ws_suggest,
             ws_stage,
