@@ -1680,17 +1680,22 @@ html.phone #settingsDlg .top-themes > .note { display: block; }
 
 
 /* Ping colours: your messages that tag someone, and messages that tag you (Settings → Appearance, or a theme's Properties) */
-:root { --ping-out: #6d4aff; --ping-out-ink: #fff; --ping-in: #d99a12; --ping-in-ink: #fff; }
-.msg.pings-out .bubble { background: var(--ping-out) !important; color: var(--ping-out-ink) !important; border-color: transparent !important; }
-.msg.mentions-me .bubble { background: var(--ping-in) !important; color: var(--ping-in-ink) !important; border-color: transparent !important; box-shadow: none; }
+/* Your pings: your own bubble, a bit lighter and shifted, with a soft ring. Pings to you: the theme's opposite colour. */
+.msg.pings-out .bubble { background: var(--ping-out, color-mix(in oklab, var(--mine) 72%, #fff 28%)) !important; color: var(--ping-out-ink, var(--on-mine)) !important; border-color: transparent !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.msg.mentions-me .bubble { background: var(--ping-in, #d99a12) !important; color: var(--ping-in-ink, #fff) !important; border-color: transparent !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--ping-in, #d99a12) 45%, transparent), 0 4px 14px -4px color-mix(in srgb, var(--ping-in, #d99a12) 60%, transparent); }
+@supports (color: oklch(from red l c h)) {
+  .msg.pings-out .bubble { background: var(--ping-out, oklch(from var(--mine) calc(l + 0.1) calc(c + 0.03) calc(h + 32))) !important; }
+  .msg.mentions-me .bubble {
+    background: var(--ping-in, oklch(from var(--accent) clamp(0.55, l, 0.78) max(c, 0.13) calc(h + 180))) !important;
+    color: var(--ping-in-ink, oklch(from var(--accent) clamp(0, (0.68 - clamp(0.55, l, 0.78)) * 1000, 1) 0 0)) !important;
+    box-shadow: 0 0 0 2px oklch(from var(--accent) 0.8 max(c, 0.13) calc(h + 180) / .45), 0 4px 14px -4px oklch(from var(--accent) 0.6 max(c, 0.13) calc(h + 180) / .6);
+  }
+}
 .msg.pings-out .bubble .mention, .msg.mentions-me .bubble .mention { color: inherit; }
 .ping-colors { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; font-size: 13px; }
 .ping-colors .wp-color { margin-left: 0; }
 .ping-lbl { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; color: var(--muted); }
 .ping-lbl:first-child { margin-left: 0; }
-.ping-dot { width: 10px; height: 10px; border-radius: 50%; }
-.ping-dot.out { background: var(--ping-out); }
-.ping-dot.in { background: var(--ping-in); }
 /* Range sliders are drawn unzoomed, so their thumb reaches both ends at any interface size */
 input[type=range] { zoom: calc(1 / var(--uiz, 1)); }
 .zoom-row input[type=range] { max-width: calc(280px * var(--uiz, 1)); }
@@ -1716,3 +1721,5 @@ input[type=range] { zoom: calc(1 / var(--uiz, 1)); }
 .mini-bio { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 110px; overflow: hidden; }
 .mini-acts { display: flex; gap: 8px; margin-top: 12px; }
 .mini-acts button { flex: 1; }
+
+.wp-auto.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }

@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.37', items: [
+    'Ping colours follow your theme: your pings are a slightly different shade of your own bubbles, and a message that tags you (or @everyone) is the opposite colour of your theme, so it stands out.',
+    'Both can still be set by hand in Settings → Appearance (Auto follows the theme).',
+  ] },
   { v: '1.9.36', items: [
     'Click an @mention in a message: a small profile card pops up (View profile, Message).',
     'Ping colours work for every name (they only worked for some names before).',

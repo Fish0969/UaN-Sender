@@ -4715,6 +4715,7 @@ function isDark() {
 }
 const THEME_VARS = { bg: '--bg', side: '--side', panel: '--panel', card: '--card', theirs: '--theirs', image: '--bg-image', dialog: '--dialog', head: '--head-bg', composer: '--composer-bg', transfers: '--transfers-bg', shade: '--text-shade' };
 function applyTheme() {
+  setTimeout(() => { if ($('settingsDlg').open) renderPingRows(); }, 0);
   const root = document.documentElement;
   const t = themeById(theme.mode);
   if (t.id === 'system') delete root.dataset.theme;
@@ -5581,45 +5582,52 @@ $('sAutoDlReset').addEventListener('click', async () => {
 $('sAutoUpd').addEventListener('change', () => setAutoUpdate($('sAutoUpd').checked));
 setAutoUpdate(autoUpdateOn());
 
-// ---------- Ping colours: one for your messages that tag someone, one for messages that tag you (or @everyone) ----------
-const PING_DEFAULT = { out: '#6d4aff', in: '#d99a12' };
+// ---------- Ping colours ----------
+// Auto (the default) follows your theme: your pings are a slightly different shade of your own bubbles,
+// pings to you (and @everyone) are the opposite colour of the theme's, so they stand out. Each can be set by hand.
 function pingColors() {
-  try { return { ...PING_DEFAULT, ...JSON.parse(localStorage.getItem('uan.pings') || '{}') }; } catch { return { ...PING_DEFAULT }; }
+  try { return { out: '', in: '', ...JSON.parse(localStorage.getItem('uan.pings2') || '{}') }; } catch { return { out: '', in: '' }; }
 }
 // Dark or light text, whichever reads better on the colour.
 const inkOn = (hex) => { const n = parseInt(hex.slice(1), 16); const l = (0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255; return l > 0.6 ? '#141414' : '#ffffff'; };
 function applyPings() {
   const p = pingColors();
   const s = document.documentElement.style;
-  s.setProperty('--ping-out', p.out); s.setProperty('--ping-out-ink', inkOn(p.out));
-  s.setProperty('--ping-in', p.in); s.setProperty('--ping-in-ink', inkOn(p.in));
+  for (const k of ['out', 'in']) {
+    if (p[k]) { s.setProperty('--ping-' + k, p[k]); s.setProperty('--ping-' + k + '-ink', inkOn(p[k])); }
+    else { s.removeProperty('--ping-' + k); s.removeProperty('--ping-' + k + '-ink'); }
+  }
 }
-function setPing(which, color) {
-  const p = pingColors();
-  if (color) p[which] = color; else p[which] = PING_DEFAULT[which];
-  try { localStorage.setItem('uan.pings', JSON.stringify(p)); } catch {}
-  applyPings();
-  renderPingRows();
+function savePings(p) { try { localStorage.setItem('uan.pings2', JSON.stringify(p)); } catch {} applyPings(); }
+// The colour a ping bubble has right now (to show it in the picker), as #rrggbb.
+function pingNow(which) {
+  const probe = el('div', { class: 'msg ' + (which === 'out' ? 'mine pings-out' : 'theirs mentions-me'), style: 'position:fixed;left:-999px;top:0' }, el('div', { class: 'bubble', text: 'x' }));
+  document.body.append(probe);
+  const bg = getComputedStyle(probe.firstChild).backgroundColor;
+  probe.remove();
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1;
+  const x = cv.getContext('2d'); x.fillStyle = bg; x.fillRect(0, 0, 1, 1);
+  const d = x.getImageData(0, 0, 1, 1).data;
+  return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
 }
 function pingPickers() {
   const p = pingColors();
-  const one = (which, label, hint) => {
-    const pick = el('input', { type: 'color', class: 'wp-color', value: p[which], 'aria-label': label, title: hint });
-    pick.addEventListener('input', () => { const q = pingColors(); q[which] = pick.value; try { localStorage.setItem('uan.pings', JSON.stringify(q)); } catch {} applyPings(); });
+  const one = (which, label) => {
+    const pick = el('input', { type: 'color', class: 'wp-color', value: p[which] || pingNow(which), 'aria-label': label, title: p[which] ? label : label + ' (Auto: from your theme)' });
+    pick.addEventListener('input', () => { const q = pingColors(); q[which] = pick.value; savePings(q); });
     pick.addEventListener('change', renderPingRows);
-    const reset = el('button', { type: 'button', class: 'small wp-auto' + (p[which] === PING_DEFAULT[which] ? ' hidden' : ''), text: 'Auto', title: 'Back to the usual colour', onclick: () => setPing(which, null) });
-    return [pick, reset];
+    const auto = el('button', { type: 'button', class: 'small wp-auto' + (p[which] ? '' : ' on'), text: 'Auto', title: 'Follow your theme', onclick: () => { const q = pingColors(); q[which] = ''; savePings(q); renderPingRows(); } });
+    return [pick, auto];
   };
-  return { out: one('out', 'When you tag someone', 'Your messages that tag someone'), in: one('in', 'When you are tagged', 'Messages that tag you or @everyone') };
+  return { out: one('out', 'Your pings'), in: one('in', 'Pings to you') };
 }
 function renderPingRows() {
   const box = $('sPingColors');
-  if (box) {
-    const k = pingPickers();
-    box.replaceChildren(
-      el('span', { class: 'ping-lbl' }, el('i', { class: 'ping-dot out' }), 'Your pings'), ...k.out,
-      el('span', { class: 'ping-lbl' }, el('i', { class: 'ping-dot in' }), 'Pings to you (and @everyone)'), ...k.in);
-  }
+  if (!box) return;
+  const k = pingPickers();
+  box.replaceChildren(
+    el('span', { class: 'ping-lbl' }, 'Your pings'), ...k.out,
+    el('span', { class: 'ping-lbl' }, 'Pings to you (and @everyone)'), ...k.in);
 }
 applyPings();
 renderPingRows();
