@@ -141,6 +141,9 @@ fn autostart_on(app: &AppHandle) -> bool {
 
 #[tauri::command]
 fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'_, MediaBase>, http: State<'_, HttpBase>, selftest: State<'_, SelfTest>, app: AppHandle) -> Value {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return json!({ "locked": true });
+    }
     json!({
         "id": node.id(),
         "code": node.friend_code(),
@@ -162,6 +165,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "autodl": node.autodl().0,
         "autodlGb": node.autodl().1,
         "autodlDir": node.autodl_dir(),
+        "wifiOnly": node.wifi_only(),
         "autodlPath": node.auto_dir_path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
         "autodlChats": node.autodl_chats(),
         "typing": node.privacy().0,
@@ -516,6 +520,55 @@ fn open_autodl_dir(node: State<'_, Arc<Node>>) -> CmdResult<String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// Phones: the window says whether it is on mobile data (it knows the connection type).
+#[tauri::command]
+fn set_network(node: State<'_, Arc<Node>>, cellular: bool) {
+    node.set_cellular(cellular)
+}
+
+#[tauri::command]
+fn set_wifi_only(node: State<'_, Arc<Node>>, on: bool) {
+    node.set_wifi_only(on)
+}
+
+// ----- App lock -----
+
+#[tauri::command]
+fn lock_state(node: State<'_, Arc<Node>>) -> Value {
+    json!({ "enabled": node.lock_enabled(), "locked": node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) })
+}
+
+/// Opens UaN with its password. A wrong one waits a little (more after several tries).
+#[tauri::command]
+async fn unlock(node: State<'_, Arc<Node>>, password: String) -> CmdResult<()> {
+    static FAILS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let node = node.inner().clone();
+    let ok = tauri::async_runtime::spawn_blocking(move || node.lock_check(&password)).await.map_err(|e| e.to_string())?;
+    if ok {
+        FAILS.store(0, std::sync::atomic::Ordering::SeqCst);
+        node::APP_LOCKED.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Ok(());
+    }
+    let n = FAILS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    tokio::time::sleep(std::time::Duration::from_secs(if n >= 5 { 30 } else { 1 })).await;
+    Err(if n >= 5 { "Wrong password. Wait 30 seconds between tries now.".into() } else { "Wrong password.".into() })
+}
+
+/// Turns the lock on (with a new password) or off (with the current one).
+#[tauri::command]
+async fn lock_set(node: State<'_, Arc<Node>>, on: bool, password: String, current: Option<String>) -> CmdResult<()> {
+    let node = node.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if node.lock_enabled() && !node.lock_check(current.as_deref().unwrap_or("")) {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            return Err("The current password is wrong.".to_string());
+        }
+        if on { node.lock_set(&password) } else { node.lock_clear(); Ok(()) }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// A new friend code (the old one stops working; friends stay friends).
 #[tauri::command]
 fn new_friend_code(node: State<'_, Arc<Node>>) -> String {
@@ -772,6 +825,9 @@ fn save_themes(dir: &std::path::Path, list: &[CustomTheme]) -> CmdResult<()> {
 
 #[tauri::command]
 fn themes(profile: State<'_, Profile>) -> Vec<CustomTheme> {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return vec![];
+    }
     load_themes(&profile.dir)
 }
 
@@ -1190,6 +1246,9 @@ fn vlc_close(vlc: State<'_, vlc::Vlc>, id: String) {
 
 #[tauri::command]
 fn contacts(node: State<'_, Arc<Node>>) -> Value {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Value::Null;
+    }
     node.contacts()
 }
 
@@ -1205,11 +1264,17 @@ fn friend_action(node: State<'_, Arc<Node>>, id: String, action: String) -> CmdR
 
 #[tauri::command]
 fn messages(node: State<'_, Arc<Node>>, chat: String, limit: Option<usize>) -> Vec<Value> {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return vec![];
+    }
     node.messages(&chat, limit.unwrap_or(300))
 }
 
 #[tauri::command]
 fn search(node: State<'_, Arc<Node>>, query: String, kind: String, from: String, chat: String, since: i64) -> Vec<Value> {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return vec![];
+    }
     node.search(&query, &kind, &from, &chat, since)
 }
 
@@ -1441,11 +1506,17 @@ fn party_buffering(node: State<'_, Arc<Node>>, id: String, buffering: bool) {
 
 #[tauri::command]
 fn parties(node: State<'_, Arc<Node>>) -> Vec<Party> {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return vec![];
+    }
     node.parties()
 }
 
 #[tauri::command]
 fn transfers(node: State<'_, Arc<Node>>) -> Vec<Transfer> {
+    if node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return vec![];
+    }
     node.snapshot()
 }
 
@@ -1579,6 +1650,9 @@ pub fn run() {
             }
             let node = tauri::async_runtime::block_on(Node::start(app.handle().clone(), dir.clone()))?;
             node.load_autodl_dir();
+            node.refresh_my_bioimg();
+            // Locked with a password: nothing is shown until it is typed in.
+            node::APP_LOCKED.store(node.lock_enabled(), std::sync::atomic::Ordering::SeqCst);
             node.resume_downloads();
             // WebKitGTK (Linux) can't stream video from custom schemes, so the player uses a local HTTP server there.
             let http_base = tauri::async_runtime::block_on(node::start_media_server(node.clone())).unwrap_or_default();
@@ -1757,6 +1831,11 @@ pub fn run() {
             set_autodl,
             set_autodl_chat,
             new_friend_code,
+            lock_state,
+            set_network,
+            set_wifi_only,
+            unlock,
+            lock_set,
             open_autodl_dir,
             set_autodl_dir,
             pick_autodl_dir,

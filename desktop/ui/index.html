@@ -7,6 +7,17 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- App lock: black, until UaN knows it is not locked (or the password is right). Nothing else shows meanwhile. -->
+  <div id="lockScreen" class="lock-screen">
+    <form id="lockForm" class="lock-box hidden" autocomplete="off">
+      <img src="icon.png" alt="" class="lock-icon">
+      <div class="lock-title">UaN is locked</div>
+      <div class="lock-sub">Type your password to open it.</div>
+      <input id="lockPw" type="password" placeholder="Password" autocomplete="current-password" spellcheck="false">
+      <div class="lock-err" id="lockErr"></div>
+      <button class="accent" id="lockGo" type="submit">Unlock</button>
+    </form>
+  </div>
   <!-- UaN's own title bar (Windows): it follows the theme -->
   <div id="titlebar" class="titlebar hidden">
     <div class="tb-drag" id="tbDrag"><img src="icon.png" alt=""><span class="tb-title" id="tbTitle">UaN</span></div>
@@ -416,6 +427,13 @@
               <label class="check"><input type="checkbox" id="sReceipts"> Show others when I’ve seen their messages</label>
               <label class="check"><input type="checkbox" id="sHeads"> Show who is online (small pictures) in group headers</label>
             </div>
+            <div class="sub-title">Lock UaN with a password</div>
+            <div class="lock-set" id="sLockBox">
+              <div class="note" id="sLockNote">When it is on, UaN asks for the password every time it starts, on a black screen: nothing (not even your theme) shows before it. Don’t forget it: UaN can’t be opened without it.</div>
+              <div class="lock-row" id="sLockCurRow"><input type="password" id="sLockCur" placeholder="Current password" autocomplete="current-password"></div>
+              <div class="lock-row" id="sLockNewRow"><input type="password" id="sLockNew" placeholder="New password (4+ characters)" autocomplete="new-password"><input type="password" id="sLockNew2" placeholder="Again" autocomplete="new-password"></div>
+              <div class="lock-row"><span class="lock-state" id="sLockState"></span><span class="grow"></span><button type="button" class="small" id="sLockOff">Turn off</button><button type="button" class="small accent" id="sLockOn">Turn on</button></div>
+            </div>
             <div class="sub-title">Friend code</div>
             <div class="ws-row"><div class="grow"><div class="strong">Make a new friend code</div><div class="note">If your code got out by mistake: the old one stops working, your friends stay your friends.</div></div><button type="button" class="small" id="sNewCode">New code</button></div>
           </section>
@@ -423,6 +441,7 @@
             <h3 class="s-title">Downloads &amp; start-up</h3>
             <div class="group">
               <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when your computer starts (runs in the tray)</label>
+              <label class="check phone-check" id="sWifiRow"><input type="checkbox" id="sWifi"> Wi-Fi only: download, and let others download from this phone, only on Wi-Fi (not on mobile data)</label>
               <div class="autodl-box">
                 <label class="check"><input type="checkbox" id="sAutoDl"> <span class="warn-ico" title="Not fully safe">!</span> Automatically download files friends send, up to <input id="sAutoDlGb" type="number" min="1" max="4096" class="gb"> GB</label>
                 <div class="note warn">Not fully safe: files land on your PC without you opening them. Only for people you trust. It works only in the chats where you switch it on (right-click a friend or a group → Automatic downloads here).</div>

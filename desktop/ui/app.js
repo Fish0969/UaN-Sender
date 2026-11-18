@@ -197,8 +197,28 @@ function setupChrome() {
 }
 function applySavedZoom() { if (uiZoom !== 1) setZoom(uiZoom, false); }
 
+// The lock screen: shown until the password is right (the core gives nothing out before that).
+function waitForUnlock() {
+  return new Promise((resolve) => {
+    $('lockForm').classList.remove('hidden');
+    setTimeout(() => $('lockPw').focus(), 50);
+    $('lockForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const pw = $('lockPw').value;
+      if (!pw) return;
+      $('lockGo').disabled = true; $('lockErr').textContent = '';
+      try { await invoke('unlock', { password: pw }); $('lockPw').value = ''; resolve(); }
+      catch (err) { $('lockErr').textContent = String(err); $('lockPw').select(); }
+      $('lockGo').disabled = false;
+    };
+  });
+}
 async function boot() {
+  const lock = await invoke('lock_state').catch(() => ({ locked: false }));
+  if (lock.locked) await waitForUnlock();
   S.me = await invoke('state');
+  $('lockScreen').remove();
+  applyTheme();
   setupChrome();
   applySavedZoom();
   loadCustomThemes();
@@ -3433,7 +3453,8 @@ function showMenu(x, y, items) {
   m.classList.remove('hidden');
   const r = m.getBoundingClientRect();
   m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
-  m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+  const bottom = document.documentElement.classList.contains('phone') ? 64 : 4;
+  m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - bottom))}px`;
 }
 function hideMenu() { $('ctxMenu').classList.add('hidden'); ctxTarget = null; }
 document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxMenu')) hideMenu(); });
@@ -3794,6 +3815,7 @@ $('settingsBtn').addEventListener('click', async () => {
   renderLookPick();
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
+  $('sWifi').checked = S.me.wifiOnly !== false;
   $('sAutoDlDir').value = S.me.autodlDir || '';
   $('sAutoDlDir').placeholder = S.me.autodlPath || 'UaN folder';
   $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
@@ -5702,3 +5724,58 @@ document.addEventListener('click', (e) => {
 document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('.mini-pf') && !e.target.closest?.('.bubble .mention')) closeMiniProfile(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMiniProfile(); });
 $('msgs').addEventListener('wheel', closeMiniProfile, { passive: true });
+
+// ---------- Settings → Privacy: lock UaN with a password ----------
+async function renderLock() {
+  const st = await invoke('lock_state').catch(() => ({ enabled: false }));
+  $('sLockState').textContent = st.enabled ? '🔒 On: UaN asks for the password when it starts.' : 'Off';
+  $('sLockCurRow').classList.toggle('hidden', !st.enabled);
+  $('sLockOff').classList.toggle('hidden', !st.enabled);
+  $('sLockOn').textContent = st.enabled ? 'Change password' : 'Turn on';
+  for (const id of ['sLockCur', 'sLockNew', 'sLockNew2']) $(id).value = '';
+}
+$('sLockOn').addEventListener('click', async () => {
+  const pw = $('sLockNew').value;
+  if (pw.length < 4) return toast('The password must be at least 4 characters.');
+  if (pw !== $('sLockNew2').value) return toast('The two passwords are not the same.');
+  try {
+    await invoke('lock_set', { on: true, password: pw, current: $('sLockCur').value || null });
+    toast('UaN is locked with your password from the next start.');
+    renderLock();
+  } catch (e) { toast(e); }
+});
+$('sLockOff').addEventListener('click', async () => {
+  if (!$('sLockCur').value) return toast('Type your current password to turn the lock off.');
+  try {
+    await invoke('lock_set', { on: false, password: '', current: $('sLockCur').value });
+    toast('The lock is off.');
+    renderLock();
+  } catch (e) { toast(e); }
+});
+document.querySelector('.s-tab[data-page="privacy"]').addEventListener('click', renderLock);
+
+// ---------- Phones: Wi-Fi only, and the keyboard ----------
+$('sWifi').addEventListener('change', async () => {
+  await invoke('set_wifi_only', { on: $('sWifi').checked }).catch(toast);
+  S.me.wifiOnly = $('sWifi').checked;
+  toast($('sWifi').checked ? 'Files go only on Wi-Fi now.' : 'Files also go on mobile data now.');
+});
+// The window knows whether the phone is on mobile data; the core is told (and again whenever it changes).
+(function watchNetwork() {
+  const c = navigator.connection;
+  if (!c) return;
+  const tell = () => invoke('set_network', { cellular: c.type === 'cellular' }).catch(() => {});
+  tell();
+  c.addEventListener?.('change', tell);
+})();
+// When the keyboard opens, the app shrinks to the space above it (the header and the channel stay in sight).
+if (window.visualViewport) {
+  const fit = () => {
+    if (!document.documentElement.classList.contains('phone')) return;
+    document.documentElement.style.setProperty('--app-h', visualViewport.height + 'px');
+    if (window.scrollY || document.scrollingElement?.scrollTop) window.scrollTo(0, 0);
+  };
+  visualViewport.addEventListener('resize', fit);
+  visualViewport.addEventListener('scroll', fit);
+  fit();
+}

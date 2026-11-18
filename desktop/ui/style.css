@@ -1725,3 +1725,41 @@ input[type=range] { zoom: calc(1 / var(--uiz, 1)); }
 .mini-acts button { flex: 1; }
 
 .wp-auto.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+
+/* The lock screen: plain black, above everything (no theme shows through) */
+.lock-screen { position: fixed; inset: 0; z-index: 2147483000; background: #000; display: grid; place-items: center; color: #eee; font-family: "Segoe UI", system-ui, sans-serif; }
+.lock-box { width: min(320px, calc(100vw - 48px)); display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.lock-box.hidden { display: none; }
+.lock-icon { width: 56px; height: 56px; border-radius: 14px; margin-bottom: 6px; opacity: .9; }
+.lock-title { font-size: 20px; font-weight: 700; }
+.lock-sub { font-size: 13px; color: #8a8a8a; margin-bottom: 6px; }
+.lock-box input { width: 100%; height: 42px; padding: 0 14px; border-radius: 10px; border: 1px solid #333; background: #111; color: #fff; font-size: 15px; box-sizing: border-box; text-align: center; outline: none; }
+.lock-box input:focus { border-color: #4cc2ff; box-shadow: 0 0 0 3px rgba(76, 194, 255, .2); }
+.lock-err { min-height: 18px; font-size: 12.5px; color: #ff6b6f; }
+.lock-box button { width: 100%; height: 42px; border-radius: 10px; border: 0; background: #4cc2ff; color: #001018; font-weight: 700; font-size: 15px; cursor: pointer; }
+.lock-box button:disabled { opacity: .6; }
+.lock-set { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-ctl, 10px); background: var(--card); }
+.lock-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lock-row input { flex: 1; min-width: 140px; }
+.lock-state { font-size: 13px; font-weight: 600; }
+
+/* ---------- Phones: nothing stretched, nothing under the status bar or the bottom bar ---------- */
+.phone-check { display: none !important; }
+html.phone .phone-check { display: flex !important; }
+html.phone, html.phone body { height: var(--app-h, 100dvh); }
+html.phone .composer button.icon, html.phone #sendBtn { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+html.phone .chat-head button.icon, html.phone .chat-head .icon { flex: none; width: 42px; height: 42px; min-height: 42px; padding: 0; }
+html.phone #chanTabs button { min-height: 34px; height: 34px; padding: 0 12px; }
+html.phone .side button:not(.icon):not(.s-tab) { min-height: 40px; }
+/* Settings: below the status bar, Done above the bottom bar */
+html.phone #settingsDlg { height: var(--app-h, 100dvh); max-height: var(--app-h, 100dvh); padding: max(env(safe-area-inset-top), 32px) 0 0; box-sizing: border-box; }
+html.phone #settingsDlg .s-main .actions, html.phone #settingsDlg .actions { padding-bottom: max(env(safe-area-inset-bottom), 14px); }
+html.phone dialog:not(#settingsDlg) { margin-top: max(env(safe-area-inset-top), 34px); max-height: calc(var(--app-h, 100dvh) - max(env(safe-area-inset-top), 34px) - 56px); }
+/* Profile on a phone: picture over the banner, all centred */
+html.phone .pf-top { flex-direction: column; align-items: center; text-align: center; gap: 6px; margin-top: -44px; }
+html.phone .pf-top .avatar { width: 84px; height: 84px; font-size: 34px; box-shadow: 0 0 0 4px var(--dialog, var(--card)); }
+html.phone .profile-dlg { width: calc(100vw - 20px); padding: 0; }
+html.phone .pf-bio img, html.phone .pf-bio video { max-width: 100%; }
+html.phone .mini-pf { width: min(300px, calc(100vw - 24px)); }
+html.phone .mini-av .avatar { width: 72px; height: 72px; font-size: 28px; }
+html.phone .pf-top > div, html.phone .pf-top .pf-name { width: 100%; text-align: center; }

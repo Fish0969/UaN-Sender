@@ -44,6 +44,13 @@ const PROTO: u32 = 3;
 const MEDIA_CHUNK: u64 = 8 * 1024 * 1024;
 const MEDIA_WHOLE_LIMIT: u64 = 32 * 1024 * 1024;
 const ONLINE_WINDOW: Duration = Duration::from_secs(150);
+/// UaN is locked with its password (Settings → Privacy): nothing is shown until it is typed in.
+pub static APP_LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The phone is on mobile data now (told by the window, which knows the connection type).
+pub static ON_CELLULAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const WIFI_WAIT: &str = "Waiting for Wi-Fi (Settings → Downloads: Wi-Fi only)";
+
 /// The folder automatic downloads go to, when you picked one (Settings → Downloads).
 static AUTO_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
@@ -944,6 +951,62 @@ impl Node {
         }
     }
 
+    /// On a phone signed in to this account: get the About picture/GIF from the PC (too big to travel with the profile).
+    pub fn refresh_my_bioimg(self: &Arc<Self>) {
+        if self.dev_s == self.me_s {
+            return;
+        }
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let pc = me.me_s.clone();
+            if let Ok(r) = me.request_dev(&pc, &Req::BioImage).await {
+                match r["img"].as_str().filter(|b| (b.starts_with("data:image/") || b.starts_with("data:video/webm")) && b.len() <= BIOIMG_MAX) {
+                    Some(img) => me.set_kv("bioimg", img),
+                    None => {
+                        let _ = me.db.lock().unwrap().execute("DELETE FROM kv WHERE k = 'bioimg'", []);
+                    }
+                }
+                me.emit("me", Value::Null);
+            }
+        });
+    }
+
+    // ----- App lock: a password before anything is shown -----
+
+    fn lock_digest(salt: &str, pw: &str) -> String {
+        let mut h = Sha256::digest(format!("uan-lock:{salt}:{pw}").as_bytes());
+        for _ in 0..150_000 {
+            h = Sha256::digest(h);
+        }
+        HEXLOWER.encode(&h)
+    }
+
+    pub fn lock_enabled(&self) -> bool {
+        self.kv("lock_hash").is_some_and(|h| !h.is_empty())
+    }
+
+    pub fn lock_check(&self, pw: &str) -> bool {
+        let (Some(salt), Some(hash)) = (self.kv("lock_salt"), self.kv("lock_hash")) else { return false };
+        let got = Self::lock_digest(&salt, pw);
+        // Compared in full every time (no early exit).
+        got.len() == hash.len() && got.bytes().zip(hash.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+    }
+
+    pub fn lock_set(&self, pw: &str) -> Result<(), String> {
+        if pw.chars().count() < 4 {
+            return Err("The password must be at least 4 characters.".into());
+        }
+        let salt = HEXLOWER.encode(&Sha256::digest(format!("{}:{}", self.sign_hex(&format!("lock:{}", now())), now()).as_bytes())[..16]);
+        self.set_kv("lock_salt", &salt);
+        self.set_kv("lock_hash", &Self::lock_digest(&salt, pw));
+        Ok(())
+    }
+
+    pub fn lock_clear(&self) {
+        self.set_kv("lock_hash", "");
+        self.set_kv("lock_salt", "");
+    }
+
     /// Makes a new friend code: the old one stops working (friends you already have stay).
     pub fn new_friend_code(&self) -> String {
         // Unguessable: a signature with the account key over the time (no one else can make it).
@@ -1182,6 +1245,9 @@ impl Node {
                     }
                     self.set_kv("pv", &pv.to_string());
                     self.emit("me", Value::Null);
+                    // A phone signed in to this account: the About picture/GIF is fetched from the PC too
+                    // (it is too big to travel with the profile).
+                    self.refresh_my_bioimg();
                 }
                 Ok(ok)
             }
@@ -2017,6 +2083,8 @@ impl Node {
                 last.retain(|_, at| t - *at < 60_000);
                 last.insert(title.to_string(), t);
             }
+            let locked = APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst);
+            let (title, body) = if locked { ("UaN", "Something new (UaN is locked)") } else { (title, body) };
             let _ = self.app.notification().builder().title(title).body(body).show();
         }
     }
@@ -4314,6 +4382,12 @@ impl Node {
 
     async fn serve_file(&self, peer: &str, file_id: &str, offset: u64, len: Option<u64>, mut send: SendStream) {
         let fail = |e: &str| json!({ "ok": false, "error": e });
+        // A phone on mobile data doesn't send files (unless its owner allowed it).
+        if self.data_blocked() {
+            let _ = write_frame(&mut send, &fail("Their phone is on mobile data: it sends files on Wi-Fi only.")).await;
+            let _ = send.finish();
+            return;
+        }
         let (path, size) = match self.source_for(peer, file_id) {
             Some(Source::Whole(p, s)) => (p, s),
             Some(Source::Partial(pt)) => {
@@ -4709,6 +4783,12 @@ impl Node {
         if self.running.lock().unwrap().contains_key(id) || t.status == "done" {
             return;
         }
+        if self.data_blocked() {
+            self.update(id, |t| { t.status = "paused".into(); t.error = Some(WIFI_WAIT.into()); });
+            self.save_transfers();
+            self.emit_transfers();
+            return;
+        }
         let live = Arc::new(AtomicU64::new(t.done));
         let cancel = CancellationToken::new();
         self.running.lock().unwrap().insert(id.to_string(), Running { live: live.clone(), cancel: cancel.clone() });
@@ -4721,6 +4801,38 @@ impl Node {
         let me = self.clone();
         let id = id.to_string();
         tauri::async_runtime::spawn(async move { me.download_loop(&id, live, cancel).await });
+    }
+
+    /// Phones: downloads and sharing your files happen on Wi-Fi only (on by default; it can be turned off).
+    pub fn wifi_only(&self) -> bool {
+        cfg!(mobile) && self.kv("wifi_only").map(|v| v != "0").unwrap_or(true)
+    }
+
+    pub fn set_wifi_only(self: &Arc<Self>, on: bool) {
+        self.set_kv("wifi_only", if on { "1" } else { "0" });
+        if !on {
+            self.resume_wifi_waits();
+        }
+    }
+
+    /// True when the phone must not use mobile data for files right now.
+    pub fn data_blocked(&self) -> bool {
+        self.wifi_only() && ON_CELLULAR.load(Ordering::SeqCst)
+    }
+
+    pub fn set_cellular(self: &Arc<Self>, cellular: bool) {
+        ON_CELLULAR.store(cellular, Ordering::SeqCst);
+        if !cellular {
+            self.resume_wifi_waits();
+        }
+    }
+
+    fn resume_wifi_waits(self: &Arc<Self>) {
+        let ids: Vec<String> = self.transfers.lock().unwrap().iter().filter(|t| t.error.as_deref() == Some(WIFI_WAIT)).map(|t| t.id.clone()).collect();
+        for id in ids {
+            self.update(&id, |t| { t.status = "paused".into(); t.error = None; });
+            self.start_download(&id);
+        }
     }
 
     pub fn resume_downloads(self: &Arc<Self>) {

@@ -1,5 +1,13 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.39', items: [
+    'Lock UaN with a password (Settings → Privacy). It asks for it every time UaN starts, on a black screen: nothing shows before it, not even your theme. Turning it off needs the password.',
+    'While UaN is locked, notifications don’t show who wrote or what.',
+    'Phone: Wi-Fi only (on by default, Settings → Downloads & start-up). Files download, and others download from your phone, only on Wi-Fi; turn it off to use mobile data too.',
+    'Phone: buttons are no longer stretched, Settings and windows stay below the status bar, menus stay above the bottom bar, and the header stays in sight while the keyboard is open.',
+    'Phone: profiles look right, and your own About picture or GIF shows on the phone too.',
+    'Security updates.',
+  ] },
   { v: '1.9.38', items: [
     'A message that tags you or @everyone is always in your theme’s opposite colour, even one you wrote yourself.',
     'A message that tags only someone else is a slightly different shade of its usual bubble (yours and others’ too).',
