@@ -436,6 +436,10 @@
             </div>
             <div class="sub-title">Friend code</div>
             <div class="ws-row"><div class="grow"><div class="strong">Make a new friend code</div><div class="note">If your code got out by mistake: the old one stops working, your friends stay your friends.</div></div><button type="button" class="small" id="sNewCode">New code</button></div>
+            <div class="danger-zone">
+              <div class="grow"><div class="strong">Delete everything</div><div class="note">Deletes every file you downloaded through UaN (also in Downloads), UaN's folders, your account on this device, your messages, themes and settings. UaN closes. This can't be undone.</div></div>
+              <button type="button" class="danger-btn" id="sWipe">Delete everything</button>
+            </div>
           </section>
           <section class="s-page hidden" data-page="files">
             <h3 class="s-title">Downloads &amp; start-up</h3>
@@ -682,6 +686,16 @@
   <dialog id="wsViewDlg" class="ws-view-dlg">
     <div class="ws-view-head"><div class="grow"><strong id="wsViewName"></strong><div class="note" id="wsViewBy"></div></div><span id="wsViewFav"></span><button type="button" class="icon" id="wsViewClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div class="ws-view-stage" id="wsViewStage"></div>
+  </dialog>
+  <dialog id="wipeDlg" class="wipe-dlg">
+    <form id="wipeForm" method="dialog">
+      <div class="wipe-ico">!</div>
+      <h2>Delete everything?</h2>
+      <p>This deletes <b>every file you downloaded through UaN</b>, UaN's folders, and <b>your account, messages, themes and settings on this device</b>. UaN closes. It can't be undone: without a backup your account is gone for good.</p>
+      <label><span>Type <b>Delete everything</b> to confirm</span><input id="wipeText" autocomplete="off" spellcheck="false" placeholder="Delete everything"></label>
+      <div class="wipe-err" id="wipeErr"></div>
+      <div class="actions"><span class="grow"></span><button type="button" id="wipeCancel">Cancel</button><button type="submit" class="danger-btn" id="wipeGo" disabled>Delete everything</button></div>
+    </form>
   </dialog>
   <dialog id="wsReportDlg">
     <form id="wsReportForm" method="dialog">

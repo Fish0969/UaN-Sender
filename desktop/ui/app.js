@@ -5779,3 +5779,29 @@ if (window.visualViewport) {
   visualViewport.addEventListener('scroll', fit);
   fit();
 }
+
+// ---------- Delete everything (Settings → Privacy): only after typing the words ----------
+const WIPE_WORDS = 'Delete everything';
+$('sWipe').addEventListener('click', () => {
+  $('wipeText').value = '';
+  $('wipeErr').textContent = '';
+  $('wipeGo').disabled = true;
+  $('wipeDlg').showModal();
+  setTimeout(() => $('wipeText').focus(), 50);
+});
+$('wipeText').addEventListener('input', () => { $('wipeGo').disabled = $('wipeText').value.trim() !== WIPE_WORDS; });
+$('wipeCancel').addEventListener('click', () => $('wipeDlg').close());
+$('wipeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if ($('wipeText').value.trim() !== WIPE_WORDS) return;
+  $('wipeGo').disabled = true; $('wipeCancel').disabled = true;
+  $('wipeGo').textContent = 'Deleting…';
+  try {
+    const r = await invoke('wipe_everything', { confirm: $('wipeText').value.trim() });
+    $('wipeErr').classList.add('ok');
+    $('wipeErr').textContent = 'Deleted ' + r.files + ' file' + (r.files === 1 ? '' : 's') + ' (' + fmtBytes(r.bytes) + '). UaN closes now and removes its folders.';
+  } catch (err) {
+    $('wipeErr').textContent = String(err);
+    $('wipeGo').disabled = false; $('wipeCancel').disabled = false; $('wipeGo').textContent = WIPE_WORDS;
+  }
+});

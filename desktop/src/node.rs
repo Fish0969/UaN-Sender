@@ -44,6 +44,24 @@ const PROTO: u32 = 3;
 const MEDIA_CHUNK: u64 = 8 * 1024 * 1024;
 const MEDIA_WHOLE_LIMIT: u64 = 32 * 1024 * 1024;
 const ONLINE_WINDOW: Duration = Duration::from_secs(150);
+/// Every file in a folder and its sub-folders.
+fn walk_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                stack.push(e.path());
+            } else if ft.is_file() {
+                out.push(e.path());
+            }
+        }
+    }
+    out
+}
+
 /// UaN is locked with its password (Settings → Privacy): nothing is shown until it is typed in.
 pub static APP_LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -998,6 +1016,73 @@ impl Node {
                 me.emit("me", Value::Null);
             }
         });
+    }
+
+    // ----- Delete everything: every file UaN downloaded, and UaN's own folders -----
+
+    /// Deletes every file downloaded through UaN (finished or not), and UaN's download folders.
+    /// Returns how many files and bytes went. (UaN's data folder is removed by the caller, after it closes.)
+    pub fn wipe_downloads(&self) -> (u64, u64) {
+        // Stop everything that writes first.
+        for (_, r) in self.running.lock().unwrap().drain() {
+            r.cancel.cancel();
+        }
+        for (_, c) in self.caches.lock().unwrap().drain() {
+            c.cancel.cancel();
+        }
+        let (mut n, mut bytes) = (0u64, 0u64);
+        let mut gone = |p: &Path| {
+            if let Ok(m) = std::fs::metadata(p) {
+                if m.is_file() && std::fs::remove_file(p).is_ok() {
+                    n += 1;
+                    bytes += m.len();
+                }
+            }
+        };
+        let list: Vec<Transfer> = self.transfers.lock().unwrap().drain(..).collect();
+        let mut parents: Vec<PathBuf> = Vec::new();
+        for t in &list {
+            let p = PathBuf::from(&t.path);
+            let part = part_path(&p);
+            gone(&p);
+            gone(&part);
+            gone(&blocks_path(&part));
+            if let Some(d) = p.parent() {
+                parents.push(d.to_path_buf());
+            }
+        }
+        // Folders that only held those files (a sent folder downloaded as "Downloads/Holiday/...") go too,
+        // never Downloads itself or anything that still has other files in it.
+        let keep: Vec<PathBuf> = [dirs::download_dir(), dirs::home_dir(), dirs::desktop_dir(), dirs::document_dir()].into_iter().flatten().collect();
+        parents.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+        for mut d in parents {
+            while !keep.iter().any(|k| *k == d) && std::fs::remove_dir(&d).is_ok() {
+                match d.parent() {
+                    Some(up) => d = up.to_path_buf(),
+                    None => break,
+                }
+            }
+        }
+        // UaN's own download folders, whole: the UaN folder in your user folder and the old Downloads/UaN.
+        // (A test run with its own data folder never touches the real ones.)
+        let real = std::env::var_os("UAN_DATA").is_none();
+        let mut own: Vec<PathBuf> = if real { [dirs::home_dir().map(|h| h.join("UaN")), dirs::download_dir().map(|d| d.join("UaN"))].into_iter().flatten().collect() } else { Vec::new() };
+        if let Some(d) = std::env::var_os("UAN_DOWNLOADS") {
+            own.push(PathBuf::from(d));
+        }
+        for d in own {
+            if d.is_dir() {
+                for e in walk_files(&d) {
+                    gone(&e);
+                }
+                let _ = std::fs::remove_dir_all(&d);
+            }
+        }
+        self.partials.lock().unwrap().clear();
+        let _ = self.db.lock().unwrap().execute("DELETE FROM downloads", []);
+        self.save_transfers();
+        self.emit_transfers();
+        (n, bytes)
     }
 
     // ----- App lock: a password before anything is shown -----

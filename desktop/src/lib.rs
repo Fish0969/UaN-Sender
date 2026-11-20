@@ -531,6 +531,71 @@ fn set_wifi_only(node: State<'_, Arc<Node>>, on: bool) {
     node.set_wifi_only(on)
 }
 
+// ----- Delete everything -----
+
+/// Deletes everything UaN has on this device: every file downloaded through it, its download folders,
+/// your account, messages, themes and settings. UaN closes; its folders are removed right after.
+/// (The program itself stays: uninstall it like any other app.)
+#[tauri::command]
+async fn wipe_everything(app: AppHandle, node: State<'_, Arc<Node>>, profile: State<'_, Profile>, confirm: String) -> CmdResult<Value> {
+    if confirm.trim() != "Delete everything" {
+        return Err("Type Delete everything to confirm.".into());
+    }
+    let node = node.inner().clone();
+    let (files, bytes) = tauri::async_runtime::spawn_blocking(move || node.wipe_downloads()).await.map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let _ = app.autolaunch().disable();
+    }
+    // UaN's own folders: its data (account, messages, themes, cache, settings) and the window's storage.
+    let mut dirs_out = vec![profile.dir.clone()];
+    // (A test run with its own data folder, or a side-by-side test profile, leaves the real app folders alone.)
+    if std::env::var_os("UAN_DATA").is_none() && profile.name.is_none() {
+        if let Ok(d) = app.path().app_local_data_dir() {
+            dirs_out.push(d);
+        }
+        if let Ok(d) = app.path().app_data_dir() {
+            dirs_out.push(d);
+        }
+    }
+    dirs_out.sort();
+    dirs_out.dedup();
+    // A mark in the data folder: if anything is still there at the next start, it is removed before UaN opens.
+    let _ = std::fs::write(profile.dir.join("WIPE"), b"delete everything");
+    wipe_after_exit(&dirs_out);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        handle.exit(0);
+    });
+    Ok(json!({ "files": files, "bytes": bytes }))
+}
+
+/// Removes folders a moment after UaN has closed (its files are in use while it runs).
+fn wipe_after_exit(dirs: &[PathBuf]) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = String::from("ping -n 5 127.0.0.1 >NUL");
+        for d in dirs {
+            cmd.push_str(&format!(" & rmdir /S /Q \"{}\"", d.display()));
+        }
+        let _ = std::process::Command::new("cmd").raw_arg("/C").raw_arg(&cmd).creation_flags(0x0800_0000 | 0x0000_0008).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "android")))]
+    {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg("sleep 4; for d in \"$@\"; do rm -rf -- \"$d\"; done").arg("uan-wipe");
+        for d in dirs {
+            c.arg(d);
+        }
+        let _ = c.spawn();
+    }
+    #[cfg(target_os = "android")]
+    let _ = dirs;
+}
+
 // ----- App lock -----
 
 #[tauri::command]
@@ -1648,6 +1713,10 @@ pub fn run() {
                 use tauri_plugin_notification::NotificationExt;
                 let _ = app.notification().request_permission();
             }
+            // "Delete everything" was done: what is still there goes now, before anything opens.
+            if dir.join("WIPE").exists() {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
             let node = tauri::async_runtime::block_on(Node::start(app.handle().clone(), dir.clone()))?;
             node.load_autodl_dir();
             node.refresh_my_bioimg();
@@ -1832,6 +1901,7 @@ pub fn run() {
             set_autodl_chat,
             new_friend_code,
             lock_state,
+            wipe_everything,
             set_network,
             set_wifi_only,
             unlock,

@@ -1,5 +1,8 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.41', items: [
+    'Settings → Privacy: Delete everything. It deletes every file you downloaded through UaN, UaN’s folders, and your account, messages, themes and settings on this device, then UaN closes. It only goes ahead after you type Delete everything.',
+  ] },
   { v: '1.9.40', items: [
     'Downloads can never fill your disk: what UaN fetches by itself (automatic downloads, mailbox pick-ups, films loaded first) only starts if 20 GB stays free, and a download you start only if it fits and 2 GB stays free. Otherwise it says how much space is missing.',
   ] },
