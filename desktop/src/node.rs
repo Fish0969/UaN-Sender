@@ -1760,6 +1760,24 @@ impl Node {
         self.set_kv("autodl_chats", &serde_json::to_string(&list).unwrap_or_default());
     }
 
+    /// Automatic downloads are on, and switched on for this chat (a group's switch covers its channels).
+    pub fn autodl_here(&self, chat: &str) -> bool {
+        self.autodl().0 && self.autodl_chats().iter().any(|c| c == chat || chat.starts_with(&format!("{c}#")))
+    }
+
+    /// Keep 20 GB free when UaN downloads by itself (on unless turned off; then 2 GB, never less).
+    pub fn keep_free_on(&self) -> bool {
+        self.kv("keep_free").map(|v| v != "0").unwrap_or(true)
+    }
+
+    pub fn set_keep_free(&self, on: bool) {
+        self.set_kv("keep_free", if on { "1" } else { "0" });
+    }
+
+    fn keep_free_auto(&self) -> u64 {
+        if self.keep_free_on() { KEEP_FREE_AUTO } else { KEEP_FREE }
+    }
+
     /// Where automatic downloads go ("" = the UaN folder in your user folder).
     pub fn autodl_dir(&self) -> String {
         self.kv("autodl_dir").unwrap_or_default()
@@ -1807,7 +1825,7 @@ impl Node {
 
     async fn blob_send(&self, peer: &str, req: &Req) {
         let Req::Msg { msg } = req else { return };
-        let Some(file) = msg.file.as_ref().filter(|f| f.owner == self.me_s && f.dev.is_none() && f.size <= BLOB_MAX) else { return };
+        let Some(file) = msg.file.as_ref().filter(|f| f.owner == self.me_s && f.dev.is_none() && f.size <= BLOB_MAX && !f.name.contains(['/', '\\'])) else { return };
         let url = self.mailbox_url();
         let path: Option<String> = self.db.lock().unwrap().query_row("SELECT path FROM shared_files WHERE id = ?1", [&file.id], |r| r.get(0)).optional().ok().flatten();
         let (Some(path), false) = (path, url.is_empty()) else { return };
@@ -1833,7 +1851,7 @@ impl Node {
         if self.local_copy(file).is_some() {
             return true;
         }
-        if let Some(why) = Self::auto_dir().ok().and_then(|d| no_room(&d, file.size, KEEP_FREE_AUTO)) {
+        if let Some(why) = Self::auto_dir().ok().and_then(|d| no_room(&d, file.size, self.keep_free_auto())) {
             self.log(&format!("mailbox: not fetching {}: {why}", file.name));
             return false;
         }
@@ -2145,7 +2163,10 @@ impl Node {
                         if let Req::Msg { msg } = &req {
                             if let Some(file) = msg.file.as_ref().filter(|f| f.owner == from && f.dev.is_none() && f.size <= BLOB_MAX) {
                                 let chat = msg.group.as_ref().map(|g| format!("g:{g}")).unwrap_or_else(|| from.to_string());
-                                self.blob_fetch(dev, file, &chat).await;
+                                // Only where automatic downloads are on (in Settings and for this chat): nothing lands on the disk unasked.
+                                if self.autodl_here(&chat) {
+                                    self.blob_fetch(dev, file, &chat).await;
+                                }
                             }
                         }
                         let copy = (from != self.me_s && Self::mirrorable(&req)).then(|| req.clone());
@@ -2777,7 +2798,7 @@ impl Node {
                     self.update_name(peer, &name);
                     if let Some(f) = &msg.file {
                         let (on, gb) = self.autodl();
-                        if on && self.autodl_chats().iter().any(|c| *c == chat || chat.starts_with(&format!("{c}#"))) && f.size <= gb.saturating_mul(1024 * 1024 * 1024) && self.local_copy(f).is_none() {
+                        if on && self.autodl_here(&chat) && f.size <= gb.saturating_mul(1024 * 1024 * 1024) && self.local_copy(f).is_none() {
                             let _ = self.download_into(f.clone(), chat.clone(), true);
                         }
                     }
@@ -4864,7 +4885,7 @@ impl Node {
         }
         let dir = if auto || std::env::var_os("UAN_DOWNLOADS").is_some() { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
         // Never fill the disk: what UaN fetches by itself keeps 20 GB free, what you start keeps 2 GB.
-        if let Some(why) = no_room(&dir, file.size, if auto { KEEP_FREE_AUTO } else { KEEP_FREE }) {
+        if let Some(why) = no_room(&dir, file.size, if auto { self.keep_free_auto() } else { KEEP_FREE }) {
             self.log(&format!("download refused ({}): {why}", file.name));
             return Err(why);
         }

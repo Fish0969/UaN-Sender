@@ -1781,3 +1781,5 @@ html.phone .pf-top > div, html.phone .pf-top .pf-name { width: 100%; text-align:
 .wipe-err.ok { color: #3fbf7f; }
 html.phone .danger-zone { flex-direction: column; align-items: stretch; }
 html.phone .danger-zone .note { display: block !important; }
+
+.autodl-box .check.keep-free { color: var(--text); font-weight: 400; margin-top: 8px; }

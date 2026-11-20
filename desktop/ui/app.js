@@ -3816,6 +3816,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sAutoDl').checked = S.me.autodl;
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sWifi').checked = S.me.wifiOnly !== false;
+  $('sKeepFree').checked = S.me.keepFree !== false;
   $('sAutoDlDir').value = S.me.autodlDir || '';
   $('sAutoDlDir').placeholder = S.me.autodlPath || 'UaN folder';
   $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
@@ -5804,4 +5805,11 @@ $('wipeForm').addEventListener('submit', async (e) => {
     $('wipeErr').textContent = String(err);
     $('wipeGo').disabled = false; $('wipeCancel').disabled = false; $('wipeGo').textContent = WIPE_WORDS;
   }
+});
+
+$('sKeepFree').addEventListener('change', async () => {
+  const on = $('sKeepFree').checked;
+  await invoke('set_keep_free', { on }).catch(toast);
+  S.me.keepFree = on;
+  toast(on ? 'UaN keeps at least 20 GB free when it downloads by itself.' : 'UaN now downloads by itself until 2 GB is left (it never fills the disk completely).');
 });

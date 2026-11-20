@@ -165,6 +165,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "autodl": node.autodl().0,
         "autodlGb": node.autodl().1,
         "autodlDir": node.autodl_dir(),
+        "keepFree": node.keep_free_on(),
         "wifiOnly": node.wifi_only(),
         "autodlPath": node.auto_dir_path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
         "autodlChats": node.autodl_chats(),
@@ -638,6 +639,12 @@ async fn lock_set(node: State<'_, Arc<Node>>, on: bool, password: String, curren
 #[tauri::command]
 fn new_friend_code(node: State<'_, Arc<Node>>) -> String {
     node.new_friend_code()
+}
+
+/// Keep 20 GB free when UaN downloads by itself (off: 2 GB).
+#[tauri::command]
+fn set_keep_free(node: State<'_, Arc<Node>>, on: bool) {
+    node.set_keep_free(on)
 }
 
 #[tauri::command]
@@ -1899,6 +1906,7 @@ pub fn run() {
             set_thumb,
             set_autodl,
             set_autodl_chat,
+            set_keep_free,
             new_friend_code,
             lock_state,
             wipe_everything,

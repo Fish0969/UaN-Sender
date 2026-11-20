@@ -1,5 +1,10 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.42', items: [
+    'Nothing is downloaded unasked any more: files from the offline mailbox are also saved only where automatic downloads are on (in Settings and for that chat).',
+    'Files of a sent folder don’t go through the offline mailbox; they wait until you are both online.',
+    'Settings → Downloads: the 20 GB that UaN keeps free when it downloads by itself can be turned off (it then stops at 2 GB).',
+  ] },
   { v: '1.9.41', items: [
     'Settings → Privacy: Delete everything. It deletes every file you downloaded through UaN, UaN’s folders, and your account, messages, themes and settings on this device, then UaN closes. It only goes ahead after you type Delete everything.',
   ] },
