@@ -1,5 +1,8 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.40', items: [
+    'Downloads can never fill your disk: what UaN fetches by itself (automatic downloads, mailbox pick-ups, films loaded first) only starts if 20 GB stays free, and a download you start only if it fits and 2 GB stays free. Otherwise it says how much space is missing.',
+  ] },
   { v: '1.9.39', items: [
     'Lock UaN with a password (Settings → Privacy). It asks for it every time UaN starts, on a black screen: nothing shows before it, not even your theme. Turning it off needs the password.',
     'While UaN is locked, notifications don’t show who wrote or what.',

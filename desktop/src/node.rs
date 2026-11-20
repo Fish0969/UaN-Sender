@@ -47,6 +47,35 @@ const ONLINE_WINDOW: Duration = Duration::from_secs(150);
 /// UaN is locked with its password (Settings → Privacy): nothing is shown until it is typed in.
 pub static APP_LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// ----- Disk space: a download never fills the disk -----
+const GB: u64 = 1024 * 1024 * 1024;
+/// Free space left after a download you started yourself (and while downloading).
+const KEEP_FREE: u64 = 2 * GB;
+/// Free space left after anything UaN downloads by itself (automatic downloads, mailbox pick-ups, films loaded first).
+const KEEP_FREE_AUTO: u64 = 20 * GB;
+
+/// Free space on the disk that holds `p` (or the nearest folder above it that exists).
+fn free_space(p: &Path) -> Option<u64> {
+    let mut cur = Some(p);
+    while let Some(d) = cur {
+        if d.exists() {
+            return fs2::available_space(d).ok();
+        }
+        cur = d.parent();
+    }
+    None
+}
+
+/// Says why a download of `size` bytes into `dir` must not start, if it must not.
+fn no_room(dir: &Path, size: u64, keep: u64) -> Option<String> {
+    let free = free_space(dir)?;
+    if free < size.saturating_add(keep) {
+        let gb = |b: u64| format!("{:.1} GB", b as f64 / GB as f64);
+        return Some(format!("Not enough space on the disk: it needs {} (and keeps {} free), only {} is free.", gb(size), gb(keep), gb(free)));
+    }
+    None
+}
+
 /// The phone is on mobile data now (told by the window, which knows the connection type).
 pub static ON_CELLULAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const WIFI_WAIT: &str = "Waiting for Wi-Fi (Settings → Downloads: Wi-Fi only)";
@@ -1718,6 +1747,10 @@ impl Node {
     async fn blob_fetch(&self, from: &str, file: &FileMeta, chat: &str) -> bool {
         if self.local_copy(file).is_some() {
             return true;
+        }
+        if let Some(why) = Self::auto_dir().ok().and_then(|d| no_room(&d, file.size, KEEP_FREE_AUTO)) {
+            self.log(&format!("mailbox: not fetching {}: {why}", file.name));
+            return false;
         }
         let url = self.mailbox_url();
         let ts = now();
@@ -4745,6 +4778,11 @@ impl Node {
             return Ok(id);
         }
         let dir = if auto || std::env::var_os("UAN_DOWNLOADS").is_some() { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
+        // Never fill the disk: what UaN fetches by itself keeps 20 GB free, what you start keeps 2 GB.
+        if let Some(why) = no_room(&dir, file.size, if auto { KEEP_FREE_AUTO } else { KEEP_FREE }) {
+            self.log(&format!("download refused ({}): {why}", file.name));
+            return Err(why);
+        }
         // Files from a folder ("Folder/sub/file.txt") keep their folders on disk.
         let parts: Vec<String> = file
             .name
@@ -4908,6 +4946,12 @@ impl Node {
 
         // Reserve the space up front and remember which pieces are done, so we can resume.
         let fresh = std::fs::metadata(&part).map(|m| m.len() != t.size).unwrap_or(true);
+        // The whole size is reserved at once: only if it fits and leaves room.
+        if fresh {
+            if let Some(why) = no_room(final_path.parent().unwrap_or(Path::new(".")), t.size, KEEP_FREE) {
+                return self.finish(id, "error", Some(why));
+            }
+        }
         let bits = if fresh {
             let ok = std::fs::OpenOptions::new()
                 .create(true)
@@ -5196,6 +5240,9 @@ impl Node {
             return Ok(());
         }
         let dir = self.dir.join("cache").join(&file.id);
+        if let Some(why) = no_room(&self.dir, STREAM_MAX_BLOCKS as u64 * BLOCK, KEEP_FREE) {
+            return Err(why);
+        }
         std::fs::create_dir_all(&dir).map_err(e2s)?;
         // Pieces left over from an earlier session can be reused.
         let mut have = HashSet::new();
