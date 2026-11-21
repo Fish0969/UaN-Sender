@@ -657,7 +657,9 @@ function voiceChannelItem(g, ch, tag) {
   const title = here ? 'You are in it: click to leave' : people.length ? 'Join: ' + people.map((p) => p.name).join(', ') : 'Join this voice channel';
   if (tag === 'tab') {
     return el('button', { type: 'button', class: 'voice-tab' + (here ? ' on in-voice' : ''), onclick: click, oncontextmenu: menu, title },
-      svg(ICON.voice), ch.name, people.length ? el('span', { class: 'badge voice-count', text: String(people.length) }) : null);
+      svg(ICON.voice), ch.name,
+      people.length ? el('span', { class: 'voice-heads' }, ...people.slice(0, 4).map((p) => avatar(p.name, { seed: p.id, src: p.id === S.me.id ? S.me.profile?.avatar : (g.members.find((m) => m.id === p.id)?.avatar) })),
+        people.length > 4 ? el('span', { class: 'more', text: '+' + (people.length - 4) }) : null) : null);
   }
   return el('li', { class: 'friend voice-chan' + (here ? ' active in-voice' : ''), onclick: click, oncontextmenu: menu, title },
     el('div', { class: 'voice-row' }, svg(ICON.voice), el('span', { class: 'grow ellipsis', text: ch.name })),
@@ -4841,6 +4843,8 @@ const tuneOf = (c) => ({ ...TUNE_DEFAULT, ...(c?.tune || {}) });
 // Something else is playing (the film viewer, a watch party, a sound in a message): the background stays quiet.
 function mediaBusy() {
   if (!$('viewer').classList.contains('hidden') || !$('party').classList.contains('hidden')) return true;
+  // In a call or a voice channel (or it is ringing): the theme's sound would talk over people.
+  if ((typeof VC !== 'undefined' && VC.chat) || (typeof sfxLoopName !== 'undefined' && sfxLoopName)) return true;
   // Only what can be heard counts: a moving profile picture or an About GIF is a silent clip and must not quiet the theme.
   return [...document.querySelectorAll('video, audio')].some((m) => m !== backdrop?.video && !m.paused && !m.ended && !m.muted && m.volume > 0);
 }
@@ -5840,7 +5844,7 @@ $('sKeepFree').addEventListener('change', async () => {
 // The sound goes straight between the devices (WebRTC: Opus, echo and noise removal); UaN's own peer-to-peer
 // link carries the set-up and who is in which room. Audio only, so it stays light.
 const VOICE_ICE = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
-const VC = { chat: null, stream: null, peers: new Map(), early: {}, muted: false, deaf: false, beat: null, noAnswer: null };
+var VC = { chat: null, stream: null, peers: new Map(), early: {}, muted: false, deaf: false, beat: null, noAnswer: null };
 S.voiceRooms = {};
 function voiceRoomName(chat) {
   const g = groupOf(chat);
@@ -5880,6 +5884,7 @@ async function voiceJoin(chat, { ring = false } = {}) {
     }, 35000);
   }
   VC.beat = setInterval(() => { if (VC.chat) invoke('voice_send', { chat: VC.chat, kind: 'here' }).catch(() => {}); }, 10000);
+  syncBackdropSound();
   await refreshVoiceRooms();
   for (const p of S.voiceRooms[chat] || []) if (p.dev !== S.me.dev) voiceConnect(p.dev);
   renderChatHead();
@@ -5933,6 +5938,7 @@ async function voiceLeave() {
   VC.early = {};
   for (const t of VC.stream?.getTracks() || []) t.stop();
   VC.stream = null;
+  syncBackdropSound();
   await refreshVoiceRooms();
   renderChatHead();
 }
@@ -6036,8 +6042,8 @@ window.addEventListener('beforeunload', () => { if (VC.chat) invoke('voice_send'
 // ---------- Voice sounds: calling, ringing, joining, leaving, mute, deafen ----------
 // Made on the spot (no sound files): a few soft notes each, one shared audio context.
 const vsfxOn = () => { try { return localStorage.getItem('uan.vsfx') !== '0'; } catch { return true; } };
-let sfxCtx = null, sfxLoopTimer = null, sfxLoopName = null;
-function sfxNotes(notes, vol = 0.11) {
+var sfxCtx = null, sfxLoopTimer = null, sfxLoopName = null;
+function sfxNotes(notes, vol = 0.11, bell = false) {
   if (!vsfxOn()) return;
   try {
     sfxCtx ||= new (window.AudioContext || window.webkitAudioContext)();
@@ -6054,6 +6060,17 @@ function sfxNotes(notes, vol = 0.11) {
       o.connect(g).connect(sfxCtx.destination);
       o.start(s);
       o.stop(s + len + 0.05);
+      if (bell) {
+        // a quiet octave above makes it ring like a small bell
+        const o2 = sfxCtx.createOscillator(), g2 = sfxCtx.createGain();
+        o2.frequency.value = freq * 2;
+        g2.gain.setValueAtTime(0, s);
+        g2.gain.linearRampToValueAtTime(vol * v * 0.18, s + 0.008);
+        g2.gain.exponentialRampToValueAtTime(0.0006, s + len * 0.6);
+        o2.connect(g2).connect(sfxCtx.destination);
+        o2.start(s);
+        o2.stop(s + len + 0.05);
+      }
     }
   } catch {}
 }
@@ -6068,18 +6085,22 @@ const SFX = {
   undeafen: [[262, 0, 0.12, 'triangle'], [392, 0.09, 0.2, 'triangle']],
   connected: [[523, 0, 0.12], [659, 0.08, 0.12], [784, 0.16, 0.26]],
   declined: [[494, 0, 0.16], [392, 0.12, 0.16], [294, 0.24, 0.3]],
-  ringback: [[440, 0, 0.45, 'sine', 0.6], [480, 0, 0.45, 'sine', 0.6], [440, 0.6, 0.45, 'sine', 0.6], [480, 0.6, 0.45, 'sine', 0.6]],
-  ringtone: [[659, 0, 0.18], [784, 0.2, 0.18], [988, 0.4, 0.3], [659, 0.9, 0.18], [784, 1.1, 0.18], [988, 1.3, 0.3]],
+  // while you call: two soft bell notes, then quiet
+  ringback: [[587, 0, 0.9, 'sine', 0.55], [784, 0.32, 1.1, 'sine', 0.5]],
+  // someone calls you: a gentle four-note bell phrase
+  ringtone: [[784, 0, 0.9, 'sine', 0.7], [988, 0.22, 0.9, 'sine', 0.65], [1175, 0.44, 0.9, 'sine', 0.6], [988, 0.7, 1.4, 'sine', 0.55]],
 };
-const SFX_EVERY = { ringback: 3000, ringtone: 2600 };
-function sfx(name) { if (SFX[name]) sfxNotes(SFX[name]); }
+const SFX_EVERY = { ringback: 3200, ringtone: 3000 };
+const SFX_BELL = new Set(['ringback', 'ringtone', 'connected', 'join', 'leave']);
+function sfx(name) { if (SFX[name]) sfxNotes(SFX[name], name === 'ringtone' ? 0.09 : 0.11, SFX_BELL.has(name)); }
 function sfxLoop(name) {
   sfxStop();
   sfxLoopName = name;
+  syncBackdropSound();
   sfx(name);
   sfxLoopTimer = setInterval(() => sfx(name), SFX_EVERY[name] || 3000);
 }
-function sfxStop() { clearInterval(sfxLoopTimer); sfxLoopTimer = null; sfxLoopName = null; }
+function sfxStop() { const was = sfxLoopName; clearInterval(sfxLoopTimer); sfxLoopTimer = null; sfxLoopName = null; if (was) syncBackdropSound(); }
 $('sVsfx').checked = vsfxOn();
 $('sVsfx').addEventListener('change', () => {
   try { localStorage.setItem('uan.vsfx', $('sVsfx').checked ? '1' : '0'); } catch {}

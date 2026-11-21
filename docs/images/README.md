@@ -10,4 +10,5 @@ They are refreshed for major versions, or when a release changes the look a lot,
 | `chat.png` | 1.9.21 |
 | `profile.png` | 1.9.21 |
 | `themes.png` | 1.9.21 |
+| `voice.png` | 1.9.45 |
 | `icon.png` | the app icon |

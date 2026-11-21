@@ -106,9 +106,22 @@ The full list, from chat to watch parties. Back to the [overview](../README.md).
   new program (a few MB) and switches over by itself, no installer, no uninstaller, everything stays. On Linux, the AppImage also only downloads the new program
   (a few MB), not the whole 150 MB package.
 
-## Android
+## Voice
 
-*The phone app is paused: no new versions for now (the last one is 1.9.2).*
+- **Voice channels.** In a group, the owner and co-owners make them: *New channel → Voice channel*. Click one to join,
+  click again (or the red button) to leave. Everyone sees who is in it: names and pictures under the channel, or small
+  pictures on its tab.
+- **Calls.** In a private chat the phone button calls your friend. They get a card to answer or decline (and a
+  notification); if nobody answers in 35 seconds the call ends.
+- **Straight between devices.** The sound goes directly from device to device (WebRTC: Opus, echo and noise removal); UaN's
+  own peer-to-peer link carries the set-up and who is where, and nothing is stored. Audio only, so it uses little memory.
+  Both sides need UaN 1.9.43 or newer. Very strict networks (some mobile ones) may not connect.
+- **The bar.** While you are in a call or a channel, a bar at the bottom left shows where you are and with whom, with
+  **mute**, **deafen** (hear nobody, and mute) and **leave**.
+- **Sounds.** Soft sounds when you call, when you are called, when you or someone joins or leaves, and for mute and deafen
+  (*Settings → Appearance → Voice sounds* turns them off). Your theme's sound stays quiet while you are in a call.
+
+## Android
 
 Download `UaN_<version>_android.apk` from the [Releases page](https://github.com/Fish0969/UaN-Sender/releases)
 on the phone and open it (Android asks once to allow installing apps from the browser). Updates install over

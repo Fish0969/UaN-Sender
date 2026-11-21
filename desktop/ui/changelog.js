@@ -1,5 +1,10 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.45', items: [
+    'A new, softer ringtone and calling sound (small bell notes).',
+    'Your theme’s sound stays quiet while you are in a call or a voice channel, and while a call rings.',
+    'Voice channel tabs show small pictures of who is in them.',
+  ] },
   { v: '1.9.44', items: [
     'Voice sounds: ringing while you call someone, a ringtone when someone calls you, a sound when you join or leave, when someone comes in or goes, and for mute and deafen.',
     'They can be turned off: Settings → Appearance, Voice sounds.',

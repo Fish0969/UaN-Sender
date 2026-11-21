@@ -68,6 +68,31 @@ updates itself.
 2. **Swap friend codes.** Press *Copy friend code*, send it to a friend however you like, and paste theirs into *Paste a friend code*.
 3. **Chat, drop files, press *Watch together*.** Make a group with **+** next to *Groups* if you want more than one person.
 
+## Talk: voice channels and calls
+
+<table>
+<tr>
+<td valign="top">
+
+Make **voice channels** in a group (owners and co-owners: *New channel → Voice channel*). Click one to join: everyone
+sees who is in it, with small pictures on the channel.
+
+**Call a friend** with the phone button in a private chat. They get a card to answer or decline, and a notification.
+
+The sound goes **straight between your devices**, with echo and noise removal. It's audio only, so it stays light.
+Mute, deafen and leave from the bar at the bottom left. Soft sounds tell you when someone joins, leaves or calls,
+and your theme keeps quiet while you talk.
+
+</td>
+<td width="56%" valign="top">
+
+<img src="docs/images/voice.png" alt="UaN with a voice channel called Lounge: three people in it and the voice bar at the bottom left">
+<br><sub>Screenshot from UaN 1.9.45, with invented demo people</sub>
+
+</td>
+</tr>
+</table>
+
 ## Make it yours
 
 <table>
@@ -120,7 +145,7 @@ Pick a **background** for your card: a ready-made one, any colour, or your own p
 
 ## And a lot more
 
-Replies, edits, pins and mentions &nbsp;·&nbsp; channels with passwords &nbsp;·&nbsp; whole-folder sending with previews &nbsp;·&nbsp; photo grids &nbsp;·&nbsp; search and gallery &nbsp;·&nbsp; subtitles &nbsp;·&nbsp; resume where you stopped &nbsp;·&nbsp; backups &nbsp;·&nbsp; co-owners &nbsp;·&nbsp; automatic downloads &nbsp;·&nbsp; a phone app that signs in with your PC's account
+Voice channels and calls &nbsp;·&nbsp; replies, edits, pins and @mentions (with a profile card on click) &nbsp;·&nbsp; channels with passwords &nbsp;·&nbsp; whole-folder sending with previews &nbsp;·&nbsp; photo grids &nbsp;·&nbsp; polls &nbsp;·&nbsp; search and gallery &nbsp;·&nbsp; subtitles &nbsp;·&nbsp; resume where you stopped &nbsp;·&nbsp; a theme workshop to share themes &nbsp;·&nbsp; lock UaN with a password &nbsp;·&nbsp; backups &nbsp;·&nbsp; co-owners &nbsp;·&nbsp; automatic downloads only where you allow them, never filling your disk &nbsp;·&nbsp; auto update &nbsp;·&nbsp; a phone app that signs in with your PC's account
 
 Everything, in detail: **[docs/FEATURES.md](docs/FEATURES.md)**
 

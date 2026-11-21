@@ -1814,3 +1814,8 @@ html.phone .danger-zone .note { display: block !important; }
 .call-yes { background: #2fa96a; }
 .call-no { background: #d92d33; }
 html.phone .call-in { bottom: 80px; }
+
+.voice-heads { display: inline-flex; align-items: center; margin-left: 4px; }
+.voice-heads .avatar { width: 18px !important; height: 18px !important; font-size: 9px !important; margin-left: -5px; box-shadow: 0 0 0 2px var(--panel); }
+.voice-heads .avatar:first-child { margin-left: 0; }
+.voice-heads .more { font-size: 11px; margin-left: 4px; color: var(--muted); }
