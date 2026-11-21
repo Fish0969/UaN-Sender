@@ -146,6 +146,7 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
     }
     json!({
         "id": node.id(),
+        "dev": node.dev_id(),
         "code": node.friend_code(),
         "name": node.my_name(),
         "profile": node.my_profile(),
@@ -1252,8 +1253,20 @@ fn theme_html(profile: State<'_, Profile>, id: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
-fn create_channel(node: State<'_, Arc<Node>>, group: String, name: String, password: Option<String>) -> CmdResult<String> {
-    node.create_channel(&group, &name, password.as_deref())
+fn create_channel(node: State<'_, Arc<Node>>, group: String, name: String, password: Option<String>, voice: Option<bool>) -> CmdResult<String> {
+    node.create_channel(&group, &name, password.as_deref(), voice.unwrap_or(false))
+}
+
+/// Voice: a signal to the room (or to one device of it).
+#[tauri::command]
+fn voice_send(node: State<'_, Arc<Node>>, chat: String, kind: String, data: Option<String>, to: Option<String>) -> CmdResult<()> {
+    node.voice_send(&chat, &kind, data, to)
+}
+
+/// Voice: who is in which room now.
+#[tauri::command]
+fn voice_rooms(node: State<'_, Arc<Node>>) -> Value {
+    node.voice_rooms()
 }
 
 #[tauri::command]
@@ -1893,6 +1906,8 @@ pub fn run() {
             delete_message,
             links,
             create_channel,
+            voice_send,
+            voice_rooms,
             channel_action,
             unlock_channel,
             forget_channel,

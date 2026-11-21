@@ -1783,3 +1783,34 @@ html.phone .danger-zone { flex-direction: column; align-items: stretch; }
 html.phone .danger-zone .note { display: block !important; }
 
 .autodl-box .check.keep-free { color: var(--text); font-weight: 400; margin-top: 8px; }
+
+/* ---------- Voice ---------- */
+.voice-chan { flex-direction: column; align-items: stretch !important; height: auto !important; min-height: 34px; gap: 4px; padding-top: 6px; padding-bottom: 6px; }
+.voice-row { display: flex; align-items: center; gap: 8px; }
+.voice-row svg, .voice-tab svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; flex: none; }
+.voice-chan.in-voice .voice-row { color: #3fbf7f; }
+.voice-people { display: flex; flex-direction: column; gap: 3px; padding-left: 22px; }
+.voice-person { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+.voice-person .avatar { width: 20px !important; height: 20px !important; font-size: 10px !important; }
+.voice-tab.in-voice { color: #3fbf7f; border-color: #3fbf7f; }
+.voice-count { background: #3fbf7f !important; color: #fff !important; }
+.voice-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; margin: 0 0 8px; border-radius: var(--r-ctl, 10px); background: color-mix(in srgb, #3fbf7f 12%, var(--card)); border: 1px solid color-mix(in srgb, #3fbf7f 45%, transparent); }
+.voice-bar.hidden { display: none; }
+.voice-info { min-width: 0; }
+.voice-state { font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.voice-state.live { color: #3fbf7f; }
+.voice-room { font-size: 11.5px; color: var(--muted); }
+.voice-bar button.icon { width: 32px; height: 32px; min-height: 0; padding: 0; flex: none; }
+.voice-bar button.icon svg { width: 16px; height: 16px; }
+.voice-bar button.icon.on { color: #ff6b6f; }
+.voice-bar button.hang { background: #d92d33; color: #fff; border-color: #d92d33; }
+#callBtn.on { color: #3fbf7f; }
+.call-in { position: fixed; right: 18px; bottom: 18px; z-index: 90; width: min(340px, calc(100vw - 36px)); display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; background: var(--dialog, var(--card)); border: 1px solid #3fbf7f; box-shadow: 0 16px 44px rgba(0, 0, 0, .55); animation: mini-in .15s ease-out; }
+.call-in.hidden { display: none; }
+.call-ico { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, #3fbf7f 22%, transparent); color: #3fbf7f; animation: ring 1.2s ease-in-out infinite; }
+.call-ico svg, .call-in button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+@keyframes ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-12deg); } 40% { transform: rotate(10deg); } 60% { transform: rotate(-6deg); } }
+.call-in button { width: 42px; height: 42px; min-height: 0; padding: 0; border-radius: 50%; display: grid; place-items: center; border: 0; color: #fff; }
+.call-yes { background: #2fa96a; }
+.call-no { background: #d92d33; }
+html.phone .call-in { bottom: 80px; }

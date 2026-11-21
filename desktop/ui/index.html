@@ -95,6 +95,7 @@
         </div>
       </div>
       <div class="dock">
+        <div id="voiceBar" class="voice-bar hidden"></div>
         <div id="codeText" class="code code-reveal hidden"></div>
         <div class="code-row">
           <button id="copyCode" class="small" type="button" title="Copies your code without showing it, so nobody watching your screen can grab it">Copy friend code</button>
@@ -151,6 +152,7 @@
               <div id="chatStatus" class="sub ellipsis"></div>
             </div>
           </button>
+          <button class="icon hidden" id="callBtn" title="Call (voice, straight between your PCs)"><svg viewBox="0 0 24 24"><path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg></button>
           <button class="icon" id="chatSearchBtn" title="Search in this chat (Ctrl+F)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
           <button class="icon pins-btn hidden" id="pinsBtn" title="Pinned messages"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4Z"/><path d="M12 14v6"/></svg><span id="pinsCount"></span></button>
           <button class="icon" id="galleryBtn" title="Photos, videos and files in this chat">
@@ -594,6 +596,7 @@
     <form id="chanForm" method="dialog">
       <h2>New channel</h2>
       <label>Name<input id="chanName" maxlength="32" placeholder="e.g. films" spellcheck="false" autocomplete="off"></label>
+      <label class="check"><input type="checkbox" id="chanVoice"> Voice channel: people join it to talk</label>
       <label class="check"><input type="checkbox" id="chanLock"> Lock with a password</label>
       <input id="chanPw" type="password" placeholder="Password" class="hidden" autocomplete="off">
       <div class="note" id="chanNote">Everyone in the group can see and use it.</div>
@@ -698,6 +701,7 @@
       <div class="actions"><span class="grow"></span><button type="button" id="wipeCancel">Cancel</button><button type="submit" class="danger-btn" id="wipeGo" disabled>Delete everything</button></div>
     </form>
   </dialog>
+  <div id="callIn" class="call-in hidden" role="alertdialog" aria-label="Incoming call"></div>
   <dialog id="wsReportDlg">
     <form id="wsReportForm" method="dialog">
       <h2>Report this theme</h2>

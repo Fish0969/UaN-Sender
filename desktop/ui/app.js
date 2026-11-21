@@ -52,6 +52,7 @@ function svg(inner) {
   return s;
 }
 const ICON = {
+  voice: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   play: '<path d="m7 4 13 8-13 8Z"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
@@ -636,6 +637,7 @@ function channelsOf(g) {
   return [{ id: '', name: 'general', chat: `g:${g.id}` }, ...(g.channels || [])];
 }
 function channelItem(g, ch, tag) {
+  if (ch.voice) return voiceChannelItem(g, ch, tag);
   const unread = S.unread.get(ch.chat) || 0;
   const icon = ch.locked ? (ch.unlocked ? ICON.lock : ICON.lock) : ICON.hash;
   const menu = (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, channelMenu(g, ch)); };
@@ -645,6 +647,22 @@ function channelItem(g, ch, tag) {
   }
   return el('li', { class: 'friend' + (S.active === ch.chat ? ' active' : '') + (unread ? ' unread' : ''), onclick: () => openChat(ch.chat), oncontextmenu: menu, title: ch.locked ? 'Locked with a password' : '' },
     svg(icon), el('span', { class: 'grow ellipsis', text: ch.name }), unread ? el('span', { class: 'badge', text: String(unread) }) : null);
+}
+// A voice channel: a speaker icon, who is in it now, and a click to join (or leave).
+function voiceChannelItem(g, ch, tag) {
+  const people = (S.voiceRooms?.[ch.chat] || []);
+  const here = VC.chat === ch.chat;
+  const menu = (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, channelMenu(g, ch)); };
+  const click = () => (here ? voiceLeave() : voiceJoin(ch.chat));
+  const title = here ? 'You are in it: click to leave' : people.length ? 'Join: ' + people.map((p) => p.name).join(', ') : 'Join this voice channel';
+  if (tag === 'tab') {
+    return el('button', { type: 'button', class: 'voice-tab' + (here ? ' on in-voice' : ''), onclick: click, oncontextmenu: menu, title },
+      svg(ICON.voice), ch.name, people.length ? el('span', { class: 'badge voice-count', text: String(people.length) }) : null);
+  }
+  return el('li', { class: 'friend voice-chan' + (here ? ' active in-voice' : ''), onclick: click, oncontextmenu: menu, title },
+    el('div', { class: 'voice-row' }, svg(ICON.voice), el('span', { class: 'grow ellipsis', text: ch.name })),
+    people.length ? el('div', { class: 'voice-people' }, ...people.map((p) => el('div', { class: 'voice-person' },
+      avatar(p.name, { seed: p.id, src: p.id === S.me.id ? S.me.profile?.avatar : (g.members.find((m) => m.id === p.id)?.avatar), uid: p.id }), el('span', { class: 'ellipsis', text: p.id === S.me.id ? p.name + ' (you)' : p.name })))) : null);
 }
 function renderChannels() {
   // New layout: the side column shows the open group's channels and members.
@@ -704,6 +722,7 @@ function openChanDlg(g) {
   $('chanName').value = '';
   $('chanPw').value = '';
   $('chanLock').checked = false;
+  $('chanVoice').checked = false;
   $('chanPw').classList.add('hidden');
   $('chanErr').textContent = '';
   $('chanNote').textContent = g.owner === S.me.id ? 'Everyone in the group can see and use it.' : 'It appears for everyone as soon as the group creator’s PC is online.';
@@ -723,10 +742,11 @@ $('chanForm').addEventListener('submit', async (e) => {
   const pw = $('chanLock').checked ? $('chanPw').value : null;
   if ($('chanLock').checked && pw.trim().length < 3) return void ($('chanErr').textContent = 'Use a password of at least 3 characters.');
   try {
-    const chat = await invoke('create_channel', { group: chanDlgGroup.id, name: $('chanName').value, password: pw });
+    const voice = $('chanVoice').checked;
+    const chat = await invoke('create_channel', { group: chanDlgGroup.id, name: $('chanName').value, password: voice ? null : pw, voice });
     $('chanDlg').close();
     await loadContacts();
-    if (chatInfo(chat)) openChat(chat);
+    if (!voice && chatInfo(chat)) openChat(chat);
   } catch (err) { $('chanErr').textContent = err; }
 });
 $('lockForm').addEventListener('submit', async (e) => {
@@ -864,6 +884,8 @@ function renderChatHead() {
   const info = S.active && chatInfo(S.active);
   if (!info) return;
   $('chatName').textContent = info.group ? `# ${info.channelName}` : info.name;
+  $('callBtn').classList.toggle('hidden', !!info.group);
+  $('callBtn').classList.toggle('on', VC.chat === S.active);
   if (info.group) {
     // You count too: "2 online" means you and one other.
     const on = info.group.members.filter((m) => m.online || m.id === S.me.id);
@@ -5813,3 +5835,187 @@ $('sKeepFree').addEventListener('change', async () => {
   S.me.keepFree = on;
   toast(on ? 'UaN keeps at least 20 GB free when it downloads by itself.' : 'UaN now downloads by itself until 2 GB is left (it never fills the disk completely).');
 });
+
+// ---------- Voice: channels in groups and calls between friends ----------
+// The sound goes straight between the devices (WebRTC: Opus, echo and noise removal); UaN's own peer-to-peer
+// link carries the set-up and who is in which room. Audio only, so it stays light.
+const VOICE_ICE = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
+const VC = { chat: null, stream: null, peers: new Map(), early: {}, muted: false, deaf: false, beat: null, noAnswer: null };
+S.voiceRooms = {};
+function voiceRoomName(chat) {
+  const g = groupOf(chat);
+  if (g) {
+    const ch = (g.channels || []).find((c) => c.chat === chat);
+    return (ch ? ch.name : 'voice') + ' · ' + g.name;
+  }
+  return chatInfo(chat)?.name || 'Call';
+}
+async function refreshVoiceRooms() {
+  try { S.voiceRooms = await invoke('voice_rooms'); } catch {}
+  if (S.me) { renderChannels(); renderVoiceBar(); }
+}
+setInterval(refreshVoiceRooms, 8000);
+const voiceSig = (dev, obj) => invoke('voice_send', { chat: VC.chat, kind: 'signal', to: dev, data: JSON.stringify(obj) }).catch(() => {});
+
+async function voiceJoin(chat, { ring = false } = {}) {
+  if (VC.chat === chat) return;
+  if (VC.chat) await voiceLeave();
+  if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) return toast('Voice isn’t available on this system.');
+  try {
+    VC.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+  } catch (e) {
+    return toast('UaN can’t use your microphone: ' + (e?.message || e));
+  }
+  VC.chat = chat;
+  applyMute();
+  try { await invoke('voice_send', { chat, kind: 'here' }); }
+  catch (e) { toast(e); return voiceLeave(); }
+  if (ring) {
+    invoke('voice_send', { chat, kind: 'ring' }).catch(() => {});
+    VC.noAnswer = setTimeout(() => {
+      if (VC.chat === chat && !VC.peers.size) { toast('No answer.'); voiceLeave(); }
+    }, 35000);
+  }
+  VC.beat = setInterval(() => { if (VC.chat) invoke('voice_send', { chat: VC.chat, kind: 'here' }).catch(() => {}); }, 10000);
+  await refreshVoiceRooms();
+  for (const p of S.voiceRooms[chat] || []) if (p.dev !== S.me.dev) voiceConnect(p.dev);
+  renderChatHead();
+}
+function voicePeer(dev) {
+  const pc = new RTCPeerConnection({ iceServers: VOICE_ICE });
+  const entry = { pc, audio: null, pending: VC.early[dev] || [] };
+  delete VC.early[dev];
+  VC.peers.set(dev, entry);
+  for (const t of VC.stream.getTracks()) pc.addTrack(t, VC.stream);
+  pc.onicecandidate = (e) => { if (e.candidate) voiceSig(dev, { ice: e.candidate }); };
+  pc.ontrack = (e) => {
+    if (!entry.audio) { entry.audio = new Audio(); entry.audio.autoplay = true; }
+    entry.audio.srcObject = e.streams[0];
+    entry.audio.muted = VC.deaf;
+    entry.audio.play().catch(() => {});
+    clearTimeout(VC.noAnswer);
+  };
+  pc.onconnectionstatechange = () => {
+    if (['failed', 'closed'].includes(pc.connectionState)) voiceDrop(dev);
+    renderVoiceBar();
+  };
+  return entry;
+}
+// Between two devices the one with the smaller id makes the offer (so both never do).
+async function voiceConnect(dev) {
+  if (!VC.chat || VC.peers.has(dev) || dev === S.me.dev || !(S.me.dev < dev)) return;
+  const { pc } = voicePeer(dev);
+  await pc.setLocalDescription(await pc.createOffer());
+  voiceSig(dev, { sdp: pc.localDescription });
+}
+function voiceDrop(dev) {
+  const e = VC.peers.get(dev);
+  if (!e) return;
+  try { e.pc.close(); } catch {}
+  if (e.audio) { e.audio.pause(); e.audio.srcObject = null; }
+  VC.peers.delete(dev);
+}
+async function voiceLeave() {
+  if (!VC.chat) return;
+  const chat = VC.chat;
+  VC.chat = null;
+  clearInterval(VC.beat);
+  clearTimeout(VC.noAnswer);
+  invoke('voice_send', { chat, kind: 'leave' }).catch(() => {});
+  for (const d of [...VC.peers.keys()]) voiceDrop(d);
+  VC.early = {};
+  for (const t of VC.stream?.getTracks() || []) t.stop();
+  VC.stream = null;
+  await refreshVoiceRooms();
+  renderChatHead();
+}
+function applyMute() {
+  for (const t of VC.stream?.getAudioTracks() || []) t.enabled = !VC.muted && !VC.deaf;
+  for (const e of VC.peers.values()) if (e.audio) e.audio.muted = VC.deaf;
+}
+listen('voice', ({ payload: p }) => onVoice(p).catch(() => {}));
+async function onVoice(p) {
+  const rooms = S.voiceRooms;
+  if (p.kind === 'here') {
+    const list = (rooms[p.chat] ||= []);
+    if (!list.some((x) => x.dev === p.dev)) list.push({ dev: p.dev, id: p.from, name: p.name });
+  }
+  if (['leave', 'hangup', 'decline'].includes(p.kind)) {
+    rooms[p.chat] = (rooms[p.chat] || []).filter((x) => x.dev !== p.dev);
+    if (p.chat === VC.chat) voiceDrop(p.dev);
+    if (!groupOf(p.chat) && $('callIn').dataset.chat === p.chat) hideIncomingCall();
+  }
+  if (p.kind === 'ring' && VC.chat !== p.chat) showIncomingCall(p);
+  if (p.chat === VC.chat) {
+    if (p.kind === 'decline') { toast(p.name + ' declined the call.'); voiceLeave(); }
+    else if (p.kind === 'leave' && !groupOf(p.chat) && !(rooms[p.chat] || []).some((x) => x.dev !== S.me.dev)) { toast(p.name + ' left the call.'); voiceLeave(); }
+    else if (p.kind === 'here') {
+      // Someone new: the one with the smaller id makes the offer; if that is them, tell them we are here right away.
+      if (!VC.peers.has(p.dev) && p.dev < S.me.dev && !p.to) invoke('voice_send', { chat: VC.chat, kind: 'here', to: p.dev }).catch(() => {});
+      voiceConnect(p.dev);
+    }
+    else if (p.kind === 'signal') {
+      let d;
+      try { d = JSON.parse(p.data || ''); } catch { return; }
+      let e = VC.peers.get(p.dev);
+      if (d.sdp?.type === 'offer') {
+        if (e) voiceDrop(p.dev);
+        e = voicePeer(p.dev);
+        await e.pc.setRemoteDescription(d.sdp);
+        await e.pc.setLocalDescription(await e.pc.createAnswer());
+        voiceSig(p.dev, { sdp: e.pc.localDescription });
+        for (const c of e.pending.splice(0)) await e.pc.addIceCandidate(c).catch(() => {});
+      } else if (d.sdp?.type === 'answer' && e) {
+        await e.pc.setRemoteDescription(d.sdp);
+        for (const c of e.pending.splice(0)) await e.pc.addIceCandidate(c).catch(() => {});
+      } else if (d.ice) {
+        if (e?.pc.remoteDescription) e.pc.addIceCandidate(d.ice).catch(() => {});
+        else if (e) e.pending.push(d.ice);
+        else (VC.early[p.dev] ||= []).push(d.ice);
+      }
+    }
+  }
+  renderChannels();
+  renderVoiceBar();
+}
+// The bar at the bottom of the side column while you are in a voice channel or a call.
+function renderVoiceBar() {
+  const bar = $('voiceBar');
+  if (!VC.chat) { bar.classList.add('hidden'); bar.replaceChildren(); return; }
+  const others = (S.voiceRooms[VC.chat] || []).filter((x) => x.dev !== S.me.dev);
+  const live = [...VC.peers.values()].filter((e) => e.pc.connectionState === 'connected').length;
+  const state = live ? 'Voice connected' : others.length ? 'Connecting…' : (groupOf(VC.chat) ? 'Voice connected · alone here' : 'Calling…');
+  const btn = (icon, title, on, run, cls = '') => el('button', { type: 'button', class: 'icon small' + (on ? ' on' : '') + cls, title, onclick: run }, svg(icon));
+  bar.classList.remove('hidden');
+  bar.replaceChildren(
+    el('div', { class: 'grow voice-info' },
+      el('div', { class: 'voice-state' + (live ? ' live' : ''), text: state }),
+      el('div', { class: 'voice-room ellipsis', text: voiceRoomName(VC.chat) + (others.length ? ' · ' + others.map((o) => o.name).join(', ') : '') })),
+    btn(VC.muted ? '<path d="M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M4 4l16 16"/>' : '<path d="M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+      VC.muted ? 'Unmute' : 'Mute your microphone', VC.muted, () => { VC.muted = !VC.muted; applyMute(); renderVoiceBar(); }),
+    btn(VC.deaf ? '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><path d="M4 4l16 16"/>' : '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/>',
+      VC.deaf ? 'Hear again' : 'Deafen (hear nobody, and mute)', VC.deaf, () => { VC.deaf = !VC.deaf; applyMute(); renderVoiceBar(); }),
+    btn('<path d="M3 15c5-5 13-5 18 0l-2.5 2.5-3-1.5v-2.5a10 10 0 0 0-5 0V16l-3 1.5Z"/>', groupOf(VC.chat) ? 'Leave the voice channel' : 'Hang up', false, () => voiceLeave(), ' hang'));
+}
+// A friend calls you
+let callInTimer = null;
+function showIncomingCall(p) {
+  const box = $('callIn');
+  box.dataset.chat = p.chat;
+  box.replaceChildren(
+    el('div', { class: 'call-ico' }, svg('<path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/>')),
+    el('div', { class: 'grow' }, el('div', { class: 'strong', text: p.name }), el('div', { class: 'sub', text: 'is calling you' })),
+    el('button', { type: 'button', class: 'call-no', title: 'Decline', onclick: () => { invoke('voice_send', { chat: p.chat, kind: 'decline' }).catch(() => {}); hideIncomingCall(); } }, svg('<path d="M6 6l12 12M18 6 6 18"/>')),
+    el('button', { type: 'button', class: 'call-yes', title: 'Answer', onclick: () => { hideIncomingCall(); voiceJoin(p.chat); } }, svg('<path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/>')));
+  box.classList.remove('hidden');
+  clearTimeout(callInTimer);
+  callInTimer = setTimeout(hideIncomingCall, 35000);
+}
+function hideIncomingCall() { $('callIn').classList.add('hidden'); delete $('callIn').dataset.chat; clearTimeout(callInTimer); }
+$('callBtn').addEventListener('click', () => {
+  const chat = S.active;
+  if (!chat || groupOf(chat)) return;
+  if (VC.chat === chat) return voiceLeave();
+  voiceJoin(chat, { ring: true });
+});
+window.addEventListener('beforeunload', () => { if (VC.chat) invoke('voice_send', { chat: VC.chat, kind: 'leave' }).catch(() => {}); });

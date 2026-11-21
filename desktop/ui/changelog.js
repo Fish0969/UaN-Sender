@@ -1,5 +1,11 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.43', items: [
+    'Voice channels in groups: the owner and co-owners make them (New channel → Voice channel). Click one to join; everyone sees who is in it.',
+    'Call a friend: the phone button in a private chat. They get a call they can answer or decline.',
+    'The sound goes straight between your devices, audio only, so it uses little memory. Mute and deafen in the bar at the bottom left.',
+    'Voice works with friends who have this version too.',
+  ] },
   { v: '1.9.42', items: [
     'Nothing is downloaded unasked any more: files from the offline mailbox are also saved only where automatic downloads are on (in Settings and for that chat).',
     'Files of a sent folder don’t go through the offline mailbox; they wait until you are both online.',

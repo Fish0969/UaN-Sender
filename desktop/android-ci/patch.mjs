@@ -1,5 +1,5 @@
 // Adjusts the Android project that `tauri android init` generates (in CI):
-//  - permissions UaN needs (network state for peer-to-peer, notifications),
+//  - permissions UaN needs (network state for peer-to-peer, notifications, the microphone for voice),
 //  - signing with UaN's release key (so updates install over the old version).
 // Usage: node android-ci/patch.mjs   (run in desktop/, after `tauri android init`)
 import fs from 'node:fs';
@@ -11,6 +11,9 @@ const perms = [
   'android.permission.ACCESS_WIFI_STATE',
   'android.permission.CHANGE_WIFI_MULTICAST_STATE',
   'android.permission.POST_NOTIFICATIONS',
+  // voice channels and calls
+  'android.permission.RECORD_AUDIO',
+  'android.permission.MODIFY_AUDIO_SETTINGS',
 ];
 const add = perms.filter((p) => !m.includes(p)).map((p) => `    <uses-permission android:name="${p}" />`).join('\n');
 if (add) {

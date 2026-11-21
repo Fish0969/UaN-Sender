@@ -40,10 +40,30 @@ const MAX_FRAME: usize = 1 << 20;
 const BIOIMG_MAX: usize = 950_000;
 /// Version of the peer-to-peer protocol. 2: History, GroupInvite, Typing, Seen. Those are only sent to
 /// peers known to understand them (older versions drop the connection on unknown requests).
-const PROTO: u32 = 3;
+const PROTO: u32 = 4;
+/// Voice channels and calls need this protocol version on both sides.
+const PROTO_VOICE: u32 = 4;
 const MEDIA_CHUNK: u64 = 8 * 1024 * 1024;
 const MEDIA_WHOLE_LIMIT: u64 = 32 * 1024 * 1024;
 const ONLINE_WINDOW: Duration = Duration::from_secs(150);
+/// Who is in which voice room (room = the chat id), by device: (account, name, last heard).
+static VOICE: std::sync::LazyLock<Mutex<HashMap<String, HashMap<String, (String, String, Instant)>>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn voice_note(chat: &str, dev: &str, acct: &str, name: &str, kind: &str) {
+    let mut map = VOICE.lock().unwrap();
+    match kind {
+        "here" => {
+            map.entry(chat.to_string()).or_default().insert(dev.to_string(), (acct.to_string(), name.to_string(), Instant::now()));
+        }
+        "leave" | "hangup" | "decline" => {
+            if let Some(people) = map.get_mut(chat) {
+                people.remove(dev);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Every file in a folder and its sub-folders.
 fn walk_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -249,6 +269,9 @@ pub struct Channel {
     pub name: String,
     #[serde(default)]
     pub check: Option<String>,
+    /// A voice channel: people join it to talk (no messages).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub voice: bool,
 }
 
 /// "g:<group>" -> (group, None); "g:<group>#<channel>" -> (group, Some(channel)).
@@ -444,6 +467,22 @@ pub enum Req {
     ChannelAdd { group_id: String, channel: Channel },
     /// The group's owner or a co-owner deleted someone's message for everyone.
     ModDelete { group_id: String, msg_id: String },
+    /// Voice: who is in a voice channel or call, and the call set-up between two devices (never stored or queued).
+    Voice {
+        #[serde(default)]
+        group: Option<String>,
+        #[serde(default)]
+        channel: Option<String>,
+        /// here | leave | signal | ring | decline | hangup
+        kind: String,
+        /// The sending device (a call is between devices: a PC and a phone of one account are two people in it).
+        dev: String,
+        /// Only for this device (call set-up); none = everyone in the room.
+        #[serde(default)]
+        to: Option<String>,
+        #[serde(default)]
+        data: Option<String>,
+    },
     /// "… is typing" (never stored; only sent while both are online).
     Typing {
         #[serde(default)]
@@ -2999,6 +3038,41 @@ impl Node {
                 self.add_members(&group_id, &fresh);
                 Ok(ok)
             }
+            Req::Voice { group, channel, kind, dev, to, data } => {
+                if !matches!(kind.as_str(), "here" | "leave" | "signal" | "ring" | "decline" | "hangup") || dev.len() > 80 || data.as_ref().is_some_and(|d| d.len() > 64_000) {
+                    return Err("Bad request.".into());
+                }
+                // The device must belong to whoever sent it.
+                if self.account_of(&dev) != peer && dev != peer {
+                    return Err("Not allowed.".into());
+                }
+                if to.as_ref().is_some_and(|t| *t != self.dev_s) {
+                    return Ok(ok);
+                }
+                let chat = match (&group, &channel) {
+                    (Some(g), Some(c)) => {
+                        let grp = self.load_group(g).ok_or("No such group.")?;
+                        if !self.is_member(g, peer) || !self.is_member(g, &self.me_s) || !grp.channels.iter().any(|x| x.id == *c && x.voice) {
+                            return Err("Not allowed.".into());
+                        }
+                        chat_id(g, Some(c))
+                    }
+                    (None, None) => {
+                        if self.contact_status(peer).as_deref() != Some("friend") {
+                            return Err("You are not friends.".into());
+                        }
+                        peer.to_string()
+                    }
+                    _ => return Err("Bad request.".into()),
+                };
+                let name = self.peer_name(peer);
+                voice_note(&chat, &dev, peer, &name, &kind);
+                if kind == "ring" {
+                    self.notify(&name, "is calling you on UaN");
+                }
+                self.emit("voice", json!({ "chat": chat, "from": peer, "dev": dev, "name": name, "kind": kind, "data": data }));
+                Ok(ok)
+            }
             Req::Typing { group, channel } => {
                 let chat = self.chat_of(peer, group.as_deref())?;
                 let chat = match (&group, &channel) {
@@ -3484,7 +3558,7 @@ impl Node {
                     // (the database is already locked here, so read the key through it)
                     let unlocked = c.check.is_some()
                         && db.query_row("SELECT 1 FROM kv WHERE k = ?1", [format!("chkey:{chat}")], |_| Ok(())).optional().ok().flatten().is_some();
-                    json!({ "id": c.id, "name": c.name, "chat": chat, "locked": c.check.is_some(), "unlocked": unlocked })
+                    json!({ "id": c.id, "name": c.name, "chat": chat, "locked": c.check.is_some(), "unlocked": unlocked, "voice": c.voice })
                 })
                 .collect();
             let mut ms = db
@@ -3553,14 +3627,14 @@ impl Node {
         if group.channels.len() >= 50 || group.channels.iter().any(|c| c.id == channel.id) {
             return Ok(());
         }
-        group.channels.push(Channel { id: channel.id, name, check: channel.check.filter(|c| c.len() <= 64) });
+        group.channels.push(Channel { id: channel.id, name, check: channel.check.filter(|c| c.len() <= 64).filter(|_| !channel.voice), voice: channel.voice });
         self.save_group(&group);
         self.bump_and_broadcast(g, &[]);
         Ok(())
     }
 
     /// Creates a channel (the group's creator adds it; others ask the creator). With a password, it is locked.
-    pub fn create_channel(self: &Arc<Self>, g: &str, name: &str, password: Option<&str>) -> Result<String, String> {
+    pub fn create_channel(self: &Arc<Self>, g: &str, name: &str, password: Option<&str>, voice: bool) -> Result<String, String> {
         let group = self.load_group(g).ok_or("That group no longer exists.")?;
         if !group.members.iter().any(|m| m.id == self.me_s) {
             return Err("You are not in that group.".into());
@@ -3579,7 +3653,7 @@ impl Node {
             check = Some(key_check(&key));
             self.set_kv(&format!("chkey:{}", chat_id(g, Some(&id))), &HEXLOWER.encode(&key));
         }
-        let channel = Channel { id: id.clone(), name: name.to_string(), check };
+        let channel = Channel { id: id.clone(), name: name.to_string(), check: if voice { None } else { check }, voice };
         if group.manager(&self.me_s) {
             self.add_channel_local(g, channel)?;
         } else {
@@ -4033,6 +4107,61 @@ impl Node {
     pub fn set_privacy(&self, typing: bool, receipts: bool) {
         self.set_kv("typing_on", if typing { "1" } else { "0" });
         self.set_kv("receipts_on", if receipts { "1" } else { "0" });
+    }
+
+    /// This device's id (in a call each device is one person).
+    pub fn dev_id(&self) -> String {
+        self.dev_s.clone()
+    }
+
+    /// Sends a voice signal: to one device (call set-up) or to everyone in the room (here / leave / ring …).
+    /// Only to people online with a version that knows voice; nothing is stored or queued.
+    pub fn voice_send(self: &Arc<Self>, chat: &str, kind: &str, data: Option<String>, to: Option<String>) -> Result<(), String> {
+        let (group, targets) = self.chat_targets(chat)?;
+        let channel = split_chat(chat).and_then(|(_, c)| c).map(str::to_string);
+        if let (Some(g), Some(c)) = (&group, &channel) {
+            let grp = self.load_group(g).ok_or("That group no longer exists.")?;
+            if !grp.channels.iter().any(|x| x.id == *c && x.voice) {
+                return Err("That is not a voice channel.".into());
+            }
+        } else if group.is_some() {
+            return Err("That is not a voice channel.".into());
+        }
+        let name = self.my_name();
+        voice_note(chat, &self.dev_s, &self.me_s.clone(), &name, kind);
+        let req = Req::Voice { group, channel, kind: kind.to_string(), dev: self.dev_s.clone(), to: to.clone(), data };
+        for t in targets {
+            if let Some(dev) = &to {
+                if self.account_of(dev) != t && *dev != t {
+                    continue;
+                }
+            }
+            if !self.is_online(&t) || !self.speaks(&t, PROTO_VOICE) {
+                continue;
+            }
+            let (me, req, to) = (self.clone(), req.clone(), to.clone());
+            tauri::async_runtime::spawn(async move {
+                let _ = match to {
+                    Some(dev) => me.request_dev(&dev, &req).await,
+                    None => me.request_all(&t, &req).await,
+                };
+            });
+        }
+        Ok(())
+    }
+
+    /// Who is in which voice room now: { chat: [{ dev, id, name }] }.
+    pub fn voice_rooms(&self) -> Value {
+        let mut map = VOICE.lock().unwrap();
+        let mut out = serde_json::Map::new();
+        map.retain(|_, people| {
+            people.retain(|_, p| p.2.elapsed() < Duration::from_secs(40));
+            !people.is_empty()
+        });
+        for (chat, people) in map.iter() {
+            out.insert(chat.clone(), Value::Array(people.iter().map(|(dev, p)| json!({ "dev": dev, "id": p.0, "name": p.1 })).collect()));
+        }
+        Value::Object(out)
     }
 
     /// Tells the people in a chat that you are typing (if you allow it). Nothing is stored or queued.
