@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.44', items: [
+    'Voice sounds: ringing while you call someone, a ringtone when someone calls you, a sound when you join or leave, when someone comes in or goes, and for mute and deafen.',
+    'They can be turned off: Settings → Appearance, Voice sounds.',
+  ] },
   { v: '1.9.43', items: [
     'Voice channels in groups: the owner and co-owners make them (New channel → Voice channel). Click one to join; everyone sees who is in it.',
     'Call a friend: the phone button in a private chat. They get a call they can answer or decline.',

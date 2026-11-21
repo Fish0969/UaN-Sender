@@ -5867,9 +5867,12 @@ async function voiceJoin(chat, { ring = false } = {}) {
     return toast('UaN can’t use your microphone: ' + (e?.message || e));
   }
   VC.chat = chat;
+  VC.seen = new Set();
+  VC.answered = false;
   applyMute();
   try { await invoke('voice_send', { chat, kind: 'here' }); }
   catch (e) { toast(e); return voiceLeave(); }
+  if (ring) sfxLoop('ringback'); else sfx('join');
   if (ring) {
     invoke('voice_send', { chat, kind: 'ring' }).catch(() => {});
     VC.noAnswer = setTimeout(() => {
@@ -5894,6 +5897,8 @@ function voicePeer(dev) {
     entry.audio.muted = VC.deaf;
     entry.audio.play().catch(() => {});
     clearTimeout(VC.noAnswer);
+    // A call was picked up: the ringing stops.
+    if (!VC.answered && !groupOf(VC.chat || '')) { VC.answered = true; sfxStop(); sfx('connected'); }
   };
   pc.onconnectionstatechange = () => {
     if (['failed', 'closed'].includes(pc.connectionState)) voiceDrop(dev);
@@ -5919,6 +5924,8 @@ async function voiceLeave() {
   if (!VC.chat) return;
   const chat = VC.chat;
   VC.chat = null;
+  sfxStop();
+  sfx('leave');
   clearInterval(VC.beat);
   clearTimeout(VC.noAnswer);
   invoke('voice_send', { chat, kind: 'leave' }).catch(() => {});
@@ -5936,6 +5943,11 @@ function applyMute() {
 listen('voice', ({ payload: p }) => onVoice(p).catch(() => {}));
 async function onVoice(p) {
   const rooms = S.voiceRooms;
+  // Sounds: someone comes into your room, or goes.
+  if (p.chat === VC.chat && p.dev !== S.me?.dev) {
+    if (p.kind === 'here' && !VC.seen?.has(p.dev)) { VC.seen?.add(p.dev); if (groupOf(p.chat)) sfx('otherJoin'); }
+    if (['leave', 'hangup'].includes(p.kind) && VC.seen?.delete(p.dev) && groupOf(p.chat)) sfx('otherLeave');
+  }
   if (p.kind === 'here') {
     const list = (rooms[p.chat] ||= []);
     if (!list.some((x) => x.dev === p.dev)) list.push({ dev: p.dev, id: p.from, name: p.name });
@@ -5947,7 +5959,7 @@ async function onVoice(p) {
   }
   if (p.kind === 'ring' && VC.chat !== p.chat) showIncomingCall(p);
   if (p.chat === VC.chat) {
-    if (p.kind === 'decline') { toast(p.name + ' declined the call.'); voiceLeave(); }
+    if (p.kind === 'decline') { toast(p.name + ' declined the call.'); sfxStop(); voiceLeave().then(() => sfx('declined')); }
     else if (p.kind === 'leave' && !groupOf(p.chat) && !(rooms[p.chat] || []).some((x) => x.dev !== S.me.dev)) { toast(p.name + ' left the call.'); voiceLeave(); }
     else if (p.kind === 'here') {
       // Someone new: the one with the smaller id makes the offer; if that is them, tell them we are here right away.
@@ -5992,9 +6004,9 @@ function renderVoiceBar() {
       el('div', { class: 'voice-state' + (live ? ' live' : ''), text: state }),
       el('div', { class: 'voice-room ellipsis', text: voiceRoomName(VC.chat) + (others.length ? ' · ' + others.map((o) => o.name).join(', ') : '') })),
     btn(VC.muted ? '<path d="M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M4 4l16 16"/>' : '<path d="M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
-      VC.muted ? 'Unmute' : 'Mute your microphone', VC.muted, () => { VC.muted = !VC.muted; applyMute(); renderVoiceBar(); }),
+      VC.muted ? 'Unmute' : 'Mute your microphone', VC.muted, () => { VC.muted = !VC.muted; sfx(VC.muted ? 'mute' : 'unmute'); applyMute(); renderVoiceBar(); }),
     btn(VC.deaf ? '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><path d="M4 4l16 16"/>' : '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/>',
-      VC.deaf ? 'Hear again' : 'Deafen (hear nobody, and mute)', VC.deaf, () => { VC.deaf = !VC.deaf; applyMute(); renderVoiceBar(); }),
+      VC.deaf ? 'Hear again' : 'Deafen (hear nobody, and mute)', VC.deaf, () => { VC.deaf = !VC.deaf; sfx(VC.deaf ? 'deafen' : 'undeafen'); applyMute(); renderVoiceBar(); }),
     btn('<path d="M3 15c5-5 13-5 18 0l-2.5 2.5-3-1.5v-2.5a10 10 0 0 0-5 0V16l-3 1.5Z"/>', groupOf(VC.chat) ? 'Leave the voice channel' : 'Hang up', false, () => voiceLeave(), ' hang'));
 }
 // A friend calls you
@@ -6008,10 +6020,11 @@ function showIncomingCall(p) {
     el('button', { type: 'button', class: 'call-no', title: 'Decline', onclick: () => { invoke('voice_send', { chat: p.chat, kind: 'decline' }).catch(() => {}); hideIncomingCall(); } }, svg('<path d="M6 6l12 12M18 6 6 18"/>')),
     el('button', { type: 'button', class: 'call-yes', title: 'Answer', onclick: () => { hideIncomingCall(); voiceJoin(p.chat); } }, svg('<path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/>')));
   box.classList.remove('hidden');
+  sfxLoop('ringtone');
   clearTimeout(callInTimer);
   callInTimer = setTimeout(hideIncomingCall, 35000);
 }
-function hideIncomingCall() { $('callIn').classList.add('hidden'); delete $('callIn').dataset.chat; clearTimeout(callInTimer); }
+function hideIncomingCall() { if (!$('callIn').classList.contains('hidden')) sfxStop(); $('callIn').classList.add('hidden'); delete $('callIn').dataset.chat; clearTimeout(callInTimer); }
 $('callBtn').addEventListener('click', () => {
   const chat = S.active;
   if (!chat || groupOf(chat)) return;
@@ -6019,3 +6032,56 @@ $('callBtn').addEventListener('click', () => {
   voiceJoin(chat, { ring: true });
 });
 window.addEventListener('beforeunload', () => { if (VC.chat) invoke('voice_send', { chat: VC.chat, kind: 'leave' }).catch(() => {}); });
+
+// ---------- Voice sounds: calling, ringing, joining, leaving, mute, deafen ----------
+// Made on the spot (no sound files): a few soft notes each, one shared audio context.
+const vsfxOn = () => { try { return localStorage.getItem('uan.vsfx') !== '0'; } catch { return true; } };
+let sfxCtx = null, sfxLoopTimer = null, sfxLoopName = null;
+function sfxNotes(notes, vol = 0.11) {
+  if (!vsfxOn()) return;
+  try {
+    sfxCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (sfxCtx.state === 'suspended') sfxCtx.resume();
+    const t0 = sfxCtx.currentTime + 0.01;
+    for (const [freq, at, len, type = 'sine', v = 1] of notes) {
+      const o = sfxCtx.createOscillator(), g = sfxCtx.createGain();
+      o.type = type;
+      o.frequency.value = freq;
+      const s = t0 + at;
+      g.gain.setValueAtTime(0, s);
+      g.gain.linearRampToValueAtTime(vol * v, s + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0008, s + len);
+      o.connect(g).connect(sfxCtx.destination);
+      o.start(s);
+      o.stop(s + len + 0.05);
+    }
+  } catch {}
+}
+const SFX = {
+  join: [[659, 0, 0.14], [880, 0.09, 0.22]],                    // up: you are in
+  leave: [[880, 0, 0.14], [587, 0.09, 0.24]],                   // down: you left
+  otherJoin: [[784, 0, 0.16, 'sine', 0.7]],                     // someone came in
+  otherLeave: [[523, 0, 0.18, 'sine', 0.7]],                    // someone went
+  mute: [[440, 0, 0.08, 'triangle'], [330, 0.06, 0.12, 'triangle']],
+  unmute: [[330, 0, 0.08, 'triangle'], [494, 0.06, 0.12, 'triangle']],
+  deafen: [[392, 0, 0.12, 'triangle'], [262, 0.09, 0.2, 'triangle']],
+  undeafen: [[262, 0, 0.12, 'triangle'], [392, 0.09, 0.2, 'triangle']],
+  connected: [[523, 0, 0.12], [659, 0.08, 0.12], [784, 0.16, 0.26]],
+  declined: [[494, 0, 0.16], [392, 0.12, 0.16], [294, 0.24, 0.3]],
+  ringback: [[440, 0, 0.45, 'sine', 0.6], [480, 0, 0.45, 'sine', 0.6], [440, 0.6, 0.45, 'sine', 0.6], [480, 0.6, 0.45, 'sine', 0.6]],
+  ringtone: [[659, 0, 0.18], [784, 0.2, 0.18], [988, 0.4, 0.3], [659, 0.9, 0.18], [784, 1.1, 0.18], [988, 1.3, 0.3]],
+};
+const SFX_EVERY = { ringback: 3000, ringtone: 2600 };
+function sfx(name) { if (SFX[name]) sfxNotes(SFX[name]); }
+function sfxLoop(name) {
+  sfxStop();
+  sfxLoopName = name;
+  sfx(name);
+  sfxLoopTimer = setInterval(() => sfx(name), SFX_EVERY[name] || 3000);
+}
+function sfxStop() { clearInterval(sfxLoopTimer); sfxLoopTimer = null; sfxLoopName = null; }
+$('sVsfx').checked = vsfxOn();
+$('sVsfx').addEventListener('change', () => {
+  try { localStorage.setItem('uan.vsfx', $('sVsfx').checked ? '1' : '0'); } catch {}
+  if (!$('sVsfx').checked) sfxStop();
+});
