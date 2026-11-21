@@ -1819,3 +1819,10 @@ html.phone .call-in { bottom: 80px; }
 .voice-heads .avatar { width: 18px !important; height: 18px !important; font-size: 9px !important; margin-left: -5px; box-shadow: 0 0 0 2px var(--panel); }
 .voice-heads .avatar:first-child { margin-left: 0; }
 .voice-heads .more { font-size: 11px; margin-left: 4px; color: var(--muted); }
+
+/* About & updates: the version and its state on one side, the buttons wrap below when there isn't room (never squeezed) */
+.about-card { flex-wrap: wrap; align-items: center; }
+.about-ver { flex: 1 1 200px; }
+.about-ver b { white-space: nowrap; }
+.about-btns { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+.about-btns button { white-space: nowrap; }

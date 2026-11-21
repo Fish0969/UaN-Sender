@@ -4842,6 +4842,8 @@ const TUNE_DEFAULT = { vol: 60, bright: 100, blur: 0 };
 const tuneOf = (c) => ({ ...TUNE_DEFAULT, ...(c?.tune || {}) });
 // Something else is playing (the film viewer, a watch party, a sound in a message): the background stays quiet.
 function mediaBusy() {
+  // UaN hidden in the tray or minimized: the theme makes no sound (it starts again when the window is back).
+  if (document.hidden) return true;
   if (!$('viewer').classList.contains('hidden') || !$('party').classList.contains('hidden')) return true;
   // In a call or a voice channel (or it is ringing): the theme's sound would talk over people.
   if ((typeof VC !== 'undefined' && VC.chat) || (typeof sfxLoopName !== 'undefined' && sfxLoopName)) return true;
@@ -6106,3 +6108,5 @@ $('sVsfx').addEventListener('change', () => {
   try { localStorage.setItem('uan.vsfx', $('sVsfx').checked ? '1' : '0'); } catch {}
   if (!$('sVsfx').checked) sfxStop();
 });
+
+document.addEventListener('visibilitychange', () => syncBackdropSound());

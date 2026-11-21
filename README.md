@@ -135,6 +135,41 @@ Pick a **background** for your card: a ready-made one, any colour, or your own p
 </tr>
 </table>
 
+## How your messages are protected
+
+Everything is encrypted **on your device before it leaves**, and only the people it is meant for can open it. No server in the
+middle can read it, not even the ones that only pass things along.
+
+```mermaid
+flowchart LR
+    A["Your PC or phone<br/>(your key never leaves it)"]
+    B["Your friend"]
+    G1["Group member 1"]
+    G2["Group member 2"]
+    R["Public relay<br/>(only passes scrambled data on)"]
+    M["Offline mailbox<br/>(keeps sealed boxes, can't open them)"]
+    A ==>|"direct, encrypted (QUIC + TLS 1.3)"| B
+    A -.->|"if routers block a direct link"| R -.-> B
+    A -->|"one encrypted copy each"| G1
+    A -->|"one encrypted copy each"| G2
+    A -->|"sealed for your friend's key"| M -->|"only your friend can open it"| B
+```
+
+| What | How it travels | How it is encrypted | Who can read it |
+| --- | --- | --- | --- |
+| **A message to a friend** | Straight from your device to theirs | QUIC with **TLS 1.3**; both devices prove who they are with their **Ed25519** key | You and your friend |
+| **When routers block a direct link** | Through a free public relay | The same TLS 1.3 encryption, end to end: the relay only forwards scrambled packets | You and your friend (not the relay) |
+| **A group message** | To each member separately, over each one's own encrypted link | TLS 1.3 per member; there is no group server | The members of the group |
+| **A locked channel** | Like a group message | Plus a second layer: **XSalsa20-Poly1305** with a key made from the channel's password (100 000 rounds of SHA-256) | Only members who know the password |
+| **A friend is offline** | Waits in the mailbox until they come online, then it is deleted | Sealed for your friend's key before it leaves you: **X25519 + XSalsa20-Poly1305** | Only your friend (the mailbox sees sealed boxes) |
+| **Files and films** | Streamed straight from your device | Over the same TLS 1.3 link; small files for offline friends are sealed like messages | The people in that chat |
+| **Voice channels and calls** | Device to device | **DTLS-SRTP** (WebRTC); the call set-up goes over UaN's encrypted link | The people in the call |
+| **Your identity** | Never travels | An **Ed25519** key made on your device; your friend code is only its public half | Nobody can pretend to be you |
+
+**Good to know:** relays and the call helpers (STUN) can see *that* two devices connect, not what they say. The theme
+workshop is public on purpose: themes you share there can be seen by everyone. On your own device, your messages are stored
+so UaN can show them; *Settings → Privacy → Lock UaN with a password* keeps others out of the app.
+
 ## How it works
 
 - **Friend codes, no accounts.** You add friends with a short code (`UAN-…`), hidden by default so it's safe while you stream your screen.

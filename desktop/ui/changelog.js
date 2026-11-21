@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.46', items: [
+    'About & updates: the version and the update message no longer get squeezed next to the buttons.',
+    'Your theme makes no sound while UaN is hidden in the tray or minimized.',
+  ] },
   { v: '1.9.45', items: [
     'A new, softer ringtone and calling sound (small bell notes).',
     'Your theme’s sound stays quiet while you are in a call or a voice channel, and while a call rings.',
