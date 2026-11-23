@@ -1356,8 +1356,8 @@ function folderSelInfo(tm = transferIndex()) {
   $('folderAll').checked = n === all && all > 0;
   let allDone = all > 0;
   for (const x of folderRows) if (tm.get(x.file.id)?.status !== 'done') { allDone = false; break; }
-  $('folderDlAll').textContent = allDone ? 'Show in Downloads' : 'Download folder';
-  $('folderDlAll').title = allDone ? 'Opens the folder in Downloads' : `Downloads every file into Downloads/${folderOpen.folder}`;
+  $('folderDlAll').textContent = allDone ? 'Show in folder' : 'Download folder';
+  $('folderDlAll').title = allDone ? 'Opens the folder where it was saved' : 'Downloads every file of the folder';
   $('folderSel').textContent = folderOpen.items[0].mine ? 'Click a picture or video to open it.' : n ? `${n} selected · ${fmtBytes(size)}` : 'Nothing selected';
   $('folderDlSel').disabled = !n;
   $('folderDlSel').textContent = n && n < all ? `Download ${n} selected` : 'Download selected';
@@ -1367,9 +1367,12 @@ $('folderAll').addEventListener('change', () => {
   syncFolderBoxes();
   folderSelInfo();
 });
-function downloadFolder(ids) {
+async function downloadFolder(ids) {
   const b = folderOpen;
   if (!b) return;
+  // One question for the whole folder.
+  const dir = await askDownloadDir('Where should the folder “' + b.folder + '” be saved?');
+  if (dir === null) return;
   const want = new Set(ids);
   const tm = transferIndex();
   let n = 0;
@@ -1377,10 +1380,11 @@ function downloadFolder(ids) {
     if (!want.has(x.file.id)) continue;
     const t = tm.get(x.file.id);
     if (t && (t.status === 'done' || t.status === 'running')) continue;
-    startDownload(x.file, x.chat);
+    startDownload(x.file, x.chat, dir);
     n++;
   }
-  toast(n ? `Downloading ${n} ${n === 1 ? 'file' : 'files'} into Downloads/${b.folder}.` : 'Those files are already downloaded.');
+  const where = (dir || S.me?.dlPath || 'Downloads').replace(/[\\/]+$/, '');
+  toast(n ? `Downloading ${n} ${n === 1 ? 'file' : 'files'} into ${where}\\${b.folder}.` : 'Those files are already downloaded.');
 }
 $('folderDlSel').addEventListener('click', () => downloadFolder([...folderSel]));
 $('folderDlAll').addEventListener('click', () => {
@@ -1988,8 +1992,20 @@ function updateFileButton(btn, file, chat) {
   }
 }
 
-function startDownload(file, chat) {
-  invoke('download', { file, chat: chat || S.active || '' }).catch(toast);
+// Before a download: "where should it go?" (any folder, any drive), unless turned off in Settings → Downloads.
+// Phones save into UaN's own folder. Returns the folder, '' for the usual one, or null if you cancelled.
+async function askDownloadDir(title) {
+  if (!S.me?.dlAsk || document.documentElement.classList.contains('phone')) return '';
+  try { return await invoke('pick_download_dir', { title: title || null }); } catch (e) { toast(e); return null; }
+}
+async function startDownload(file, chat, dir) {
+  const t = transferIndex().get(file.id);
+  // Resuming one that already started keeps its place.
+  if (dir === undefined && !(t && t.status !== 'error')) {
+    dir = await askDownloadDir('Where should “' + (file.name || '').split(/[\\/]/).pop() + '” be saved?');
+    if (dir === null) return;
+  }
+  invoke('download', { file, chat: chat || S.active || '', dir: dir || null }).catch(toast);
 }
 
 const toBottom = el('button', { type: 'button', class: 'to-bottom hidden', id: 'toBottom', title: 'Jump to the newest message' }, svg('<path d="M12 5v14M6 13l6 6 6-6"/>'));
@@ -3323,7 +3339,7 @@ function showInViewer(file) {
   $('viewerDl').classList.toggle('hidden', file.owner === S.me.id);
   $('viewerVlc').classList.toggle('hidden', !/^video\//i.test(file.mime));
   $('viewerVlc').onclick = () => { viewerPlayer?.video.pause(); openInVlc(file); };
-  $('viewerDl').onclick = () => { startDownload(file, chat); toast('Download started. It saves to your Downloads folder.'); };
+  $('viewerDl').onclick = () => startDownload(file, chat);
   $('viewer').classList.remove('hidden');
   // The keys now belong to the viewer, not to the message box behind it.
   if (!$('viewer').contains(document.activeElement)) document.activeElement?.blur();
@@ -3841,6 +3857,9 @@ $('settingsBtn').addEventListener('click', async () => {
   $('sAutoDlGb').value = S.me.autodlGb;
   $('sWifi').checked = S.me.wifiOnly !== false;
   $('sKeepFree').checked = S.me.keepFree !== false;
+  $('sDlAsk').checked = S.me.dlAsk !== false;
+  $('sDlDir').value = S.me.dlDir || '';
+  $('sDlDir').placeholder = S.me.dlPath || 'Downloads';
   $('sAutoDlDir').value = S.me.autodlDir || '';
   $('sAutoDlDir').placeholder = S.me.autodlPath || 'UaN folder';
   $('sAutoDlReset').classList.toggle('hidden', !S.me.autodlDir);
@@ -6110,3 +6129,26 @@ $('sVsfx').addEventListener('change', () => {
 });
 
 document.addEventListener('visibilitychange', () => syncBackdropSound());
+
+// ---------- Settings → Downloads: ask where each download goes, or one folder for all ----------
+$('sDlAsk').addEventListener('change', async () => {
+  await invoke('set_dl_ask', { on: $('sDlAsk').checked }).catch(toast);
+  S.me.dlAsk = $('sDlAsk').checked;
+});
+$('sDlDir').addEventListener('change', async () => {
+  try {
+    await invoke('set_dl_dir', { dir: $('sDlDir').value });
+    S.me.dlDir = $('sDlDir').value.trim();
+    S.me = await invoke('state');
+    $('sDlDir').placeholder = S.me.dlPath || 'Downloads';
+  } catch (e) { toast(e); $('sDlDir').value = S.me.dlDir || ''; }
+});
+$('sDlPick').addEventListener('click', async () => {
+  try {
+    const d = await invoke('pick_download_dir', { title: 'Where should your downloads go?' });
+    if (!d) return;
+    await invoke('set_dl_dir', { dir: d });
+    $('sDlDir').value = d;
+    S.me = await invoke('state');
+  } catch (e) { toast(e); }
+});

@@ -4921,8 +4921,47 @@ impl Node {
         self.emit_transfers();
     }
 
-    pub fn download(self: &Arc<Self>, file: FileMeta, chat: String) -> Result<String, String> {
-        self.download_into(file, chat, false)
+    pub fn download(self: &Arc<Self>, file: FileMeta, chat: String, at: Option<String>) -> Result<String, String> {
+        let at = at.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).map(PathBuf::from);
+        if let Some(d) = &at {
+            self.set_kv("dl_last", &d.to_string_lossy());
+        }
+        self.download_into_at(file, chat, false, at)
+    }
+
+    /// Where downloads you start go when UaN doesn't ask (Settings → Downloads): your choice, or Downloads.
+    pub fn manual_dir(&self) -> Result<PathBuf, String> {
+        if let Some(d) = self.kv("dl_dir").filter(|d| !d.is_empty()).map(PathBuf::from).filter(|d| d.is_dir()) {
+            return Ok(d);
+        }
+        dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.".into())
+    }
+
+    /// Ask where to save each download (on unless turned off).
+    pub fn dl_ask(&self) -> bool {
+        self.kv("dl_ask").map(|v| v != "0").unwrap_or(true)
+    }
+
+    pub fn set_dl_ask(&self, on: bool) {
+        self.set_kv("dl_ask", if on { "1" } else { "0" });
+    }
+
+    pub fn dl_dir(&self) -> String {
+        self.kv("dl_dir").unwrap_or_default()
+    }
+
+    pub fn set_dl_dir(&self, dir: &str) -> Result<(), String> {
+        let d = dir.trim();
+        if !d.is_empty() && !Path::new(d).is_dir() {
+            return Err("That folder doesn't exist.".into());
+        }
+        self.set_kv("dl_dir", d);
+        Ok(())
+    }
+
+    /// The folder the "where to save" window opens in: the last one you picked, else the usual one.
+    pub fn dl_start_dir(&self) -> Option<PathBuf> {
+        self.kv("dl_last").map(PathBuf::from).filter(|d| d.is_dir()).or_else(|| self.manual_dir().ok())
     }
 
     /// Files saved automatically go to the UaN folder (or the one you chose).
@@ -5002,6 +5041,11 @@ impl Node {
     }
 
     pub fn download_into(self: &Arc<Self>, file: FileMeta, chat: String, auto: bool) -> Result<String, String> {
+        self.download_into_at(file, chat, auto, None)
+    }
+
+    /// Like download_into, into a folder you picked (None: the usual one).
+    pub fn download_into_at(self: &Arc<Self>, file: FileMeta, chat: String, auto: bool, at: Option<PathBuf>) -> Result<String, String> {
         if let Some(t) = self.transfers.lock().unwrap().iter().find(|t| t.file.id == file.id && t.status != "error") {
             let id = t.id.clone();
             let paused = t.status == "paused";
@@ -5012,7 +5056,16 @@ impl Node {
             }
             return Ok(id);
         }
-        let dir = if auto || std::env::var_os("UAN_DOWNLOADS").is_some() { Self::auto_dir()? } else { dirs::download_dir().or_else(dirs::home_dir).ok_or("Couldn't find your Downloads folder.")? };
+        let dir = match at {
+            Some(d) if !auto => {
+                if !d.is_dir() {
+                    return Err(format!("The folder {} isn't there.", d.display()));
+                }
+                d
+            }
+            _ if auto || std::env::var_os("UAN_DOWNLOADS").is_some() => Self::auto_dir()?,
+            _ => self.manual_dir()?,
+        };
         // Never fill the disk: what UaN fetches by itself keeps 20 GB free, what you start keeps 2 GB.
         if let Some(why) = no_room(&dir, file.size, if auto { self.keep_free_auto() } else { KEEP_FREE }) {
             self.log(&format!("download refused ({}): {why}", file.name));

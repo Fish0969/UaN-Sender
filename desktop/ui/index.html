@@ -449,6 +449,10 @@
             <div class="group">
               <label class="check" id="sAutoRow"><input type="checkbox" id="sAuto"> Start UaN when your computer starts (runs in the tray)</label>
               <label class="check phone-check" id="sWifiRow"><input type="checkbox" id="sWifi"> Wi-Fi only: download, and let others download from this phone, only on Wi-Fi (not on mobile data)</label>
+              <div class="dl-box pc-only">
+                <label class="check"><input type="checkbox" id="sDlAsk"> Ask where to save each download (any folder, on any drive)</label>
+                <div class="autodl-dir"><span class="note">Otherwise saved to</span> <input id="sDlDir" placeholder="Downloads" spellcheck="false" autocomplete="off" title="Type a folder, or press Change… to choose one"> <button type="button" class="small" id="sDlPick">Change…</button></div>
+              </div>
               <div class="autodl-box">
                 <label class="check"><input type="checkbox" id="sAutoDl"> <span class="warn-ico" title="Not fully safe">!</span> Automatically download files friends send, up to <input id="sAutoDlGb" type="number" min="1" max="4096" class="gb"> GB</label>
                 <div class="note warn">Not fully safe: files land on your PC without you opening them. Only for people you trust. It works only in the chats where you switch it on (right-click a friend or a group → Automatic downloads here).</div>

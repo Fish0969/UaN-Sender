@@ -166,6 +166,9 @@ fn state(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, media: State<'
         "autodl": node.autodl().0,
         "autodlGb": node.autodl().1,
         "autodlDir": node.autodl_dir(),
+        "dlAsk": node.dl_ask(),
+        "dlDir": node.dl_dir(),
+        "dlPath": node.manual_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
         "keepFree": node.keep_free_on(),
         "wifiOnly": node.wifi_only(),
         "autodlPath": node.auto_dir_path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -1545,8 +1548,38 @@ fn group_action(node: State<'_, Arc<Node>>, group: String, action: String, ids: 
 }
 
 #[tauri::command]
-fn download(node: State<'_, Arc<Node>>, file: FileMeta, chat: Option<String>) -> CmdResult<String> {
-    node.download(file, chat.unwrap_or_default())
+fn download(node: State<'_, Arc<Node>>, file: FileMeta, chat: Option<String>, dir: Option<String>) -> CmdResult<String> {
+    node.download(file, chat.unwrap_or_default(), dir)
+}
+
+/// "Where should it go?": a folder chooser (opens where you saved last; any drive, D: too). None = you cancelled.
+#[tauri::command]
+#[cfg_attr(mobile, allow(unused_variables))]
+async fn pick_download_dir(app: AppHandle, node: State<'_, Arc<Node>>, title: Option<String>) -> CmdResult<Option<String>> {
+    #[cfg(desktop)]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let mut dlg = app.dialog().file().set_title(title.unwrap_or_else(|| "Where should it be saved?".into()));
+        if let Some(d) = node.dl_start_dir() {
+            dlg = dlg.set_directory(d);
+        }
+        dlg.pick_folder(move |f| {
+            let _ = tx.send(f);
+        });
+        Ok(rx.await.ok().flatten().and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
+    }
+    #[cfg(mobile)]
+    Ok(None)
+}
+
+#[tauri::command]
+fn set_dl_ask(node: State<'_, Arc<Node>>, on: bool) {
+    node.set_dl_ask(on)
+}
+
+#[tauri::command]
+fn set_dl_dir(node: State<'_, Arc<Node>>, dir: String) -> CmdResult<()> {
+    node.set_dl_dir(&dir)
 }
 
 #[tauri::command]
@@ -1921,6 +1954,9 @@ pub fn run() {
             set_thumb,
             set_autodl,
             set_autodl_chat,
+            pick_download_dir,
+            set_dl_ask,
+            set_dl_dir,
             set_keep_free,
             new_friend_code,
             lock_state,

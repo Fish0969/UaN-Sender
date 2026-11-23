@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.47', items: [
+    'When you download something, UaN asks where to save it: any folder, on any drive (D: too). A folder asks once for all its files.',
+    'Settings → Downloads & start-up: turn the question off and pick one folder for all your downloads.',
+  ] },
   { v: '1.9.46', items: [
     'About & updates: the version and the update message no longer get squeezed next to the buttons.',
     'Your theme makes no sound while UaN is hidden in the tray or minimized.',
