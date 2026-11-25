@@ -1859,6 +1859,8 @@ function onStage() {
 }
 document.addEventListener('visibilitychange', onStage);
 document.addEventListener('visibilitychange', () => { invoke('mem_saver', { low: document.hidden }).catch(() => {}); });
+// Started hidden in the tray (with the computer): low from the first moment.
+setTimeout(() => { if (document.hidden) invoke('mem_saver', { low: true }).catch(() => {}); }, 4000);
 window.addEventListener('blur', onStage);
 window.addEventListener('focus', onStage);
 
