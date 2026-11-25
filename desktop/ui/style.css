@@ -1829,3 +1829,21 @@ html.phone .call-in { bottom: 80px; }
 
 .dl-box { margin: 6px 0 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-ctl, 10px); background: var(--card); }
 #sDlDir { flex: 1; min-width: 180px; height: 30px; }
+
+.f-search { display: flex; align-items: center; gap: 8px; height: 36px; margin: 10px 0 6px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); }
+.f-search:focus-within { border-color: var(--accent); }
+.f-search svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; }
+.f-search input { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0; background: transparent; box-shadow: none; outline: none; }
+.f-none { padding: 24px; text-align: center; color: var(--muted); }
+
+#multiBtn.drop-ready { outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+#multiBtn.drop-here { background: var(--accent); color: var(--on-accent); outline-style: solid; }
+
+.lock-hint { font-size: 13px; color: #c9c9c9; background: #151515; border: 1px solid #2a2a2a; border-radius: 8px; padding: 6px 12px; max-width: 100%; word-break: break-word; }
+.lock-hint.hidden { display: none; }
+.lock-key { padding: 10px 12px; border-radius: var(--r-ctl, 10px); border: 1px solid #f5b301; background: color-mix(in srgb, #f5b301 10%, transparent); display: flex; flex-direction: column; gap: 6px; }
+.lock-key.hidden { display: none; }
+.lock-key-row { display: flex; align-items: center; gap: 10px; }
+.lock-key-row code { font-size: 16px; letter-spacing: .06em; font-weight: 700; user-select: all; -webkit-user-select: all; }
+#sLockHint { flex: 1; }
+#askInput { width: 100%; margin: 4px 0 8px; box-sizing: border-box; }

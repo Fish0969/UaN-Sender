@@ -1138,26 +1138,52 @@ impl Node {
         self.kv("lock_hash").is_some_and(|h| !h.is_empty())
     }
 
+    /// The password, or the recovery key (for when the password is forgotten), opens it.
     pub fn lock_check(&self, pw: &str) -> bool {
-        let (Some(salt), Some(hash)) = (self.kv("lock_salt"), self.kv("lock_hash")) else { return false };
-        let got = Self::lock_digest(&salt, pw);
-        // Compared in full every time (no early exit).
-        got.len() == hash.len() && got.bytes().zip(hash.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+        let Some(salt) = self.kv("lock_salt") else { return false };
+        let same = |a: &str, b: &str| a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0;
+        if let Some(hash) = self.kv("lock_hash").filter(|h| !h.is_empty()) {
+            if same(&Self::lock_digest(&salt, pw), &hash) {
+                return true;
+            }
+        }
+        if let Some(rk) = self.kv("lock_rkey").filter(|h| !h.is_empty()) {
+            let key: String = pw.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase();
+            if key.len() == 20 && same(&Self::lock_digest(&salt, &format!("recovery:{key}")), &rk) {
+                return true;
+            }
+        }
+        false
     }
 
-    pub fn lock_set(&self, pw: &str) -> Result<(), String> {
+    /// Turns the lock on with a new password; gives back a new recovery key (shown once, to keep somewhere safe).
+    pub fn lock_set(&self, pw: &str, hint: &str) -> Result<String, String> {
         if pw.chars().count() < 4 {
             return Err("The password must be at least 4 characters.".into());
         }
+        let hint: String = hint.trim().chars().take(100).collect();
+        if !hint.is_empty() && hint.to_lowercase().contains(&pw.to_lowercase()) {
+            return Err("The hint can't contain the password itself.".into());
+        }
         let salt = HEXLOWER.encode(&Sha256::digest(format!("{}:{}", self.sign_hex(&format!("lock:{}", now())), now()).as_bytes())[..16]);
+        // Unguessable: from a signature with this device's key over the time.
+        let raw = Sha256::digest(format!("{}:{}", self.sign_hex(&format!("rkey:{}:{salt}", now())), now()).as_bytes());
+        let key = BASE32_NOPAD.encode(&raw[..15])[..20].to_string();
         self.set_kv("lock_salt", &salt);
         self.set_kv("lock_hash", &Self::lock_digest(&salt, pw));
-        Ok(())
+        self.set_kv("lock_rkey", &Self::lock_digest(&salt, &format!("recovery:{key}")));
+        self.set_kv("lock_hint", &hint);
+        Ok(key.as_bytes().chunks(5).map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>().join("-"))
+    }
+
+    pub fn lock_hint(&self) -> String {
+        self.kv("lock_hint").unwrap_or_default()
     }
 
     pub fn lock_clear(&self) {
-        self.set_kv("lock_hash", "");
-        self.set_kv("lock_salt", "");
+        for k in ["lock_hash", "lock_salt", "lock_rkey", "lock_hint"] {
+            self.set_kv(k, "");
+        }
     }
 
     /// Makes a new friend code: the old one stops working (friends you already have stay).

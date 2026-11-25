@@ -9,13 +9,14 @@
 <body>
   <!-- App lock: black, until UaN knows it is not locked (or the password is right). Nothing else shows meanwhile. -->
   <div id="lockScreen" class="lock-screen">
-    <form id="lockForm" class="lock-box hidden" autocomplete="off">
+    <form id="appLockForm" class="lock-box hidden" autocomplete="off">
       <img src="icon.png" alt="" class="lock-icon">
       <div class="lock-title">UaN is locked</div>
       <div class="lock-sub">Type your password to open it.</div>
-      <input id="lockPw" type="password" placeholder="Password" autocomplete="current-password" spellcheck="false">
-      <div class="lock-err" id="lockErr"></div>
-      <button class="accent" id="lockGo" type="submit">Unlock</button>
+      <div class="lock-hint hidden" id="appLockHint"></div>
+      <input id="appLockPw" type="password" placeholder="Password or recovery key" autocomplete="current-password" spellcheck="false">
+      <div class="lock-err" id="appLockErr"></div>
+      <button class="accent" id="appLockGo" type="submit">Unlock</button>
     </form>
   </div>
   <!-- UaN's own title bar (Windows): it follows the theme -->
@@ -204,7 +205,7 @@
     <div class="viewer-bar">
       <span id="viewerName" class="grow ellipsis strong"></span>
       <span id="viewerCount" class="viewer-count"></span>
-      <button id="viewerVlc" class="small" type="button" title="Play in VLC (streams, nothing is downloaded)">Open in VLC</button>
+      <button id="viewerVlc" class="small" type="button" title="Plays it in VLC, with sound (streams, nothing is downloaded)">No sound? Open in VLC</button>
       <button id="viewerDl" class="small" type="button">Download</button>
       <button id="viewerClose" class="icon light" type="button" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
@@ -221,7 +222,7 @@
       <span id="partyTitle" class="grow ellipsis strong"></span>
       <button id="partySideBtn" class="small" type="button">Chat and playlist</button>
       <button id="partyFull" class="small" type="button"></button>
-      <button id="partyVlc" class="small" type="button" title="Watch in VLC instead; stays in sync with everyone">Watch in VLC</button>
+      <button id="partyVlc" class="small" type="button" title="Watch in VLC instead, with sound; stays in sync with everyone">No sound? Watch in VLC</button>
       <button id="partyStart" class="small hidden" type="button">Start now</button>
       <button id="partyEnd" class="small hidden" type="button">End for everyone</button>
       <button id="partyLeave" class="small" type="button">Leave</button>
@@ -305,7 +306,8 @@
         <div class="folder-ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></div>
         <div class="grow"><h2 id="folderName" class="ellipsis"></h2><div class="sub" id="folderInfo"></div></div>
       </div>
-      <label class="f-all" id="folderAllRow"><input type="checkbox" id="folderAll"> Select all</label>
+      <div class="f-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="folderQ" placeholder="Search in this folder" spellcheck="false" autocomplete="off"></div>
+      <label class="f-all" id="folderAllRow"><input type="checkbox" id="folderAll"> <span id="folderAllText">Select all</span></label>
       <div id="folderList" class="folder-list"></div>
       <div class="actions">
         <span class="grow sub" id="folderSel"></span>
@@ -435,6 +437,12 @@
               <div class="note" id="sLockNote">When it is on, UaN asks for the password every time it starts, on a black screen: nothing (not even your theme) shows before it. Don’t forget it: UaN can’t be opened without it.</div>
               <div class="lock-row" id="sLockCurRow"><input type="password" id="sLockCur" placeholder="Current password" autocomplete="current-password"></div>
               <div class="lock-row" id="sLockNewRow"><input type="password" id="sLockNew" placeholder="New password (4+ characters)" autocomplete="new-password"><input type="password" id="sLockNew2" placeholder="Again" autocomplete="new-password"></div>
+              <div class="lock-row"><input id="sLockHint" maxlength="100" placeholder="Password hint (optional, shown on the lock screen)" autocomplete="off"></div>
+              <div class="lock-key hidden" id="sLockKey">
+                <div class="strong">Your recovery key</div>
+                <div class="note">If you forget your password, type this instead and UaN opens. Write it down or keep it somewhere safe: it is shown only now.</div>
+                <div class="lock-key-row"><code id="sLockKeyText"></code><button type="button" class="small" id="sLockKeyCopy">Copy</button></div>
+              </div>
               <div class="lock-row"><span class="lock-state" id="sLockState"></span><span class="grow"></span><button type="button" class="small" id="sLockOff">Turn off</button><button type="button" class="small accent" id="sLockOn">Turn on</button></div>
             </div>
             <div class="sub-title">Friend code</div>
@@ -737,6 +745,7 @@
   <dialog id="askDlg">
     <form method="dialog">
       <p id="askText"></p>
+      <input id="askInput" class="hidden" maxlength="64" autocomplete="off" spellcheck="false">
       <div class="actions">
         <span class="grow"></span>
         <button value="no">Cancel</button>

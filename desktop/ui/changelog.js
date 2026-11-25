@@ -1,5 +1,14 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.48', items: [
+    'Locked channels open again after you type their password (since 1.9.39 they sent you back to the start).',
+    'A folder someone sent you: search in it by name, and Select all ticks only what the search found.',
+    'The VLC button says No sound? Open in VLC (with sound).',
+    'The UaN password lock: a hint shown on the lock screen, and a recovery key that opens UaN if you forget the password.',
+    'Drop files on Send to several (or anywhere when no chat is open) to send them to several friends and groups.',
+    'Shift + click on Delete deletes without asking (yours for everyone, others’ only for you).',
+    'Renaming a channel uses UaN’s own window.',
+  ] },
   { v: '1.9.47', items: [
     'When you download something, UaN asks where to save it: any folder, on any drive (D: too). A folder asks once for all its files.',
     'Settings → Downloads & start-up: turn the question off and pick one folder for all your downloads.',

@@ -605,7 +605,7 @@ fn wipe_after_exit(dirs: &[PathBuf]) {
 
 #[tauri::command]
 fn lock_state(node: State<'_, Arc<Node>>) -> Value {
-    json!({ "enabled": node.lock_enabled(), "locked": node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst) })
+    json!({ "enabled": node.lock_enabled(), "locked": node::APP_LOCKED.load(std::sync::atomic::Ordering::SeqCst), "hint": node.lock_hint() })
 }
 
 /// Opens UaN with its password. A wrong one waits a little (more after several tries).
@@ -626,14 +626,19 @@ async fn unlock(node: State<'_, Arc<Node>>, password: String) -> CmdResult<()> {
 
 /// Turns the lock on (with a new password) or off (with the current one).
 #[tauri::command]
-async fn lock_set(node: State<'_, Arc<Node>>, on: bool, password: String, current: Option<String>) -> CmdResult<()> {
+async fn lock_set(node: State<'_, Arc<Node>>, on: bool, password: String, current: Option<String>, hint: Option<String>) -> CmdResult<Option<String>> {
     let node = node.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         if node.lock_enabled() && !node.lock_check(current.as_deref().unwrap_or("")) {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            return Err("The current password is wrong.".to_string());
+            return Err("The current password (or recovery key) is wrong.".to_string());
         }
-        if on { node.lock_set(&password) } else { node.lock_clear(); Ok(()) }
+        if on {
+            node.lock_set(&password, hint.as_deref().unwrap_or("")).map(Some)
+        } else {
+            node.lock_clear();
+            Ok(None)
+        }
     })
     .await
     .map_err(|e| e.to_string())?

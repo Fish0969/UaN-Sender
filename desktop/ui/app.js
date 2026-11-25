@@ -115,6 +115,7 @@ function toast(msg) {
 function ask(text, ok = 'OK') {
   return new Promise((resolve) => {
     const d = $('askDlg');
+    $('askInput').classList.add('hidden');
     $('askText').textContent = text;
     $('askOk').textContent = ok;
     d.returnValue = '';
@@ -122,6 +123,23 @@ function ask(text, ok = 'OK') {
     d.showModal();
   });
 }
+
+// The same window with a text box (a new name, …): gives back the text, or null if cancelled.
+function askText(text, value = '', ok = 'OK') {
+  return new Promise((resolve) => {
+    const d = $('askDlg');
+    $('askText').textContent = text;
+    $('askOk').textContent = ok;
+    const box = $('askInput');
+    box.value = value;
+    box.classList.remove('hidden');
+    d.returnValue = '';
+    d.addEventListener('close', () => { box.classList.add('hidden'); resolve(d.returnValue === 'yes' ? box.value.trim() : null); }, { once: true });
+    d.showModal();
+    setTimeout(() => { box.focus(); box.select(); }, 30);
+  });
+}
+$('askInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('askDlg').close('yes'); } });
 
 const friendById = (id) => S.friends.find((f) => f.id === id);
 const groupById = (id) => S.groups.find((g) => g.id === id);
@@ -199,24 +217,25 @@ function setupChrome() {
 function applySavedZoom() { if (uiZoom !== 1) setZoom(uiZoom, false); }
 
 // The lock screen: shown until the password is right (the core gives nothing out before that).
-function waitForUnlock() {
+function waitForUnlock(hint) {
   return new Promise((resolve) => {
-    $('lockForm').classList.remove('hidden');
-    setTimeout(() => $('lockPw').focus(), 50);
-    $('lockForm').onsubmit = async (e) => {
+    if (hint) { $('appLockHint').textContent = 'Hint: ' + hint; $('appLockHint').classList.remove('hidden'); }
+    $('appLockForm').classList.remove('hidden');
+    setTimeout(() => $('appLockPw').focus(), 50);
+    $('appLockForm').onsubmit = async (e) => {
       e.preventDefault();
-      const pw = $('lockPw').value;
+      const pw = $('appLockPw').value;
       if (!pw) return;
-      $('lockGo').disabled = true; $('lockErr').textContent = '';
-      try { await invoke('unlock', { password: pw }); $('lockPw').value = ''; resolve(); }
-      catch (err) { $('lockErr').textContent = String(err); $('lockPw').select(); }
-      $('lockGo').disabled = false;
+      $('appLockGo').disabled = true; $('appLockErr').textContent = '';
+      try { await invoke('unlock', { password: pw }); $('appLockPw').value = ''; resolve(); }
+      catch (err) { $('appLockErr').textContent = String(err); $('appLockPw').select(); }
+      $('appLockGo').disabled = false;
     };
   });
 }
 async function boot() {
   const lock = await invoke('lock_state').catch(() => ({ locked: false }));
-  if (lock.locked) await waitForUnlock();
+  if (lock.locked) await waitForUnlock(lock.hint);
   S.me = await invoke('state');
   $('lockScreen').remove();
   applyTheme();
@@ -697,15 +716,15 @@ $('addChanBtn').addEventListener('click', () => { const g = groupById(S.view); i
 function channelMenu(g, ch) {
   const owner = g.owner === S.me.id;
   return [
-    { label: 'Open', run: () => openChat(ch.chat) },
+    ch.voice ? { label: VC.chat === ch.chat ? 'Leave' : 'Join', run: () => (VC.chat === ch.chat ? voiceLeave() : voiceJoin(ch.chat)) } : { label: 'Open', run: () => openChat(ch.chat) },
     ch.id ? muteItem(ch.chat) : null,
 
     { label: 'Clear messages for me', run: () => clearChat(ch.chat, false) },
     owner ? { label: 'Clear messages for everyone', danger: true, run: () => clearChat(ch.chat, true) } : null,
     owner && ch.id ? '-' : null,
     owner && ch.id ? { label: 'Rename channel…', run: async () => {
-      const name = prompt('New name for the channel', ch.name);
-      if (name && name.trim()) invoke('channel_action', { group: g.id, channel: ch.id, action: 'rename', name }).then(loadContacts).catch(toast);
+      const name = await askText('New name for # ' + ch.name, ch.name, 'Rename');
+      if (name) invoke('channel_action', { group: g.id, channel: ch.id, action: 'rename', name }).then(loadContacts).catch(toast);
     } } : null,
     owner && ch.id ? { label: 'Delete channel', danger: true, run: async () => {
       if (await ask(`Delete # ${ch.name} for everyone?`, 'Delete')) {
@@ -975,7 +994,7 @@ function msgMenu(m, items) {
     m.text && !m.locked ? { label: 'Copy text', run: () => navigator.clipboard.writeText(m.text).then(() => toast('Copied.')).catch(() => {}) } : null,
     !many && themeable(m.file) ? { label: 'Use as theme', run: () => useAsTheme(m.file) } : null,
     '-',
-    { label: many ? 'Delete these…' : 'Delete…', danger: true, run: () => deleteMessage(many ? items : m) },
+    { label: many ? 'Delete these…' : 'Delete…', danger: true, run: (e) => deleteMessage(many ? items : m, !!e?.shiftKey) },
   ];
 }
 let ctxTarget = null; // the message whose menu is open (Shift+Delete deletes it right away)
@@ -1132,7 +1151,7 @@ function messageNode(m, run = true, block = null) {
     !block && m.mine && m.text ? el('button', { type: 'button', class: 'msg-act', title: 'Edit', onclick: () => startEdit(m) }, svg(ICON.edit)) : null,
     !block ? el('button', { type: 'button', class: 'msg-act', title: m.pinned ? 'Unpin' : 'Pin to the top of the chat', onclick: () => togglePin(m) }, svg(ICON.pin)) : null,
   ];
-  const del = el('button', { type: 'button', class: 'msg-del', title: block ? 'Delete these messages' : 'Delete message', onclick: () => deleteMessage(block ? items : m) }, svg(ICON.x));
+  const del = el('button', { type: 'button', class: 'msg-del', title: block ? 'Delete these messages (Shift: without asking)' : 'Delete message (Shift: without asking)', onclick: (e) => deleteMessage(block ? items : m, e.shiftKey) }, svg(ICON.x));
   const time = el('span', { class: 'time', text: timeFmt.format(m.ts), title: `${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` });
   const edited = m.edited ? el('span', { class: 'edited', text: 'edited' }) : null;
   const pin = items.some((x) => x.pinned) ? el('span', { class: 'pin-mark', title: 'Pinned' }, svg(ICON.pin)) : null;
@@ -1186,7 +1205,7 @@ function printMenu(m) {
     '-',
     { label: 'Reply', run: () => startReply(m) },
     { label: m.pinned ? 'Unpin' : 'Pin', run: () => togglePin(m) },
-    { label: 'Delete…', danger: true, run: () => deleteMessage(m) },
+    { label: 'Delete…', danger: true, run: (e) => deleteMessage(m, !!e?.shiftKey) },
   ];
 }
 
@@ -1210,7 +1229,8 @@ let folderOpen = null;
 // the ticks live in a Set instead of in the page, and transfers are looked up in one pass, not once per row.
 const folderCollator = new Intl.Collator(undefined, { numeric: true });
 const FOLDER_PAGE = 150;
-let folderRows = [];            // the folder's files, sorted (done once when it is opened)
+let folderRows = [];            // the folder's files shown now (all, or the ones the search finds)
+let folderAllRows = [];         // every file of the folder, sorted (done once when it is opened)
 let folderShown = 0;            // how many rows are drawn
 let folderSel = new Set();      // ticked file ids
 let folderSizes = new Map();    // file id -> size
@@ -1230,7 +1250,9 @@ function openFolder(b, sel = null) {
   const mine = b.items[0].mine;
   $('folderName').textContent = b.folder;
   for (const id of ['folderAllRow', 'folderDlSel', 'folderDlAll']) $(id).classList.toggle('hidden', mine);
-  folderRows = [...b.items].sort((x, y) => folderCollator.compare(x.file.name, y.file.name));
+  folderAllRows = [...b.items].sort((x, y) => folderCollator.compare(x.file.name, y.file.name));
+  folderRows = folderAllRows;
+  $('folderQ').value = '';
   folderSizes = new Map(folderRows.map((x) => [x.file.id, x.file.size]));
   folderTotal = folderRows.reduce((a, x) => a + x.file.size, 0);
   if (sel) {
@@ -1333,7 +1355,9 @@ function renderFolder() {
   const mine = b.items[0].mine;
   const tm = transferIndex();
   const n = folderRows.length;
-  $('folderInfo').textContent = `${n} ${n === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
+  const total = folderAllRows.length;
+  $('folderInfo').textContent = `${total} ${total === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
+  if (!n && total) { $('folderList').replaceChildren(el('div', { class: 'f-none', text: 'No file matches that.' })); folderSelInfo(tm); return; }
   const top = $('folderList').scrollTop;
   const rows = [];
   for (let i = 0; i < folderShown; i++) rows.push(folderRow(folderRows[i], i, tm, mine));
@@ -1352,10 +1376,12 @@ function folderSelInfo(tm = transferIndex()) {
   let size = 0;
   for (const id of folderSel) size += folderSizes.get(id) || 0;
   const n = folderSel.size;
-  const all = folderRows.length;
-  $('folderAll').checked = n === all && all > 0;
+  const all = folderAllRows.length;
+  const shown = folderRows.length;
+  $('folderAll').checked = shown > 0 && folderRows.every((x) => folderSel.has(x.file.id));
+  $('folderAllText').textContent = shown < all ? `Select all ${shown} found` : 'Select all';
   let allDone = all > 0;
-  for (const x of folderRows) if (tm.get(x.file.id)?.status !== 'done') { allDone = false; break; }
+  for (const x of folderAllRows) if (tm.get(x.file.id)?.status !== 'done') { allDone = false; break; }
   $('folderDlAll').textContent = allDone ? 'Show in folder' : 'Download folder';
   $('folderDlAll').title = allDone ? 'Opens the folder where it was saved' : 'Downloads every file of the folder';
   $('folderSel').textContent = folderOpen.items[0].mine ? 'Click a picture or video to open it.' : n ? `${n} selected · ${fmtBytes(size)}` : 'Nothing selected';
@@ -1363,7 +1389,10 @@ function folderSelInfo(tm = transferIndex()) {
   $('folderDlSel').textContent = n && n < all ? `Download ${n} selected` : 'Download selected';
 }
 $('folderAll').addEventListener('change', () => {
-  folderSel = $('folderAll').checked ? new Set(folderRows.map((x) => x.file.id)) : new Set();
+  // Only the files the search shows are ticked or unticked; the rest stay as they were.
+  for (const x of folderRows) {
+    if ($('folderAll').checked) folderSel.add(x.file.id); else folderSel.delete(x.file.id);
+  }
   syncFolderBoxes();
   folderSelInfo();
 });
@@ -1392,6 +1421,15 @@ $('folderDlAll').addEventListener('click', () => {
   const done = folderOpen.items.map((x) => tm.get(x.file.id));
   if (done.every((t) => t?.status === 'done')) return invoke('transfer_action', { id: done[0].id, action: 'reveal' }).catch(toast);
   downloadFolder(folderOpen.items.map((x) => x.file.id));
+});
+// Search in the folder: by name (accents and case don't matter); several words must all be in the name.
+$('folderQ').addEventListener('input', () => {
+  const words = fold($('folderQ').value.trim()).split(/\s+/).filter(Boolean);
+  folderRows = words.length ? folderAllRows.filter((x) => { const n = fold(x.file.name); return words.every((w) => n.includes(w)); }) : folderAllRows;
+  folderShown = Math.min(FOLDER_PAGE, folderRows.length);
+  folderLast = -1;
+  $('folderList').scrollTop = 0;
+  renderFolder();
 });
 $('folderDlg').addEventListener('close', () => { folderOpen = null; folderMore?.disconnect(); clearTimeout(folderTimer); folderTimer = null; });
 
@@ -1806,11 +1844,11 @@ function deleteMessage(arg, now = false) {
   const items = Array.isArray(arg) ? arg : [arg];
   // The group's owner and co-owners may delete anyone's message for everyone.
   const mine = items.every((x) => x.mine) || isManager(groupOf(items[0].chat));
-  if (now && mine) {
-    // Shift+Delete: no questions asked, it goes for everyone.
+  if (now) {
+    // Shift held (Shift+Delete, or Shift+click on Delete): no questions asked. Yours go for everyone, others' only here.
     (async () => {
       for (const x of items) {
-        try { await invoke('delete_message', { id: x.id, everyone: true }); } catch (e) { toast(e); break; }
+        try { await invoke('delete_message', { id: x.id, everyone: mine }); } catch (e) { toast(e); break; }
       }
     })();
     return;
@@ -2632,12 +2670,23 @@ $('attachBtn').addEventListener('click', () => {
 });
 
 const wsDropping = () => $('wsDlg').open && !$('wsPub').classList.contains('hidden');
-listen('tauri://drag-enter', () => { if (wsDropping()) { $('wsDrop').classList.add('over'); return; } if (S.active) $('drop').classList.remove('hidden'); });
-listen('tauri://drag-leave', () => { $('drop').classList.add('hidden'); $('wsDrop').classList.remove('over'); });
+// Where the files are over: the "Send to several" button takes them too (the position comes in screen pixels).
+function overMultiBtn(pos) {
+  if (!pos) return false;
+  const z = devicePixelRatio || 1;
+  const hit = document.elementFromPoint(pos.x / z, pos.y / z);
+  return !!hit?.closest?.('#multiBtn');
+}
+listen('tauri://drag-enter', () => { if (wsDropping()) { $('wsDrop').classList.add('over'); return; } $('multiBtn').classList.add('drop-ready'); if (S.active) $('drop').classList.remove('hidden'); });
+listen('tauri://drag-over', ({ payload }) => { $('multiBtn').classList.toggle('drop-here', overMultiBtn(payload?.position)); });
+listen('tauri://drag-leave', () => { $('drop').classList.add('hidden'); $('wsDrop').classList.remove('over'); $('multiBtn').classList.remove('drop-ready', 'drop-here'); });
 listen('tauri://drag-drop', async ({ payload }) => {
   $('drop').classList.add('hidden');
+  $('multiBtn').classList.remove('drop-ready', 'drop-here');
   if (wsDropping()) { $('wsDrop').classList.remove('over'); if (payload.paths?.length) wsStagePath(payload.paths[0]); return; }
-  if (!S.active || !payload.paths?.length) return;
+  if (!payload.paths?.length) return;
+  // Onto "Send to several", or with no chat open: pick who gets them.
+  if (!S.active || overMultiBtn(payload.position)) { openPick('multi', null, null, payload.paths); return; }
   const chat = S.active;
   // Files go at once; for a folder you first pick which file types go.
   const files = [], folders = [];
@@ -3362,7 +3411,9 @@ let pickMode = null;
 let pickGroup = null;
 
 let pickTheme = null;
-function openPick(mode, group, themeToSend = null) {
+let pickPaths = null; // files dropped on "Send to several": they go to everyone picked
+function openPick(mode, group, themeToSend = null, paths = null) {
+  pickPaths = mode === 'multi' && paths?.length ? paths : null;
   pickMode = mode;
   pickGroup = group;
   pickTheme = themeToSend;
@@ -3380,7 +3431,8 @@ function openPick(mode, group, themeToSend = null) {
   $('pickText').classList.toggle('hidden', mode !== 'multi');
   $('pickAlt').classList.toggle('hidden', mode !== 'multi');
   $('pickAlt').textContent = 'Send message only';
-  $('pickOk').textContent = { multi: 'Choose files…', group: 'Create group', add: 'Add', theme: 'Send' }[mode];
+  $('pickOk').textContent = { multi: pickPaths ? `Send ${pickPaths.length} ${pickPaths.length === 1 ? 'item' : 'items'}` : 'Choose files…', group: 'Create group', add: 'Add', theme: 'Send' }[mode];
+  if (pickPaths) $('pickNote').textContent = 'Pick friends and groups: ' + pickPaths.map((p) => p.split(/[\\/]/).pop()).slice(0, 3).join(', ') + (pickPaths.length > 3 ? ' and ' + (pickPaths.length - 3) + ' more' : '') + ' go to each of them.';
   $('pickName').value = '';
   $('pickText').value = '';
   $('pickError').textContent = '';
@@ -3449,6 +3501,14 @@ $('pickForm').addEventListener('submit', async (e) => {
       toast(`Sent “${pickTheme.name}”.`);
     } else if (pickMode === 'multi') {
       if (!ids.length) return void ($('pickError').textContent = 'Pick at least one.');
+      if (pickPaths) {
+        await invoke('send_paths', { paths: pickPaths, chats: ids, text: $('pickText').value.trim() });
+        saveRecent(ids);
+        $('pickDlg').close();
+        toast('Sent to ' + ids.length + (ids.length === 1 ? ' chat.' : ' chats.'));
+        pickPaths = null;
+        return;
+      }
       const n = await invoke('pick_and_send', { chats: ids, text: $('pickText').value.trim() });
       if (n > 0) { saveRecent(ids); $('pickDlg').close(); }
     } else if (pickMode === 'group') {
@@ -3489,7 +3549,7 @@ function showMenu(x, y, items) {
   if (m.parentElement !== host) host.append(m);
   m.replaceChildren(...items.filter(Boolean).map((it) => (it === '-'
     ? el('hr')
-    : el('button', { type: 'button', class: it.danger ? 'danger-text' : '', text: it.label, onclick: () => { hideMenu(); it.run(); } }))));
+    : el('button', { type: 'button', class: it.danger ? 'danger-text' : '', text: it.label, onclick: (e) => { hideMenu(); it.run(e); } }))));
   m.classList.remove('hidden');
   const r = m.getBoundingClientRect();
   m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
@@ -5781,15 +5841,18 @@ async function renderLock() {
   $('sLockOff').classList.toggle('hidden', !st.enabled);
   $('sLockOn').textContent = st.enabled ? 'Change password' : 'Turn on';
   for (const id of ['sLockCur', 'sLockNew', 'sLockNew2']) $(id).value = '';
+  $('sLockHint').value = st.hint || '';
+  $('sLockCur').placeholder = 'Current password (or recovery key)';
 }
 $('sLockOn').addEventListener('click', async () => {
   const pw = $('sLockNew').value;
   if (pw.length < 4) return toast('The password must be at least 4 characters.');
   if (pw !== $('sLockNew2').value) return toast('The two passwords are not the same.');
   try {
-    await invoke('lock_set', { on: true, password: pw, current: $('sLockCur').value || null });
+    const key = await invoke('lock_set', { on: true, password: pw, current: $('sLockCur').value || null, hint: $('sLockHint').value.trim() || null });
     toast('UaN is locked with your password from the next start.');
-    renderLock();
+    await renderLock();
+    if (key) { $('sLockKeyText').textContent = key; $('sLockKey').classList.remove('hidden'); }
   } catch (e) { toast(e); }
 });
 $('sLockOff').addEventListener('click', async () => {
@@ -5797,6 +5860,7 @@ $('sLockOff').addEventListener('click', async () => {
   try {
     await invoke('lock_set', { on: false, password: '', current: $('sLockCur').value });
     toast('The lock is off.');
+    $('sLockKey').classList.add('hidden');
     renderLock();
   } catch (e) { toast(e); }
 });
@@ -6152,3 +6216,9 @@ $('sDlPick').addEventListener('click', async () => {
     S.me = await invoke('state');
   } catch (e) { toast(e); }
 });
+
+$('sLockKeyCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('sLockKeyText').textContent); $('sLockKeyCopy').textContent = 'Copied'; setTimeout(() => { $('sLockKeyCopy').textContent = 'Copy'; }, 2000); } catch { toast('Couldn’t copy: write it down.'); }
+});
+// The recovery key is shown once; it goes away when Settings closes.
+$('settingsDlg').addEventListener('close', () => { $('sLockKey').classList.add('hidden'); $('sLockKeyText').textContent = ''; });
