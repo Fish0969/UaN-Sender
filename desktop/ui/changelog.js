@@ -1,5 +1,12 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.50', items: [
+    'Names in chats show again (1.9.49 showed Someone instead of the sender).',
+    'Media and files: search by name, and filter by who sent it, what kind of file and when; order by date, size or name.',
+    'A folder someone sent shows big previews of its photos and videos (or switch to the list), and you can order it by name, size, type or time.',
+    'Previews of videos are small pictures now, made once and kept: much less memory than before.',
+    'While UaN is hidden in the tray or minimized it gives back memory it doesn’t need.',
+  ] },
   { v: '1.9.49', items: [
     'Change your name in a few seconds: Change name on your own profile card, or right-click your name at the bottom left.',
     'Your friends see your new name everywhere, also on the messages you sent before.',

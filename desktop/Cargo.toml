@@ -1,6 +1,6 @@
 [package]
 name = "uan"
-version = "1.9.49"
+version = "1.9.50"
 description = "Peer-to-peer chat and file sharing"
 edition = "2021"
 
@@ -38,6 +38,11 @@ flate2 = "1"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
+
+# Windows only: lets UaN ask WebView2 to give memory back while the window is hidden.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [features]
 default = ["custom-protocol"]

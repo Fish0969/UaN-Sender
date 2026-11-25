@@ -727,6 +727,29 @@ fn audio_assist_stop(vlc: State<'_, vlc::Vlc>) {
     vlc.assist_stop()
 }
 
+/// While UaN is hidden (tray, minimized) WebView2 is asked to keep as little memory as it can; back to
+/// normal when it shows again. Nothing is drawn while hidden, so it costs nothing.
+#[tauri::command]
+fn mem_saver(window: tauri::WebviewWindow, low: bool) {
+    #[cfg(windows)]
+    {
+        let _ = window.with_webview(move |wv| unsafe {
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+            };
+            use windows_core::Interface;
+            if let Ok(core) = wv.controller().CoreWebView2() {
+                if let Ok(c19) = core.cast::<ICoreWebView2_19>() {
+                    let level = if low { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL };
+                    let _ = c19.SetMemoryUsageTargetLevel(level);
+                }
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = (window, low);
+}
+
 /// The buttons of UaN's own title bar (Windows): minimize, maximize or restore, close, drag, full screen (F11).
 /// Always answers with the window's state.
 #[tauri::command]
@@ -1860,6 +1883,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             state,
+            mem_saver,
             set_name,
             set_profile,
             set_mailbox,

@@ -1847,3 +1847,42 @@ html.phone .call-in { bottom: 80px; }
 .lock-key-row code { font-size: 16px; letter-spacing: .06em; font-weight: 700; user-select: all; -webkit-user-select: all; }
 #sLockHint { flex: 1; }
 #askInput { width: 100%; margin: 4px 0 8px; box-sizing: border-box; }
+
+/* Previews made from the file (photos, a frame of a video) */
+.pv { position: absolute; inset: 0; display: block; }
+.pv img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.pv .g-blank .ext { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, .55); text-transform: uppercase; background: none; width: auto; height: auto; }
+.f-thumb .pv .g-blank svg { display: none; }
+
+/* Gallery: search and filters */
+.g-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.g-filters .f-search { flex: 1 1 200px; margin: 0; height: 32px; }
+.g-filters select, .f-tools select { height: 32px; padding: 0 28px 0 10px; border-radius: 999px; font-size: 13px; width: auto; max-width: 170px; }
+.g-count { font-size: 12px; color: var(--muted); padding: 0 4px; min-height: 15px; }
+.gallery .f-more { grid-column: 1 / -1; width: auto; margin: 8px 0; }
+
+/* Folder someone sent: previews or a list, and the order */
+.f-tools { display: flex; gap: 6px; align-items: center; margin: 10px 0 6px; }
+.f-tools .f-search { flex: 1; margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; flex: none; }
+.seg button { height: 32px; width: 38px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent-soft); color: var(--text); }
+.seg svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+#folderDlg.grid { width: min(940px, calc(100vw - 32px)); }
+.folder-list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; padding: 12px; align-content: start; max-height: min(62vh, 660px); }
+.folder-list.grid .f-more, .folder-list.grid .f-none { grid-column: 1 / -1; width: auto; margin: 4px 0; }
+.f-tile { position: relative; display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; color: var(--text); font-size: 13px; cursor: pointer; min-width: 0; }
+.f-tile .f-thumb { position: relative; width: 100%; height: auto; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; display: grid; place-items: center; background: linear-gradient(135deg, #24262c, #141518); }
+.f-tile .f-thumb .ext { font-size: 15px; }
+.f-tile > input[type=checkbox] { position: absolute; left: 8px; top: 8px; z-index: 2; width: 18px; height: 18px; margin: 0; accent-color: var(--accent); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .6)); }
+.f-tile:has(> input:checked) .f-thumb { outline: 2px solid var(--accent); outline-offset: 1px; }
+.f-tile .f-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 2px 0; }
+.f-tile .f-name .dir { color: var(--muted); font-weight: 400; }
+.f-tile .f-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 2px; }
+.f-tile .f-size { font-size: 12px; color: var(--muted); }
+.f-tile .small { min-width: 0; height: 26px; padding: 0 10px; font-size: 12px; }
+.f-tile .f-state { font-size: 12px; color: var(--muted); }
+.f-tile:hover .f-thumb { box-shadow: var(--print-lift); }
+html.phone .folder-list.grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; padding: 8px; }
+html.phone .f-tools select { max-width: 120px; }

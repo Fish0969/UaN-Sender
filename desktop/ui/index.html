@@ -306,7 +306,18 @@
         <div class="folder-ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></div>
         <div class="grow"><h2 id="folderName" class="ellipsis"></h2><div class="sub" id="folderInfo"></div></div>
       </div>
-      <div class="f-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="folderQ" placeholder="Search in this folder" spellcheck="false" autocomplete="off"></div>
+      <div class="f-tools">
+        <div class="f-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="folderQ" placeholder="Search in this folder" spellcheck="false" autocomplete="off"></div>
+        <select id="folderSort" title="Order">
+          <option value="az">Name A–Z</option><option value="za">Name Z–A</option>
+          <option value="big">Largest first</option><option value="small">Smallest first</option>
+          <option value="type">By type</option><option value="new">Newest first</option><option value="old">Oldest first</option>
+        </select>
+        <div class="seg" id="folderView">
+          <button type="button" data-v="grid" title="Previews"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+          <button type="button" data-v="list" title="List"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
+        </div>
+      </div>
       <label class="f-all" id="folderAllRow"><input type="checkbox" id="folderAll"> <span id="folderAllText">Select all</span></label>
       <div id="folderList" class="folder-list"></div>
       <div class="actions">
@@ -329,6 +340,21 @@
         <button type="button" class="tab active" data-tab="media">Photos &amp; videos</button>
         <button type="button" class="tab" data-tab="files">Files</button>
       </div>
+      <div class="g-filters">
+        <div class="f-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="galQ" placeholder="Search by name" spellcheck="false" autocomplete="off"></div>
+        <select id="galFrom" title="Who sent it"></select>
+        <select id="galKind" title="What kind"></select>
+        <select id="galWhen" title="When">
+          <option value="">Any time</option><option value="1">Today</option><option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option><option value="365">Last year</option><option value="old">Older than a year</option>
+        </select>
+        <select id="galSort" title="Order">
+          <option value="new">Newest first</option><option value="old">Oldest first</option>
+          <option value="big">Largest first</option><option value="small">Smallest first</option>
+          <option value="az">Name A–Z</option><option value="za">Name Z–A</option>
+        </select>
+      </div>
+      <div class="g-count" id="galCount"></div>
       <div id="galleryBody" class="results gallery"></div>
     </form>
   </dialog>

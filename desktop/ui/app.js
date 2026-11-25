@@ -1066,10 +1066,10 @@ function mentionsMe(text) {
 function senderOf(m) {
   const g = groupOf(m.chat);
   const p = (g && g.members.find((x) => x.id === m.sender)) || friendById(m.sender);
-  return { name: nameOf(m), src: p?.avatar, look: p?.look };
+  return { name: nameNow(m), src: p?.avatar, look: p?.look };
 }
 // Someone's name as it is now: when they change it, their old messages show the new one too.
-function nameOf(m) {
+function nameNow(m) {
   if (!m) return '?';
   if (m.mine || m.sender === S.me?.id) return S.me?.name || m.senderName || '?';
   const g = groupOf(m.chat);
@@ -1169,7 +1169,7 @@ function messageNode(m, run = true, block = null) {
   // Seen heads always sit right before the time; the actions are on the outer side.
   const meta = el('div', { class: 'meta' + (edited || pin ? ' keep-fixed' : '') + (seen ? ' keep-seen' : '') }, m.mine ? [del, ...acts, pin, edited, seen, time] : [seen, time, edited, pin, ...acts, del]);
   const theirsInGroup = group && !m.mine;
-  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: nameOf(m), 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
+  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: nameNow(m), 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
     + pingClass(m) + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
@@ -1239,6 +1239,32 @@ let folderOpen = null;
 // the ticks live in a Set instead of in the page, and transfers are looked up in one pass, not once per row.
 const folderCollator = new Intl.Collator(undefined, { numeric: true });
 const FOLDER_PAGE = 150;
+const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+let folderView = lsGet('uan.folderView', 'grid'); // previews (grid) or a list
+let folderSort = lsGet('uan.folderSort', 'az');
+const extOf = (name) => { const leaf = name.split(/[\\/]/).pop(); return leaf.includes('.') ? leaf.split('.').pop().toLowerCase() : ''; };
+function sortFiles(rows, how, fileOf = (x) => x.file, tsOf = (x) => x.ts || 0) {
+  const leaf = (x) => fileOf(x).name;
+  const by = {
+    az: (p, q) => folderCollator.compare(leaf(p), leaf(q)),
+    za: (p, q) => folderCollator.compare(leaf(q), leaf(p)),
+    big: (p, q) => fileOf(q).size - fileOf(p).size,
+    small: (p, q) => fileOf(p).size - fileOf(q).size,
+    type: (p, q) => extOf(leaf(p)).localeCompare(extOf(leaf(q))) || folderCollator.compare(leaf(p), leaf(q)),
+    new: (p, q) => tsOf(q) - tsOf(p),
+    old: (p, q) => tsOf(p) - tsOf(q),
+  }[how] || (() => 0);
+  return [...rows].sort(by);
+}
+// The search words and the order picked: what the folder shows.
+function applyFolderFilter() {
+  const words = fold($('folderQ').value.trim()).split(/\s+/).filter(Boolean);
+  const found = words.length ? folderAllRows.filter((x) => { const n = fold(x.file.name); return words.every((w) => n.includes(w)); }) : folderAllRows;
+  folderRows = sortFiles(found, folderSort);
+  folderShown = Math.min(FOLDER_PAGE, folderRows.length);
+  folderLast = -1;
+}
 let folderRows = [];            // the folder's files shown now (all, or the ones the search finds)
 let folderAllRows = [];         // every file of the folder, sorted (done once when it is opened)
 let folderShown = 0;            // how many rows are drawn
@@ -1260,17 +1286,18 @@ function openFolder(b, sel = null) {
   const mine = b.items[0].mine;
   $('folderName').textContent = b.folder;
   for (const id of ['folderAllRow', 'folderDlSel', 'folderDlAll']) $(id).classList.toggle('hidden', mine);
-  folderAllRows = [...b.items].sort((x, y) => folderCollator.compare(x.file.name, y.file.name));
-  folderRows = folderAllRows;
+  folderAllRows = [...b.items];
   $('folderQ').value = '';
-  folderSizes = new Map(folderRows.map((x) => [x.file.id, x.file.size]));
-  folderTotal = folderRows.reduce((a, x) => a + x.file.size, 0);
+  applyFolderFilter();
+  syncFolderTools();
+  folderSizes = new Map(folderAllRows.map((x) => [x.file.id, x.file.size]));
+  folderTotal = folderAllRows.reduce((a, x) => a + x.file.size, 0);
   if (sel) {
     // Back from a picture or film: the ticks are as you left them.
     folderSel = new Set(sel);
   } else {
     const tm = transferIndex();
-    folderSel = new Set(folderRows.filter((x) => !tm.has(x.file.id)).map((x) => x.file.id));
+    folderSel = new Set(folderAllRows.filter((x) => !tm.has(x.file.id)).map((x) => x.file.id));
   }
   folderShown = Math.min(FOLDER_PAGE, folderRows.length);
   $('folderList').scrollTop = 0;
@@ -1297,11 +1324,13 @@ function folderRow(x, i, tm, mine) {
   const leaf = rel.pop() || f.name;
   const media = IMAGE.test(f.mime) || /^video\//i.test(f.mime);
   const playable = media || PLAYABLE.test(f.mime);
-  const src = x.thumb?.img || (IMAGE.test(f.mime) && f.size <= INLINE_IMAGE_LIMIT ? mediaUrl(f) : null);
   const ext = (leaf.includes('.') ? leaf.split('.').pop() : 'file').slice(0, 4);
+  const grid = folderView === 'grid';
+  const badge = el('span', { class: 'g-dur' });
   const thumb = el(playable ? 'button' : 'span', playable ? { type: 'button', class: 'f-thumb', title: 'Open', onclick: stop(() => openFromFolder(f)) } : { class: 'f-thumb' },
-    src ? el('img', { src, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => e.target.remove() }) : f.mime.startsWith('video/') ? null : el('span', { class: 'ext', text: ext }),
-    /^video\//i.test(f.mime) ? el('span', { class: 'f-play' }, svg(ICON.bigplay)) : null);
+    media ? previewBox(f, x.thumb, badge) : el('span', { class: 'ext', text: ext }),
+    /^video\//i.test(f.mime) ? el('span', { class: grid ? 'g-play' : 'f-play' }, svg(ICON.bigplay)) : null,
+    grid ? badge : null);
   const t = tm.get(f.id);
   let act;
   if (mine) act = playable ? el('button', { type: 'button', class: 'small', text: /^(video|audio)\//i.test(f.mime) ? 'Play' : 'Open', onclick: stop(() => openFromFolder(f)) }) : el('span', { class: 'f-state', text: 'Sent' });
@@ -1328,6 +1357,13 @@ function folderRow(x, i, tm, mine) {
     } });
   box.checked = folderSel.has(f.id);
   if (mine) box.classList.add('hidden');
+  if (grid) {
+    return el('label', { class: 'f-tile' + (mine ? ' mine' : ''), title: `${f.name}\n${fmtBytes(f.size)}` },
+      thumb,
+      box,
+      el('span', { class: 'f-name' }, rel.length ? el('span', { class: 'dir', text: rel.join('/') + '/' }) : null, leaf),
+      el('span', { class: 'f-foot' }, el('span', { class: 'f-size', text: fmtBytes(f.size) }), act));
+  }
   return el('label', { class: 'f-row' + (mine ? ' mine' : ''), title: f.name },
     box,
     thumb,
@@ -1366,7 +1402,7 @@ function renderFolder() {
   const tm = transferIndex();
   const n = folderRows.length;
   const total = folderAllRows.length;
-  $('folderInfo').textContent = `${total} ${total === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${nameOf(b.items[0])}`}`;
+  $('folderInfo').textContent = `${total} ${total === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${nameNow(b.items[0])}`}`;
   if (!n && total) { $('folderList').replaceChildren(el('div', { class: 'f-none', text: 'No file matches that.' })); folderSelInfo(tm); return; }
   const top = $('folderList').scrollTop;
   const rows = [];
@@ -1433,15 +1469,31 @@ $('folderDlAll').addEventListener('click', () => {
   downloadFolder(folderOpen.items.map((x) => x.file.id));
 });
 // Search in the folder: by name (accents and case don't matter); several words must all be in the name.
-$('folderQ').addEventListener('input', () => {
-  const words = fold($('folderQ').value.trim()).split(/\s+/).filter(Boolean);
-  folderRows = words.length ? folderAllRows.filter((x) => { const n = fold(x.file.name); return words.every((w) => n.includes(w)); }) : folderAllRows;
-  folderShown = Math.min(FOLDER_PAGE, folderRows.length);
-  folderLast = -1;
+$('folderQ').addEventListener('input', () => { applyFolderFilter(); $('folderList').scrollTop = 0; renderFolder(); });
+function syncFolderTools() {
+  $('folderSort').value = folderSort;
+  for (const b of $('folderView').querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === folderView);
+  $('folderDlg').classList.toggle('grid', folderView === 'grid');
+  $('folderList').classList.toggle('grid', folderView === 'grid');
+}
+$('folderSort').addEventListener('change', () => {
+  folderSort = $('folderSort').value;
+  lsSet('uan.folderSort', folderSort);
+  applyFolderFilter();
   $('folderList').scrollTop = 0;
   renderFolder();
 });
-$('folderDlg').addEventListener('close', () => { folderOpen = null; folderMore?.disconnect(); clearTimeout(folderTimer); folderTimer = null; });
+for (const b of $('folderView').querySelectorAll('button')) {
+  b.addEventListener('click', () => {
+    folderView = b.dataset.v;
+    lsSet('uan.folderView', folderView);
+    syncFolderTools();
+    $('folderList').scrollTop = 0;
+    renderFolder();
+  });
+}
+// Closing lets go of every picture it showed (less memory).
+$('folderDlg').addEventListener('close', () => { folderOpen = null; folderMore?.disconnect(); clearTimeout(folderTimer); folderTimer = null; $('folderList').replaceChildren(); });
 
 function jumpTo(id) {
   const node = document.querySelector(`#msgs .print[data-id="${CSS.escape(id)}"]`) || msgNode(id);
@@ -1453,8 +1505,8 @@ function jumpTo(id) {
 
 function startReply(m) {
   S.editing = null;
-  S.replyTo = { id: m.id, name: nameOf(m), text: m.text || (m.file ? `File: ${m.file.name}` : '') };
-  $('replyTitle').textContent = `Replying to ${m.mine ? 'yourself' : nameOf(m)}`;
+  S.replyTo = { id: m.id, name: nameNow(m), text: m.text || (m.file ? `File: ${m.file.name}` : '') };
+  $('replyTitle').textContent = `Replying to ${m.mine ? 'yourself' : nameNow(m)}`;
   $('replyText').textContent = S.replyTo.text;
   $('replyBar').classList.remove('hidden');
   $('msgInput').focus();
@@ -1522,7 +1574,7 @@ $('pinsBtn').addEventListener('click', async () => {
   const all = await invoke('messages', { chat: S.active, limit: 20000 });
   const byId = new Map(all.map((m) => [m.id, m]));
   $('pinsList').replaceChildren(...ids.map((id) => byId.get(id)).filter(Boolean).map((m) => el('button', { type: 'button', class: 'pin-item', onclick: () => { $('pinsDlg').close(); jumpTo(m.id); } },
-    el('span', { class: 'sub', text: `${nameOf(m)} · ${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` }),
+    el('span', { class: 'sub', text: `${nameNow(m)} · ${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` }),
     m.text ? el('span', {}, formatText(m.text)) : el('span', { text: m.file ? `File: ${m.file.name}` : '' }))));
   if (!$('pinsList').children.length) $('pinsList').append(el('div', { class: 'note', text: 'Pinned messages that are no longer in this chat are not shown.' }));
   $('pinsDlg').showModal();
@@ -1806,6 +1858,7 @@ function onStage() {
   if (typeof backdrop !== 'undefined' && backdrop?.c) applyTune(backdrop.c);
 }
 document.addEventListener('visibilitychange', onStage);
+document.addEventListener('visibilitychange', () => { invoke('mem_saver', { low: document.hidden }).catch(() => {}); });
 window.addEventListener('blur', onStage);
 window.addEventListener('focus', onStage);
 
@@ -2143,6 +2196,96 @@ async function makeThumb(file) {
     }
   }
   return null;
+}
+
+const PREVIEWS = new Map(); // file id → { img, dur } (null: could not be made this time)
+const previewWaiting = new Map(); // file id → boxes waiting for it
+const previewQueue = [];
+let previewRunning = 0;
+let previewIO = null;
+let previewDb = null;
+function previewStore() {
+  if (previewDb) return previewDb;
+  previewDb = new Promise((res) => {
+    try {
+      const rq = indexedDB.open('uan-previews', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('p');
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+    } catch { res(null); }
+  });
+  return previewDb;
+}
+async function previewLoad(id) {
+  const db = await previewStore();
+  if (!db) return null;
+  return new Promise((res) => {
+    try { const g = db.transaction('p').objectStore('p').get(id); g.onsuccess = () => res(g.result || null); g.onerror = () => res(null); } catch { res(null); }
+  });
+}
+let previewPuts = 0;
+async function previewSave(id, v) {
+  const db = await previewStore();
+  if (!db) return;
+  try {
+    const st = db.transaction('p', 'readwrite').objectStore('p');
+    st.put(v, id);
+    // Kept small: past a few thousand previews the store starts over.
+    if (++previewPuts % 50 === 0) { const c = st.count(); c.onsuccess = () => { if (c.result > 4000) st.clear(); }; }
+  } catch {}
+}
+function fillPreview(box, p) {
+  const img = el('img', { src: p.img, alt: '', decoding: 'async' });
+  box.replaceChildren(img);
+  box.classList.add('has');
+  const badge = box._badge;
+  if (badge && p.dur && !badge.textContent) badge.textContent = fmtTime(p.dur);
+}
+function previewBox(file, thumb, badge) {
+  const box = el('span', { class: 'pv' });
+  box._badge = badge;
+  const isVideo = /^video\//i.test(file.mime);
+  if (thumb?.img) { fillPreview(box, thumb); return box; }
+  const known = PREVIEWS.get(file.id);
+  if (known) { fillPreview(box, known); return box; }
+  box.append(el('span', { class: 'g-blank' }, isVideo ? null : el('span', { class: 'ext', text: (extOf(file.name) || 'img').slice(0, 4) })));
+  if (known === null || !(IMAGE.test(file.mime) || isVideo)) return box;
+  box._file = file;
+  if (typeof IntersectionObserver !== 'function') { wantPreview(box); return box; }
+  previewIO ||= new IntersectionObserver((es) => {
+    for (const e of es) if (e.isIntersecting) { previewIO.unobserve(e.target); wantPreview(e.target); }
+  }, { rootMargin: '250px' });
+  previewIO.observe(box);
+  return box;
+}
+function wantPreview(box) {
+  const f = box._file;
+  if (!f) return;
+  const w = previewWaiting.get(f.id);
+  if (w) { w.push(box); return; }
+  previewWaiting.set(f.id, [box]);
+  previewQueue.push(f);
+  pumpPreviews();
+}
+async function pumpPreviews() {
+  while (previewRunning < 2 && previewQueue.length) {
+    // Newest wish first: what you scrolled to now matters more than what you scrolled past.
+    const f = previewQueue.pop();
+    const boxes = () => (previewWaiting.get(f.id) || []).filter((b) => b.isConnected);
+    if (!boxes().length) { previewWaiting.delete(f.id); continue; }
+    previewRunning++;
+    (async () => {
+      let p = await previewLoad(f.id);
+      if (!p && boxes().length) {
+        try { p = await makeThumb(f); } catch { p = null; }
+        if (p?.img) previewSave(f.id, { img: p.img, dur: p.dur || null });
+      }
+      PREVIEWS.set(f.id, p?.img ? { img: p.img, dur: p.dur || null } : null);
+      if (PREVIEWS.size > 600) PREVIEWS.delete(PREVIEWS.keys().next().value);
+      if (p?.img) for (const b of boxes()) fillPreview(b, p);
+      previewWaiting.delete(f.id);
+    })().finally(() => { previewRunning--; pumpPreviews(); });
+  }
 }
 
 // Previews are made two at a time. (Sending a folder with thousands of files used to start thousands of
@@ -4459,7 +4602,7 @@ const noAutoVlc = new Set(); // parties where you went back from VLC yourself
 let partyFileId = null;
 function partyChatOf(p) { return `g:${p.group}`; }
 function partyLine(m) {
-  return el('div', { class: 'pm-line', 'data-id': m.id }, el('b', { text: m.mine ? 'You' : nameOf(m) }),
+  return el('div', { class: 'pm-line', 'data-id': m.id }, el('b', { text: m.mine ? 'You' : nameNow(m) }),
     m.locked ? 'Locked message' : m.text ? formatText(m.text) : m.file ? `sent ${m.file.name}` : '');
 }
 async function loadPartyChat(p) {
@@ -5619,86 +5762,167 @@ $('subFile').addEventListener('change', async () => {
 
 // ---------- Gallery: every photo, video and file in a chat ----------
 let galleryTab = 'media';
+let galAll = []; // everything of the tab, newest first
+let galRows = []; // what the search and filters leave
+let galShown = 0;
+let galMore = null;
+const GAL_PAGE = 80;
 async function openGallery() {
   if (!S.active) return;
   $('galleryTitle').textContent = `${chatLabel(S.active)} · media and files`;
+  $('galQ').value = '';
+  $('galFrom').value = '';
+  $('galWhen').value = '';
   $('galleryDlg').showModal();
   renderGallery();
 }
 const monthFmt = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' });
+const DOC_EXT = /^(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|txt|md|csv|json|xml|html?|epub|srt|vtt|ass)$/;
+const ARCHIVE_EXT = /^(zip|rar|7z|tar|gz|tgz|bz2|xz|zst|iso|cab)$/;
+const APP_EXT = /^(exe|msi|apk|appx|msix|bat|cmd|ps1|sh|dmg|deb|rpm|appimage|jar)$/;
+const KINDS = {
+  media: [['', 'Photos and videos'], ['image', 'Photos'], ['video', 'Videos'], ['gif', 'GIFs']],
+  files: [['', 'Every kind'], ['doc', 'Documents'], ['audio', 'Music and audio'], ['archive', 'Archives'], ['app', 'Programs'], ['other', 'Other']],
+};
+function kindOf(f) {
+  const ext = extOf(f.name);
+  if (isGif(f.mime)) return 'gif';
+  if (IMAGE.test(f.mime)) return 'image';
+  if (/^video\//i.test(f.mime)) return 'video';
+  if (/^audio\//i.test(f.mime)) return 'audio';
+  if (DOC_EXT.test(ext) || /^text\//i.test(f.mime)) return 'doc';
+  if (ARCHIVE_EXT.test(ext)) return 'archive';
+  if (APP_EXT.test(ext)) return 'app';
+  return 'other';
+}
 async function renderGallery() {
   document.querySelectorAll('.gtabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === galleryTab));
-  const body = $('galleryBody');
   const chat = S.active;
+  const kindNow = $('galKind').value;
+  $('galKind').replaceChildren(...KINDS[galleryTab].map(([v, t]) => el('option', { value: v, text: t })));
+  if (KINDS[galleryTab].some(([v]) => v === kindNow)) $('galKind').value = kindNow;
   if (galleryTab === 'media') {
     const [imgs, vids] = await Promise.all([
       invoke('search', { query: '', kind: 'image', from: '', chat, since: 0 }),
       invoke('search', { query: '', kind: 'video', from: '', chat, since: 0 }),
     ]);
-    const items = [...imgs, ...vids].sort((a, b) => b.ts - a.ts);
-    body.className = 'results gallery grid';
-    if (!items.length) {
-      body.replaceChildren(el('div', { class: 'empty-note', text: 'No photos or videos in this chat yet.' }));
-      return;
-    }
-    const nodes = [];
-    let lastMonth = '';
-    let videoThumbs = 0;
-    for (const m of items) {
-      const month = monthFmt.format(m.ts);
-      if (month !== lastMonth) { nodes.push(el('div', { class: 'g-month', text: month })); lastMonth = month; }
-      const isImg = IMAGE.test(m.file.mime) && m.file.size <= INLINE_IMAGE_LIMIT;
-      const isVideo = /^video\//i.test(m.file.mime);
-      let thumb;
-      const badge = el('span', { class: 'g-dur' });
-      if (m.thumb?.img) {
-        thumb = el('img', { src: m.thumb.img, alt: '', loading: 'lazy' });
-        if (isVideo && m.thumb.dur) badge.textContent = fmtTime(m.thumb.dur);
-      } else if (isImg) {
-        thumb = el('img', { src: mediaUrl(m.file), alt: '', loading: 'lazy' });
-      } else if (isVideo && videoThumbs++ < 24) {
-        // A frame from a fifth of the way in (the first seconds are often a logo or black).
-        thumb = el('video', { src: mediaUrl(m.file), preload: 'metadata', muted: true, tabindex: '-1' });
-        thumb.addEventListener('loadedmetadata', () => {
-          badge.textContent = fmtTime(thumb.duration);
-          if (isFinite(thumb.duration)) thumb.currentTime = Math.min(thumb.duration * 0.2, 900);
-        }, { once: true });
-      } else {
-        thumb = el('span', { class: 'g-blank' }, svg(ICON.bigplay));
-      }
-      const list = items.map((x) => x.file);
-      nodes.push(el('button', {
-        type: 'button',
-        class: 'g-item',
-        title: `${m.file.name}\n${fmtBytes(m.file.size)} · ${m.mine ? 'You' : nameOf(m)} · ${dayFmt.format(m.ts)}`,
-        onclick: () => { $('galleryDlg').close(); openViewer(m.file, { list, chat }); },
-        oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, printMenu(m)); },
-      },
-      el('span', { class: 'g-print' }, thumb, isVideo ? el('span', { class: 'g-play' }, svg(ICON.bigplay)) : null, badge),
-      el('span', { class: 'g-name', text: m.file.name.split(/[\\/]/).pop() }),
-      el('span', { class: 'g-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : nameOf(m)} · ${shortDayFmt.format(m.ts)}` })));
-    }
-    body.replaceChildren(...nodes);
+    galAll = [...imgs, ...vids].sort((a, b) => b.ts - a.ts);
   } else {
     const all = await invoke('search', { query: '', kind: 'files', from: '', chat, since: 0 });
-    const files = all.filter((m) => !IMAGE.test(m.file.mime) && !/^video\//i.test(m.file.mime));
-    body.className = 'results gallery';
-    body.replaceChildren(...(files.length ? files.map((m) => {
-      const ext = (m.file.name.includes('.') ? m.file.name.split('.').pop() : 'file').slice(0, 4);
-      const btn = el('button', { class: 'small', type: 'button', 'data-file': m.file.id });
-      updateFileButton(btn, m.file, m.chat);
-      return el('div', { class: 'result' },
-        el('div', { class: 'ext', text: ext }),
-        el('div', { class: 'grow' },
-          el('div', { class: 'result-text', text: m.file.name }),
-          el('div', { class: 'result-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : nameOf(m)} · ${dayFmt.format(m.ts)}` })),
-        btn);
-    }) : [el('div', { class: 'empty-note', text: 'No files in this chat yet.' })]));
+    galAll = all.filter((m) => !IMAGE.test(m.file.mime) && !/^video\//i.test(m.file.mime)).sort((a, b) => b.ts - a.ts);
   }
+  if (chat !== S.active) return;
+  // Who sent something here: you first, then the others by name.
+  const from = $('galFrom').value;
+  const people = new Map();
+  for (const m of galAll) if (!m.mine && !people.has(m.sender)) people.set(m.sender, nameNow(m));
+  $('galFrom').replaceChildren(
+    el('option', { value: '', text: 'Anyone' }),
+    el('option', { value: 'me', text: 'You' }),
+    ...[...people].sort((p, q) => folderCollator.compare(p[1], q[1])).map(([id, n]) => el('option', { value: id, text: n })));
+  $('galFrom').value = from === 'me' || people.has(from) ? from : '';
+  drawGallery();
+}
+function galFilter() {
+  const words = fold($('galQ').value.trim()).split(/\s+/).filter(Boolean);
+  const from = $('galFrom').value;
+  const kind = $('galKind').value;
+  const when = $('galWhen').value;
+  const now = Date.now();
+  const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+  const since = when === '1' ? day0.getTime() : when && when !== 'old' ? now - Number(when) * 864e5 : 0;
+  const before = when === 'old' ? now - 365 * 864e5 : Infinity;
+  const rows = galAll.filter((m) => {
+    if (from === 'me' ? !m.mine : from && m.sender !== from) return false;
+    if (kind && kindOf(m.file) !== kind) return false;
+    if (m.ts < since || m.ts >= before) return false;
+    if (words.length) { const n = fold(m.file.name); if (!words.every((w) => n.includes(w))) return false; }
+    return true;
+  });
+  return sortFiles(rows, $('galSort').value, (m) => m.file, (m) => m.ts);
+}
+function galItem(m, list) {
+  const chat = m.chat;
+  const who = m.mine ? 'You' : nameNow(m);
+  if (galleryTab === 'media') {
+    const isVideo = /^video\//i.test(m.file.mime);
+    const badge = el('span', { class: 'g-dur' });
+    return el('button', {
+      type: 'button',
+      class: 'g-item',
+      title: `${m.file.name}\n${fmtBytes(m.file.size)} · ${who} · ${dayFmt.format(m.ts)}`,
+      onclick: () => { $('galleryDlg').close(); openViewer(m.file, { list, chat }); },
+      oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, printMenu(m)); },
+    },
+    el('span', { class: 'g-print' }, previewBox(m.file, m.thumb, badge), isVideo ? el('span', { class: 'g-play' }, svg(ICON.bigplay)) : null, badge),
+    el('span', { class: 'g-name', text: m.file.name.split(/[\\/]/).pop() }),
+    el('span', { class: 'g-meta', text: `${fmtBytes(m.file.size)} · ${who} · ${shortDayFmt.format(m.ts)}` }));
+  }
+  const ext = (m.file.name.includes('.') ? m.file.name.split('.').pop() : 'file').slice(0, 4);
+  const btn = el('button', { class: 'small', type: 'button', 'data-file': m.file.id });
+  updateFileButton(btn, m.file, m.chat);
+  return el('div', { class: 'result', oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, printMenu(m)); } },
+    el('div', { class: 'ext', text: ext }),
+    el('div', { class: 'grow' },
+      el('div', { class: 'result-text', text: m.file.name }),
+      el('div', { class: 'result-meta', text: `${fmtBytes(m.file.size)} · ${who} · ${dayFmt.format(m.ts)}` })),
+    btn);
+}
+function drawGallery() {
+  const body = $('galleryBody');
+  galRows = galFilter();
+  galShown = 0;
+  galMore?.disconnect();
+  body.className = galleryTab === 'media' ? 'results gallery grid' : 'results gallery';
+  body.scrollTop = 0;
+  const total = galAll.length;
+  const n = galRows.length;
+  const size = galRows.reduce((s, m) => s + m.file.size, 0);
+  $('galCount').textContent = total ? (n === total ? `${n} ${n === 1 ? 'item' : 'items'} · ${fmtBytes(size)}` : `${n} of ${total} · ${fmtBytes(size)}`) : '';
+  if (!total) {
+    body.replaceChildren(el('div', { class: 'empty-note', text: galleryTab === 'media' ? 'No photos or videos in this chat yet.' : 'No files in this chat yet.' }));
+    return;
+  }
+  if (!n) { body.replaceChildren(el('div', { class: 'empty-note', text: 'Nothing matches that.' })); return; }
+  body.replaceChildren();
+  moreGallery();
+}
+function moreGallery() {
+  const body = $('galleryBody');
+  body.querySelector('.f-more')?.remove();
+  const list = galleryTab === 'media' ? galRows.map((x) => x.file) : null;
+  const byTime = ['new', 'old'].includes($('galSort').value);
+  const end = Math.min(galRows.length, galShown + GAL_PAGE);
+  const nodes = [];
+  let lastMonth = galShown ? monthFmt.format(galRows[galShown - 1].ts) : '';
+  for (let i = galShown; i < end; i++) {
+    const m = galRows[i];
+    if (byTime && galleryTab === 'media') {
+      const month = monthFmt.format(m.ts);
+      if (month !== lastMonth) { nodes.push(el('div', { class: 'g-month', text: month })); lastMonth = month; }
+    }
+    nodes.push(galItem(m, list));
+  }
+  galShown = end;
+  if (galShown < galRows.length) {
+    const left = galRows.length - galShown;
+    const btn = el('button', { type: 'button', class: 'f-more', text: `Show more (${left})`, onclick: moreGallery });
+    nodes.push(btn);
+    galMore?.disconnect();
+    if (typeof IntersectionObserver === 'function') {
+      galMore = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) moreGallery(); }, { root: body, rootMargin: '300px' });
+      galMore.observe(btn);
+    }
+  }
+  body.append(...nodes);
 }
 document.querySelectorAll('.gtabs .tab').forEach((t) => t.addEventListener('click', () => { galleryTab = t.dataset.tab; renderGallery(); }));
+$('galQ').addEventListener('input', drawGallery);
+for (const id of ['galFrom', 'galKind', 'galWhen', 'galSort']) $(id).addEventListener('change', drawGallery);
 $('galleryBtn').addEventListener('click', openGallery);
 $('galleryClose').addEventListener('click', () => $('galleryDlg').close());
+// Closing lets go of every picture it showed (less memory).
+$('galleryDlg').addEventListener('close', () => { galMore?.disconnect(); $('galleryBody').replaceChildren(); galAll = []; galRows = []; });
 
 boot();
 
