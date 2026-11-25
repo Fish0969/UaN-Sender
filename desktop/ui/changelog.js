@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.49', items: [
+    'Change your name in a few seconds: Change name on your own profile card, or right-click your name at the bottom left.',
+    'Your friends see your new name everywhere, also on the messages you sent before.',
+  ] },
   { v: '1.9.48', items: [
     'Locked channels open again after you type their password (since 1.9.39 they sent you back to the start).',
     'A folder someone sent you: search in it by name, and Select all ticks only what the search found.',

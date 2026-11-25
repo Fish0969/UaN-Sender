@@ -452,6 +452,7 @@ function renderMe() {
   $('meAvatar').title = MODE_NAMES[S.me.mode] || 'Online';
   $('meAvatar').onclick = modeMenu;
   $('meName').onclick = () => openProfile(S.me.id);
+  $('meName').oncontextmenu = (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, [{ label: 'Change your name…', run: () => changeMyName() }, { label: 'See your profile', run: () => openProfile(S.me.id) }]); };
   $('meName').title = 'See your profile as others see it';
   $('meStatus').textContent = S.me.profile?.status || '';
   $('meProfile').classList.toggle('hidden', !S.me.profileName);
@@ -1065,7 +1066,16 @@ function mentionsMe(text) {
 function senderOf(m) {
   const g = groupOf(m.chat);
   const p = (g && g.members.find((x) => x.id === m.sender)) || friendById(m.sender);
-  return { name: m.senderName || p?.name || '?', src: p?.avatar, look: p?.look };
+  return { name: nameOf(m), src: p?.avatar, look: p?.look };
+}
+// Someone's name as it is now: when they change it, their old messages show the new one too.
+function nameOf(m) {
+  if (!m) return '?';
+  if (m.mine || m.sender === S.me?.id) return S.me?.name || m.senderName || '?';
+  const g = groupOf(m.chat);
+  const p = (g && g.members.find((x) => x.id === m.sender)) || friendById(m.sender);
+  const now = p?.name && p.name !== 'Pending…' ? p.name : '';
+  return now || m.senderName || '?';
 }
 // ---------- Reactions: one emoji per person per message ----------
 S.reacts = new Map(); // message id -> Map(person id -> emoji)
@@ -1159,7 +1169,7 @@ function messageNode(m, run = true, block = null) {
   // Seen heads always sit right before the time; the actions are on the outer side.
   const meta = el('div', { class: 'meta' + (edited || pin ? ' keep-fixed' : '') + (seen ? ' keep-seen' : '') }, m.mine ? [del, ...acts, pin, edited, seen, time] : [seen, time, edited, pin, ...acts, del]);
   const theirsInGroup = group && !m.mine;
-  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: m.senderName, 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
+  const body = [theirsInGroup && run ? el('div', { class: 'sender', text: nameOf(m), 'data-uid': m.sender, style: lookColour(senderOf(m).look) ? 'color:' + lookColour(senderOf(m).look) : null }) : null, quote, content, bubble, block ? null : reactsNode(m), meta];
   const cls = 'msg ' + (m.mine ? 'mine' : 'theirs') + (theirsInGroup ? ' g' : '') + (run ? ' run' : '')
     + pingClass(m) + (block ? ` block-${block.kind}` : '');
   const attrs = { class: cls, 'data-id': m.id, 'data-ids': items.map((x) => x.id).join(' ') };
@@ -1356,7 +1366,7 @@ function renderFolder() {
   const tm = transferIndex();
   const n = folderRows.length;
   const total = folderAllRows.length;
-  $('folderInfo').textContent = `${total} ${total === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${b.items[0].senderName}`}`;
+  $('folderInfo').textContent = `${total} ${total === 1 ? 'file' : 'files'} · ${fmtBytes(folderTotal)} · ${mine ? 'you sent this folder' : `from ${nameOf(b.items[0])}`}`;
   if (!n && total) { $('folderList').replaceChildren(el('div', { class: 'f-none', text: 'No file matches that.' })); folderSelInfo(tm); return; }
   const top = $('folderList').scrollTop;
   const rows = [];
@@ -1443,8 +1453,8 @@ function jumpTo(id) {
 
 function startReply(m) {
   S.editing = null;
-  S.replyTo = { id: m.id, name: m.senderName, text: m.text || (m.file ? `File: ${m.file.name}` : '') };
-  $('replyTitle').textContent = `Replying to ${m.mine ? 'yourself' : m.senderName}`;
+  S.replyTo = { id: m.id, name: nameOf(m), text: m.text || (m.file ? `File: ${m.file.name}` : '') };
+  $('replyTitle').textContent = `Replying to ${m.mine ? 'yourself' : nameOf(m)}`;
   $('replyText').textContent = S.replyTo.text;
   $('replyBar').classList.remove('hidden');
   $('msgInput').focus();
@@ -1512,7 +1522,7 @@ $('pinsBtn').addEventListener('click', async () => {
   const all = await invoke('messages', { chat: S.active, limit: 20000 });
   const byId = new Map(all.map((m) => [m.id, m]));
   $('pinsList').replaceChildren(...ids.map((id) => byId.get(id)).filter(Boolean).map((m) => el('button', { type: 'button', class: 'pin-item', onclick: () => { $('pinsDlg').close(); jumpTo(m.id); } },
-    el('span', { class: 'sub', text: `${m.senderName} · ${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` }),
+    el('span', { class: 'sub', text: `${nameOf(m)} · ${dayFmt.format(m.ts)} ${timeFmt.format(m.ts)}` }),
     m.text ? el('span', {}, formatText(m.text)) : el('span', { text: m.file ? `File: ${m.file.name}` : '' }))));
   if (!$('pinsList').children.length) $('pinsList').append(el('div', { class: 'note', text: 'Pinned messages that are no longer in this chat are not shown.' }));
   $('pinsDlg').showModal();
@@ -1650,7 +1660,8 @@ function openProfile(id) {
   if (p.joined) facts.push(['Join date', joinFmt.format(p.joined)]);
   $('pfFacts').replaceChildren(...facts.flatMap(([k, v]) => [el('span', { class: 'k', text: k }), el('span', { text: v })]));
   $('pfActions').replaceChildren(
-    ...(p.me ? [el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })] : []));
+    ...(p.me ? [el('button', { type: 'button', class: 'small', text: 'Change name', onclick: async () => { if (await changeMyName()) openProfile(S.me.id); } }),
+      el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })] : []));
   $('profileDlg').showModal();
 }
 document.addEventListener('click', (e) => {
@@ -4448,7 +4459,7 @@ const noAutoVlc = new Set(); // parties where you went back from VLC yourself
 let partyFileId = null;
 function partyChatOf(p) { return `g:${p.group}`; }
 function partyLine(m) {
-  return el('div', { class: 'pm-line', 'data-id': m.id }, el('b', { text: m.mine ? 'You' : m.senderName }),
+  return el('div', { class: 'pm-line', 'data-id': m.id }, el('b', { text: m.mine ? 'You' : nameOf(m) }),
     m.locked ? 'Locked message' : m.text ? formatText(m.text) : m.file ? `sent ${m.file.name}` : '');
 }
 async function loadPartyChat(p) {
@@ -5659,13 +5670,13 @@ async function renderGallery() {
       nodes.push(el('button', {
         type: 'button',
         class: 'g-item',
-        title: `${m.file.name}\n${fmtBytes(m.file.size)} · ${m.mine ? 'You' : m.senderName} · ${dayFmt.format(m.ts)}`,
+        title: `${m.file.name}\n${fmtBytes(m.file.size)} · ${m.mine ? 'You' : nameOf(m)} · ${dayFmt.format(m.ts)}`,
         onclick: () => { $('galleryDlg').close(); openViewer(m.file, { list, chat }); },
         oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, printMenu(m)); },
       },
       el('span', { class: 'g-print' }, thumb, isVideo ? el('span', { class: 'g-play' }, svg(ICON.bigplay)) : null, badge),
       el('span', { class: 'g-name', text: m.file.name.split(/[\\/]/).pop() }),
-      el('span', { class: 'g-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : m.senderName} · ${shortDayFmt.format(m.ts)}` })));
+      el('span', { class: 'g-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : nameOf(m)} · ${shortDayFmt.format(m.ts)}` })));
     }
     body.replaceChildren(...nodes);
   } else {
@@ -5680,7 +5691,7 @@ async function renderGallery() {
         el('div', { class: 'ext', text: ext }),
         el('div', { class: 'grow' },
           el('div', { class: 'result-text', text: m.file.name }),
-          el('div', { class: 'result-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : m.senderName} · ${dayFmt.format(m.ts)}` })),
+          el('div', { class: 'result-meta', text: `${fmtBytes(m.file.size)} · ${m.mine ? 'You' : nameOf(m)} · ${dayFmt.format(m.ts)}` })),
         btn);
     }) : [el('div', { class: 'empty-note', text: 'No files in this chat yet.' })]));
   }
@@ -6222,3 +6233,19 @@ $('sLockKeyCopy').addEventListener('click', async () => {
 });
 // The recovery key is shown once; it goes away when Settings closes.
 $('settingsDlg').addEventListener('close', () => { $('sLockKey').classList.add('hidden'); $('sLockKeyText').textContent = ''; });
+
+// Your name: friends and groups get the new one the next time they hear from you (at once if they are online).
+async function changeMyName() {
+  const name = await askText('Your new name (friends and groups see it, also on your earlier messages)', S.me.name, 'Change');
+  if (name === null || name === S.me.name) return false;
+  if (!name) { toast('Your name can’t be empty.'); return false; }
+  if (name.length > 32) { toast('32 characters at most.'); return false; }
+  try {
+    await invoke('set_profile', { name, status: S.me.profile?.status || '', avatar: null, bio: S.me.profile?.bio || '', banner: null, bioimg: null, look: null });
+    S.me = await invoke('state');
+    renderMe();
+    if (S.active) { renderChatHead(); renderMessages(true); }
+    toast('You are ' + S.me.name + ' now.');
+    return true;
+  } catch (e) { toast(e); return false; }
+}
