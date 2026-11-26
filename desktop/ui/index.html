@@ -768,6 +768,20 @@
       <div id="queueList" class="pins-list"></div>
     </form>
   </dialog>
+  <!-- After installing or updating: no UaN shortcut on the desktop -->
+  <dialog id="shortcutDlg">
+    <form method="dialog">
+      <h2>Desktop shortcut</h2>
+      <p class="note">There is no UaN shortcut on your desktop. With one you can open UaN quickly.</p>
+      <label class="check"><input type="checkbox" id="scMake" checked> Put a UaN shortcut on the desktop</label>
+      <label class="check hidden" id="scNeverRow"><input type="checkbox" id="scNever"> Don’t ask again</label>
+      <div class="actions">
+        <span class="grow"></span>
+        <button value="ok" class="accent" id="scOk">OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="askDlg">
     <form method="dialog">
       <p id="askText"></p>

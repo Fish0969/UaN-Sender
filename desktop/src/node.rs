@@ -1627,6 +1627,15 @@ impl Node {
         let _ = self.db.lock().unwrap().execute("INSERT OR REPLACE INTO kv (k, v) VALUES (?1, ?2)", [k, v]);
     }
 
+    /// Small choices of the PC program itself (e.g. the desktop shortcut question).
+    pub fn app_setting(&self, k: &str) -> Option<String> {
+        self.kv(&format!("app_{k}"))
+    }
+
+    pub fn set_app_setting(&self, k: &str, v: &str) {
+        self.set_kv(&format!("app_{k}"), v);
+    }
+
     pub fn my_profile(&self) -> Value {
         json!({ "status": self.kv("status").unwrap_or_default(), "avatar": self.kv("avatar"), "pv": self.my_pv(), "bio": self.kv("bio").unwrap_or_default(), "banner": self.kv("banner"), "look": self.kv("look").unwrap_or_default(), "bioimgV": self.kv("bioimg_v").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0), "joined": self.kv("joined").and_then(|j| j.parse::<i64>().ok()) })
     }
@@ -3147,6 +3156,14 @@ impl Node {
                     Some("it isn't from the host")
                 } else if !party.members.iter().any(|m| m.id == self.me_s) {
                     Some("you aren't invited")
+                } else if party.group.is_empty() {
+                    if self.friend_name(peer).is_none() {
+                        Some("the host isn't your friend")
+                    } else if party.members.iter().any(|m| m.id != self.me_s && m.id != peer) {
+                        Some("a private watch party is for the two of you only")
+                    } else {
+                        None
+                    }
                 } else if !self.is_member(&party.group, &self.me_s) {
                     Some("you aren't in that group on this PC")
                 } else if !self.is_member(&party.group, peer) {
@@ -3180,7 +3197,7 @@ impl Node {
                             self.stop_stream(f);
                         }
                         let full = self.full_parties.lock().unwrap().contains(&party.id);
-                        let chat = format!("g:{}", party.group);
+                        let chat = self.party_chat(&party);
                         if full {
                             let _ = self.download_into(party.file.clone(), chat, true);
                         } else {
@@ -3192,7 +3209,8 @@ impl Node {
                 let _ = self.app.emit("party", &party);
                 if is_new && party.state != "ended" {
                     let from = party.members.iter().find(|m| m.id == peer).map(|m| m.name.clone()).unwrap_or_default();
-                    self.notify(&format!("{} · {}", from, self.group_name(&party.group)), &format!("Invited you to watch {} together", party.file.name));
+                    let title = if party.group.is_empty() { from } else { format!("{} · {}", from, self.group_name(&party.group)) };
+                    self.notify(&title, &format!("Invited you to watch {} together", party.file.name));
                 }
                 Ok(ok)
             }
@@ -5733,7 +5751,7 @@ impl Node {
         };
         // The host loads the next film too.
         let full = self.full_parties.lock().unwrap().contains(id);
-        let chat = format!("g:{}", updated.group);
+        let chat = self.party_chat(&updated);
         if full {
             let _ = self.download_into(updated.file.clone(), chat, true);
         } else {
@@ -5744,13 +5762,29 @@ impl Node {
         Ok(())
     }
 
+    /// The chat a watch party belongs to: its group, or (no group) the private chat with the other person.
+    fn party_chat(&self, p: &Party) -> String {
+        if p.group.is_empty() {
+            p.members.iter().find(|m| m.id != self.me_s).map(|m| m.id.clone()).unwrap_or_else(|| p.leader.clone())
+        } else {
+            format!("g:{}", p.group)
+        }
+    }
+
+    /// `group` empty: a watch party of two in a private chat (`invite` is that friend).
     pub fn create_party(self: &Arc<Self>, group: &str, file: FileMeta, invite: Vec<String>, seeder: String) -> Result<String, String> {
-        let g = self.load_group(group).ok_or("That group no longer exists.")?;
         let (have, ready) = self.buffer_state(&file);
         let mut members = vec![PartyMember { id: self.me_s.clone(), name: self.my_name(), have, joined: true, left: false, ready, buffering: false, full: false, reached: true, note: String::new() }];
-        for id in invite {
-            if let Some(m) = g.members.iter().find(|m| m.id == id && m.id != self.me_s) {
-                members.push(PartyMember { id: m.id.clone(), name: m.name.clone(), have: 0, joined: false, left: false, ready: false, buffering: false, full: false, reached: false, note: String::new() });
+        if group.is_empty() {
+            let friend = invite.first().cloned().unwrap_or_default();
+            let name = self.friend_name(&friend).ok_or("You can watch together only with a friend.")?;
+            members.push(PartyMember { id: friend, name, have: 0, joined: false, left: false, ready: false, buffering: false, full: false, reached: false, note: String::new() });
+        } else {
+            let g = self.load_group(group).ok_or("That group no longer exists.")?;
+            for id in invite {
+                if let Some(m) = g.members.iter().find(|m| m.id == id && m.id != self.me_s) {
+                    members.push(PartyMember { id: m.id.clone(), name: m.name.clone(), have: 0, joined: false, left: false, ready: false, buffering: false, full: false, reached: false, note: String::new() });
+                }
             }
         }
         if members.len() < 2 {
@@ -5779,10 +5813,10 @@ impl Node {
         let party = self.parties.lock().unwrap().get(id).cloned().ok_or("That watch party has ended.")?;
         if full {
             self.full_parties.lock().unwrap().insert(id.to_string());
-            self.download_into(party.file.clone(), format!("g:{}", party.group), true)?;
+            self.download_into(party.file.clone(), self.party_chat(&party), true)?;
         } else {
             // Stream it: pieces around the playhead are fetched ahead of time (no download needed).
-            self.start_stream(party.file.clone(), format!("g:{}", party.group))?;
+            self.start_stream(party.file.clone(), self.party_chat(&party))?;
         }
         self.party_report(id, Some(true), false);
         let me = self.clone();
@@ -5804,7 +5838,7 @@ impl Node {
     /// or just stream it around the playhead (nothing is kept). The party waits until you are ready.
     pub fn party_full(self: &Arc<Self>, id: &str, full: bool) -> Result<(), String> {
         let party = self.parties.lock().unwrap().get(id).cloned().ok_or("That watch party has ended.")?;
-        let chat = format!("g:{}", party.group);
+        let chat = self.party_chat(&party);
         let have_it = party.file.owner == self.me_s || self.local_copy(&party.file).is_some();
         if full {
             self.full_parties.lock().unwrap().insert(id.to_string());

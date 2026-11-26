@@ -329,7 +329,8 @@ video::cue { font-size: 1.1em; background: rgba(0, 0, 0, .75); }
 .viewer-body .player video, .player video {
   position: absolute; inset: 0; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; background: #000;
 }
-.player:fullscreen { inset: 0; border-radius: 0; }
+.player:fullscreen { position: fixed; inset: 0; width: 100%; height: 100%; border-radius: 0; }
+.player.fs-on { position: fixed; inset: 0; z-index: 9000; border-radius: 0; }
 .pl-bar {
   position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 6px;
   padding: 18px 10px 8px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, .75));
@@ -1886,3 +1887,7 @@ html.phone .call-in { bottom: 80px; }
 .f-tile:hover .f-thumb { box-shadow: var(--print-lift); }
 html.phone .folder-list.grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; padding: 8px; }
 html.phone .f-tools select { max-width: 120px; }
+
+#shortcutDlg { width: min(420px, calc(100vw - 32px)); }
+#shortcutDlg .check { margin: 8px 0; }
+#shortcutDlg .check.hidden { display: none; }

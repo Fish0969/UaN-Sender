@@ -750,6 +750,39 @@ fn mem_saver(window: tauri::WebviewWindow, low: bool) {
     let _ = (window, low);
 }
 
+/// A film in full screen: the window goes full screen first (from a small window it is maximized on the way,
+/// so it really covers the whole screen), and comes back to how it was afterwards.
+#[cfg(desktop)]
+static WAS_MAXIMIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+#[tauri::command]
+fn player_window_fs(window: tauri::WebviewWindow, on: bool) -> CmdResult<Value> {
+    #[cfg(desktop)]
+    {
+        use std::sync::atomic::Ordering;
+        let e = |x: tauri::Error| x.to_string();
+        let full = window.is_fullscreen().unwrap_or(false);
+        if on && !full {
+            let max = window.is_maximized().unwrap_or(false);
+            WAS_MAXIMIZED.store(max, Ordering::SeqCst);
+            if !max {
+                window.maximize().map_err(e)?;
+            }
+            window.set_fullscreen(true).map_err(e)?;
+        } else if !on && full {
+            window.set_fullscreen(false).map_err(e)?;
+            if !WAS_MAXIMIZED.swap(true, Ordering::SeqCst) {
+                window.unmaximize().map_err(e)?;
+            }
+        }
+        Ok(json!({ "maximized": window.is_maximized().unwrap_or(false), "fullscreen": window.is_fullscreen().unwrap_or(false) }))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (window, on);
+        Ok(json!({}))
+    }
+}
+
 /// The buttons of UaN's own title bar (Windows): minimize, maximize or restore, close, drag, full screen (F11).
 /// Always answers with the window's state.
 #[tauri::command]
@@ -860,6 +893,97 @@ fn set_app_icon(app: AppHandle, profile: State<'_, Profile>, rgba: Option<String
     if profile.name.is_none() {
         set_shortcut_icons(ico.exists().then_some(ico.as_path()));
     }
+    Ok(())
+}
+
+/// Is there a shortcut to this UaN on the desktop (yours or the shared one)?
+#[cfg(windows)]
+fn has_desktop_shortcut() -> bool {
+    use std::os::windows::process::CommandExt;
+    let Ok(exe) = std::env::current_exe() else { return true };
+    let q = exe.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        "$sh = New-Object -ComObject WScript.Shell; $n = 0; \
+         foreach ($d in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'))) {{ \
+           Get-ChildItem -LiteralPath $d -Filter *.lnk -ErrorAction SilentlyContinue | ForEach-Object {{ \
+             if ($sh.CreateShortcut($_.FullName).TargetPath -ieq '{q}') {{ $n++ }} }} }}; $n"
+    );
+    match std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output()
+    {
+        // Can't tell: better not to ask.
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().map(|n| n > 0).unwrap_or(true),
+        Err(_) => true,
+    }
+}
+
+/// Puts a "UaN" shortcut on your desktop (with your own app icon, if you picked one).
+#[cfg(windows)]
+fn make_desktop_shortcut(ico: Option<PathBuf>) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let q = |p: &std::path::Path| p.to_string_lossy().replace('\'', "''");
+    let dir = exe.parent().map(q).unwrap_or_default();
+    let icon = ico.as_deref().map(q).unwrap_or_else(|| q(&exe));
+    let script = format!(
+        "$sh = New-Object -ComObject WScript.Shell; \
+         $l = $sh.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'UaN.lnk')); \
+         $l.TargetPath = '{exe}'; $l.WorkingDirectory = '{dir}'; $l.IconLocation = '{icon},0'; $l.Description = 'UaN'; $l.Save()",
+        exe = q(&exe),
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err("Couldn't make the shortcut.".into())
+    }
+}
+
+/// After installing or updating: ask about a desktop shortcut if there is none (once per version, and never
+/// again when you said so).
+#[tauri::command]
+async fn shortcut_ask(node: State<'_, Arc<Node>>, profile: State<'_, Profile>) -> CmdResult<bool> {
+    #[cfg(windows)]
+    {
+        if profile.name.is_some() || invisible() {
+            return Ok(false);
+        }
+        let ver = env!("CARGO_PKG_VERSION");
+        if node.app_setting("shortcut_never").as_deref() == Some("1") || node.app_setting("shortcut_seen").as_deref() == Some(ver) {
+            return Ok(false);
+        }
+        let has = tauri::async_runtime::spawn_blocking(has_desktop_shortcut).await.unwrap_or(true);
+        if has {
+            node.set_app_setting("shortcut_seen", ver);
+        }
+        Ok(!has)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (node, profile);
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+async fn shortcut_answer(node: State<'_, Arc<Node>>, profile: State<'_, Profile>, create: bool, never: bool) -> CmdResult<()> {
+    node.set_app_setting("shortcut_seen", env!("CARGO_PKG_VERSION"));
+    if never {
+        node.set_app_setting("shortcut_never", "1");
+    }
+    #[cfg(windows)]
+    if create {
+        let ico = profile.dir.join("appicon.ico");
+        let ico = ico.exists().then_some(ico);
+        return tauri::async_runtime::spawn_blocking(move || make_desktop_shortcut(ico)).await.map_err(|e| e.to_string())?;
+    }
+    let _ = (profile, create);
     Ok(())
 }
 
@@ -1884,6 +2008,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             state,
             mem_saver,
+            shortcut_ask,
+            shortcut_answer,
+            player_window_fs,
             set_name,
             set_profile,
             set_mailbox,

@@ -1,5 +1,12 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.51', items: [
+    'Watch together in a private chat too: just the two of you, in sync.',
+    'Right-click menus (people, groups, messages), reactions, emojis and mini profiles show up where you click again when the interface is zoomed in or out.',
+    'A film in full screen from a small window: the window fills the whole screen first, so the bar at the bottom (seek, volume) is there.',
+    'After installing or updating, UaN offers to put a shortcut on the desktop if there is none (with Don’t ask again).',
+    'Your profile card no longer has the Change name button (right-click your name or use Settings → Profile).',
+  ] },
   { v: '1.9.50', items: [
     'Names in chats show again (1.9.49 showed Someone instead of the sender).',
     'Media and files: search by name, and filter by who sent it, what kind of file and when; order by date, size or name.',

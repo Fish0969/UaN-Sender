@@ -169,6 +169,9 @@ function mediaUrl(file) {
   return `${base}/${file.owner}${file.dev ? `~${file.dev}` : ''}/${file.id}/${file.size}/${encodeURIComponent(file.mime)}`;
 }
 
+// Screen pixels → CSS pixels for things placed by hand (the interface zoom scales everything).
+const zpx = (v) => `${v / (typeof uiZoom === 'number' && uiZoom > 0 ? uiZoom : 1)}px`;
+
 // Feels like an app, not a web page.
 document.addEventListener('contextmenu', (e) => {
   if (!e.target.closest('input, .bubble, .code-box')) e.preventDefault();
@@ -274,7 +277,34 @@ async function enterMain() {
   renderInviteBar();
   checkUpdate();
   setInterval(checkUpdate, 6 * 3600 * 1000);
+  setTimeout(askShortcut, 2500);
 }
+
+// ---------- A desktop shortcut (asked after installing or updating, when there is none) ----------
+async function askShortcut() {
+  // Not on top of something else you are doing: next time then.
+  if (document.querySelector('dialog[open]') || !$('viewer').classList.contains('hidden')) return;
+  if (!(await invoke('shortcut_ask').catch(() => false))) return;
+  if (document.querySelector('dialog[open]')) return;
+  $('scMake').checked = true;
+  $('scNever').checked = false;
+  $('scNeverRow').classList.add('hidden');
+  $('shortcutDlg').returnValue = '';
+  $('shortcutDlg').showModal();
+}
+$('scMake').addEventListener('change', () => {
+  $('scNeverRow').classList.toggle('hidden', $('scMake').checked);
+  if ($('scMake').checked) $('scNever').checked = false;
+});
+$('shortcutDlg').addEventListener('close', async () => {
+  // Closed without OK (Esc, clicking outside): asked again after the next update.
+  if ($('shortcutDlg').returnValue !== 'ok') return;
+  const create = $('scMake').checked;
+  try {
+    await invoke('shortcut_answer', { create, never: !create && $('scNever').checked });
+    if (create) toast('The UaN shortcut is on your desktop.');
+  } catch (e) { toast(e); }
+});
 
 // ---------- Updates: one click replaces the installed version ----------
 let lastUpdate = null;
@@ -1113,8 +1143,8 @@ function reactPicker(btn, m) {
   document.body.append(pop);
   const r = btn.getBoundingClientRect();
   const w = pop.getBoundingClientRect().width;
-  pop.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2)) + 'px';
-  pop.style.top = Math.max(6, r.top - 46) + 'px';
+  pop.style.left = zpx(Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2)));
+  pop.style.top = zpx(Math.max(6, r.top - 46 * (uiZoom || 1)));
   const close = (e) => { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('pointerdown', close, true); } };
   setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
 }
@@ -1210,7 +1240,7 @@ function printMenu(m) {
     m.file.owner !== S.me.id ? (t?.status === 'done'
       ? { label: 'Open the downloaded file', run: () => invoke('transfer_action', { id: t.id, action: 'open' }).catch(toast) }
       : { label: 'Download', run: () => startDownload(m.file, m.chat) }) : null,
-    isGroup(m.chat) && /^video\//i.test(m.file.mime) ? { label: 'Watch together', run: () => openPartySetup(m.file, groupIdOf(m.chat)) } : null,
+    canWatchTogether(m.chat) && /^video\//i.test(m.file.mime) ? { label: 'Watch together', run: () => watchTogether(m.file, m.chat) } : null,
     themeable(m.file) ? { label: 'Use as theme', run: () => useAsTheme(m.file) } : null,
     '-',
     { label: 'Reply', run: () => startReply(m) },
@@ -1712,8 +1742,7 @@ function openProfile(id) {
   if (p.joined) facts.push(['Join date', joinFmt.format(p.joined)]);
   $('pfFacts').replaceChildren(...facts.flatMap(([k, v]) => [el('span', { class: 'k', text: k }), el('span', { text: v })]));
   $('pfActions').replaceChildren(
-    ...(p.me ? [el('button', { type: 'button', class: 'small', text: 'Change name', onclick: async () => { if (await changeMyName()) openProfile(S.me.id); } }),
-      el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })] : []));
+    ...(p.me ? [el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })] : []));
   $('profileDlg').showModal();
 }
 document.addEventListener('click', (e) => {
@@ -2057,8 +2086,8 @@ function fileCard(file, chat, thumb) {
   const ext = (file.name.includes('.') ? file.name.split('.').pop() : 'file').slice(0, 4);
   const btn = el('button', { class: 'small', type: 'button', 'data-file': file.id });
   updateFileButton(btn, file, chat);
-  const together = isGroup(chat) && /^video\//i.test(file.mime)
-    ? el('button', { class: 'watch', type: 'button', title: 'Watch this with others in the group, in sync', onclick: () => openPartySetup(file, groupIdOf(chat)) }, svg(ICON.bigplay), 'Watch together')
+  const together = canWatchTogether(chat) && /^video\//i.test(file.mime)
+    ? el('button', { class: 'watch', type: 'button', title: isGroup(chat) ? 'Watch this with others in the group, in sync' : 'Watch this together, in sync', onclick: () => watchTogether(file, chat) }, svg(ICON.bigplay), 'Watch together')
     : null;
   return el('div', { class: 'file' },
     preview,
@@ -2774,8 +2803,8 @@ $('emojiBtn').addEventListener('click', (e) => {
   } })));
   document.body.append(pop);
   const r = $('emojiBtn').getBoundingClientRect();
-  pop.style.left = Math.max(6, Math.min(innerWidth - 322, r.left)) + 'px';
-  pop.style.top = Math.max(6, r.top - pop.getBoundingClientRect().height - 8) + 'px';
+  pop.style.left = zpx(Math.max(6, Math.min(innerWidth - pop.getBoundingClientRect().width - 6, r.left)));
+  pop.style.top = zpx(Math.max(6, r.top - pop.getBoundingClientRect().height - 8));
   const close = (ev) => { if (!pop.contains(ev.target)) { closeEmoji(); document.removeEventListener('pointerdown', close, true); } };
   setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
 });
@@ -3002,25 +3031,41 @@ function makePlayer(container, { file, chat, autoplay = true, stream = false, re
   video.addEventListener('volumechange', volIcon);
 
   // Full screen: the player fills the screen and the window goes full screen too.
+  // The window first (a small window grows to the whole screen), then the player inside it: the other way
+  // round the player kept the small window's size and its bar ended up off the screen.
   async function fullscreen() {
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
-    else await root.requestFullscreen().catch(() => {});
+    if (document.fullscreenElement || root.classList.contains('fs-on')) {
+      root.classList.remove('fs-on');
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      else onFs();
+      return;
+    }
+    const st = await invoke('player_window_fs', { on: true }).catch(() => null);
+    if (st) syncWindow(st);
+    await new Promise((res) => setTimeout(res, 220));
+    try { await root.requestFullscreen(); } catch {
+      // Not allowed by the browser part: the player simply covers the whole (now full-screen) window.
+      root.classList.add('fs-on');
+      onFs();
+    }
   }
   const onFs = () => {
-    const on = document.fullscreenElement === root;
+    const on = document.fullscreenElement === root || root.classList.contains('fs-on');
     setIcon(fsBtn, on ? PICON.exitfull : PICON.full);
-    window.__TAURI__.window?.getCurrentWindow?.().setFullscreen(on).catch(() => {});
+    if (!on) invoke('player_window_fs', { on: false }).then(syncWindow).catch(() => {});
+    wake();
   };
+  addEventListener('resize', () => { if (document.fullscreenElement === root) wake(); });
   document.addEventListener('fullscreenchange', onFs);
   fsBtn.onclick = fullscreen;
 
   // The bar hides itself while the film plays; moving the mouse brings it back.
   let idleTimer;
-  const wake = () => {
+  function wake() {
     root.classList.remove('idle');
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => { if (!video.paused) root.classList.add('idle'); }, 2500);
-  };
+  }
   root.addEventListener('mousemove', wake);
   video.addEventListener('play', wake);
   video.addEventListener('pause', wake);
@@ -3093,6 +3138,7 @@ function makePlayer(container, { file, chat, autoplay = true, stream = false, re
       savePos(file.id, video.currentTime, video.duration);
       document.removeEventListener('fullscreenchange', onFs);
       if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
+      else if (root.classList.contains('fs-on')) invoke('player_window_fs', { on: false }).then(syncWindow).catch(() => {});
       clearTimeout(idleTimer);
       video.pause();
       video.removeAttribute('src');
@@ -3701,16 +3747,17 @@ function showMenu(x, y, items) {
   const m = $('ctxMenu');
   // An open dialog sits above everything else on the page, so the menu has to live inside it
   // (otherwise it shows up behind the dialog).
-  const host = document.fullscreenElement || [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  // Only a dialog that is really showing on top (a closed or hidden one would hide the menu with it).
+  const host = document.fullscreenElement || [...document.querySelectorAll('dialog[open]')].filter((d) => d.matches(':modal') && d.getClientRects().length).pop() || document.body;
   if (m.parentElement !== host) host.append(m);
   m.replaceChildren(...items.filter(Boolean).map((it) => (it === '-'
     ? el('hr')
     : el('button', { type: 'button', class: it.danger ? 'danger-text' : '', text: it.label, onclick: (e) => { hideMenu(); it.run(e); } }))));
   m.classList.remove('hidden');
   const r = m.getBoundingClientRect();
-  m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+  m.style.left = zpx(Math.max(4, Math.min(x, innerWidth - r.width - 4)));
   const bottom = document.documentElement.classList.contains('phone') ? 64 : 4;
-  m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - bottom))}px`;
+  m.style.top = zpx(Math.max(4, Math.min(y, innerHeight - r.height - bottom)));
 }
 function hideMenu() { $('ctxMenu').classList.add('hidden'); ctxTarget = null; }
 document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxMenu')) hideMenu(); });
@@ -4476,9 +4523,21 @@ $('findInput').addEventListener('keydown', (e) => { if (e.key === 'Escape') { $(
 const mbps = (bps) => (bps == null ? null : (bps * 8) / 1e6);
 let partySetup = null; // { file, group, speeds }
 
-async function openPartySetup(file, groupId) {
-  const g = groupById(groupId);
+// In a group, or in a private chat with a friend (the two of you).
+const canWatchTogether = (chat) => isGroup(chat) || !!friendById(chat);
+function watchTogether(file, chat) {
+  if (isGroup(chat)) return openPartySetup(file, groupIdOf(chat));
+  const f = friendById(chat);
+  if (!f) return;
+  // A private chat works like a group of two (no group id).
+  openPartySetup(file, null, { id: '', name: f.name, members: [
+    { id: S.me.id, name: S.me.name, online: true, avatar: S.me.profile?.avatar },
+    { id: f.id, name: f.name, online: f.online, avatar: f.avatar }] });
+}
+async function openPartySetup(file, groupId, pair = null) {
+  const g = pair || groupById(groupId);
   if (!g) return;
+  $('pAll').classList.toggle('hidden', !!pair);
   partySetup = { file, group: g, speeds: null };
   $('pFile').textContent = `${file.name} · ${fmtBytes(file.size)}`;
   $('pError').textContent = '';
@@ -4553,18 +4612,18 @@ function renderInviteCard() {
   const card = $('partyInvite');
   const p = [...S.parties.values()].find((x) => x.state !== 'ended' && x.leader !== S.me.id && !invitesSeen.has(x.id)
     && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
-  const here = p && groupIdOf(S.active) === p.group && !$('chat').classList.contains('hidden');
+  const here = p && partyHere(p) && !$('chat').classList.contains('hidden');
   card.classList.toggle('hidden', !p || here || openPartyId === p?.id);
   if (!p || here) return;
   const host = p.members.find((m) => m.id === p.leader);
-  const g = groupById(p.group);
+  const g = p.group ? groupById(p.group) : null;
   const join = (full) => async () => {
     card.classList.add('hidden');
     try { await invoke('party_join', { id: p.id, full }); openParty(p.id); } catch (e) { toast(e); }
   };
   card.replaceChildren(
     el('div', { class: 'pi-head' },
-      avatar(host?.name || '?', { seed: p.leader, src: g?.members.find((m) => m.id === p.leader)?.avatar }),
+      avatar(host?.name || '?', { seed: p.leader, src: (g?.members.find((m) => m.id === p.leader) || friendById(p.leader))?.avatar }),
       el('div', { class: 'grow' },
         el('div', { class: 'strong', text: `${host?.name || 'Someone'} invited you to watch together` }),
         el('div', { class: 'sub ellipsis', text: `${p.file.name}${g ? ` · ${g.name}` : ''}` }))),
@@ -4576,7 +4635,7 @@ function renderInviteCard() {
 function renderInviteBar() {
   renderInviteCard();
   const bar = $('inviteBar');
-  const p = [...S.parties.values()].find((x) => groupIdOf(S.active) === x.group && x.state !== 'ended' && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
+  const p = [...S.parties.values()].find((x) => partyHere(x) && x.state !== 'ended' && x.members.some((m) => m.id === S.me.id && !m.joined && !m.left));
   bar.classList.toggle('hidden', !p);
   if (!p) return;
   const host = p.members.find((m) => m.id === p.leader)?.name || 'Someone';
@@ -4602,7 +4661,9 @@ let partyMode = 'app'; // 'app' = built-in player, 'vlc' = VLC kept in sync
 const noAutoVlc = new Set(); // parties where you went back from VLC yourself
 
 let partyFileId = null;
-function partyChatOf(p) { return `g:${p.group}`; }
+function partyChatOf(p) { return p.group ? `g:${p.group}` : (p.members.find((m) => m.id !== S.me.id)?.id || p.leader); }
+// Is this party's chat the one open now?
+const partyHere = (p) => (p.group ? groupIdOf(S.active) === p.group : S.active === partyChatOf(p));
 function partyLine(m) {
   return el('div', { class: 'pm-line', 'data-id': m.id }, el('b', { text: m.mine ? 'You' : nameNow(m) }),
     m.locked ? 'Locked message' : m.text ? formatText(m.text) : m.file ? `sent ${m.file.name}` : '');
@@ -4668,7 +4729,7 @@ function openParty(id, mode = partyMode) {
   partyMode = mode;
   partyPlayer = mode === 'vlc'
     ? makeVlcPlayer($('partyStage'), { file: p.file, onBack: () => { noAutoVlc.add(id); openParty(id, 'app'); } })
-    : makePlayer($('partyStage'), { file: p.file, chat: `g:${p.group}`, autoplay: false, stream: true, resume: false });
+    : makePlayer($('partyStage'), { file: p.file, chat: partyChatOf(p), autoplay: false, stream: true, resume: false });
   $('partyVlc').classList.toggle('hidden', mode === 'vlc');
   const v = partyPlayer.video;
   // Closing VLC brings you back to the built-in player, still in the party.
@@ -6049,13 +6110,14 @@ function openMiniProfile(id, anchor) {
   document.body.append(card);
   // Next to the mention, kept inside the window.
   const r = anchor.getBoundingClientRect();
-  const w = card.offsetWidth, h = card.offsetHeight;
+  const cr = card.getBoundingClientRect();
+  const w = cr.width, h = cr.height;
   let x = r.right + 8, y = r.top - 20;
   if (x + w > innerWidth - 8) x = r.left - w - 8;
   if (x < 8) x = Math.max(8, Math.min(innerWidth - w - 8, r.left));
   if (y + h > innerHeight - 8) y = innerHeight - h - 8;
-  card.style.left = Math.max(8, x) + 'px';
-  card.style.top = Math.max(8, y) + 'px';
+  card.style.left = zpx(Math.max(8, x));
+  card.style.top = zpx(Math.max(8, y));
 }
 document.addEventListener('click', (e) => {
   const m = e.target.closest?.('.bubble .mention');
