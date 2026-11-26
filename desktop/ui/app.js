@@ -1649,6 +1649,23 @@ function personInfo(id) {
   const alt = m || {};
   return { id, name: base.name, status: base.status || alt.status || '', avatar: base.avatar || alt.avatar, bio: base.bio || alt.bio || '', joined: base.joined || alt.joined, banner: base.banner || alt.banner || '', look: base.look || alt.look || '', watching: base.watching || alt.watching || '', since: f?.since, online: base.online, friend: !!f };
 }
+// Add friend (on the profile of someone from one of your groups), or where your request stands.
+function friendButton(id, after = null) {
+  const out = (S.outgoing || []).some((u) => u.id === id);
+  const inc = (S.incoming || []).some((u) => u.id === id);
+  if (out) return el('button', { type: 'button', class: 'small', text: 'Request sent', disabled: true, title: 'They see it as soon as they are online' });
+  const b = el('button', { type: 'button', class: 'small accent', text: inc ? 'Accept friend request' : 'Add friend' });
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      toast(await invoke('add_friend_id', { id }));
+      await loadContacts();
+      b.textContent = inc ? 'Friends' : 'Request sent';
+      after?.();
+    } catch (e) { toast(e); b.disabled = false; }
+  };
+  return b;
+}
 // A picture shows as a picture; a GIF that UaN made smaller is a short silent video that loops.
 function bioMediaNode(src) {
   if (src.startsWith('data:video/')) {
@@ -1741,9 +1758,12 @@ function openProfile(id) {
   if (p.friend && p.since) facts.push(['Friends since', joinFmt.format(p.since)]);
   if (p.joined) facts.push(['Join date', joinFmt.format(p.joined)]);
   $('pfFacts').replaceChildren(...facts.flatMap(([k, v]) => [el('span', { class: 'k', text: k }), el('span', { text: v })]));
-  $('pfActions').replaceChildren(
-    ...(p.me ? [el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })] : []));
-  $('profileDlg').showModal();
+  $('pfActions').replaceChildren(...(p.me
+    ? [el('button', { type: 'button', class: 'small', text: 'Edit profile', onclick: () => { $('profileDlg').close(); $('settingsBtn').click(); } })]
+    : p.friend
+      ? [el('button', { type: 'button', class: 'small', text: 'Message', onclick: () => { $('profileDlg').close(); openChat(id); } })]
+      : [friendButton(id, () => openProfile(id))]));
+  if (!$('profileDlg').open) $('profileDlg').showModal();
 }
 document.addEventListener('click', (e) => {
   const t = e.target.closest?.('[data-uid]');
@@ -6104,7 +6124,7 @@ function openMiniProfile(id, anchor) {
       bio ? el('div', { class: 'mini-bio' }, formatText(bio.length > 220 ? bio.slice(0, 220) + '…' : bio)) : null,
       el('div', { class: 'mini-acts' },
         el('button', { type: 'button', class: 'small accent', text: p.me ? 'See your profile' : 'View profile', onclick: () => { closeMiniProfile(); openProfile(id); } }),
-        p.friend ? el('button', { type: 'button', class: 'small', text: 'Message', onclick: () => { closeMiniProfile(); openChat(id); } }) : null)));
+        p.friend ? el('button', { type: 'button', class: 'small', text: 'Message', onclick: () => { closeMiniProfile(); openChat(id); } }) : p.me ? null : friendButton(id))));
   card.querySelector('.mini-banner').style.background = bannerStyle(p.banner, p.id);
   if (col) { card.style.setProperty('--look', col); card.classList.add('has-look'); }
   document.body.append(card);

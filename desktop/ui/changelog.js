@@ -1,5 +1,9 @@
 // What came in which version. Newest first. (Shown in Settings → About & updates.)
 const CHANGELOG = [
+  { v: '1.9.52', items: [
+    'Add friend on the profile (and the small profile card) of anyone from your groups: no friend code needed. They accept it like any friend request.',
+    'A friend’s profile has a Message button.',
+  ] },
   { v: '1.9.51', items: [
     'Watch together in a private chat too: just the two of you, in sync.',
     'Right-click menus (people, groups, messages), reactions, emojis and mini profiles show up where you click again when the interface is zoomed in or out.',

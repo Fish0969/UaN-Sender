@@ -1498,6 +1498,11 @@ fn add_friend(node: State<'_, Arc<Node>>, code: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
+fn add_friend_id(node: State<'_, Arc<Node>>, id: String) -> CmdResult<String> {
+    node.add_friend_id(&id)
+}
+
+#[tauri::command]
 fn friend_action(node: State<'_, Arc<Node>>, id: String, action: String) -> CmdResult<()> {
     node.friend_action(&id, &action)
 }
@@ -2029,6 +2034,7 @@ pub fn run() {
             theme_html,
             contacts,
             add_friend,
+            add_friend_id,
             friend_action,
             messages,
             search,

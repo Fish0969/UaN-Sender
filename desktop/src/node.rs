@@ -2722,6 +2722,27 @@ impl Node {
             .flatten()
     }
 
+    /// Are you and `who` together in at least one group?
+    fn shares_group(&self, who: &str) -> bool {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT 1 FROM group_members a JOIN group_members b ON a.group_id = b.group_id WHERE a.member_id = ?1 AND b.member_id = ?2 LIMIT 1",
+                [self.me_s.as_str(), who],
+                |_| Ok(()),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    /// The name someone has in one of your groups.
+    fn member_name(&self, who: &str) -> Option<String> {
+        self.db.lock().unwrap().query_row("SELECT name FROM group_members WHERE member_id = ?1 LIMIT 1", [who], |r| r.get(0)).optional().ok().flatten()
+    }
+
     fn is_member(&self, group: &str, who: &str) -> bool {
         self.db
             .lock()
@@ -2804,7 +2825,7 @@ impl Node {
                 // After you made a new friend code, a request with an old one is refused (unless you asked them too).
                 let mine = self.kv("invite_key").filter(|k| !k.is_empty());
                 let status = self.contact_status(peer);
-                if mine.is_some() && key != mine && !matches!(status.as_deref(), Some("friend") | Some("outgoing") | Some("incoming")) {
+                if mine.is_some() && key != mine && !matches!(status.as_deref(), Some("friend") | Some("outgoing") | Some("incoming")) && !self.shares_group(peer) {
                     return Err("That friend code is no longer used. Ask for the new one.".into());
                 }
                 match status.as_deref() {
@@ -3528,6 +3549,32 @@ impl Node {
         self.mirror(&self.me_s.clone(), &p, &Req::FriendRequest { name: "Pending…".into(), key: None });
         self.deliver(&p, &Req::FriendRequest { name: self.my_name(), key });
         Ok("Friend request sent. It arrives as soon as they are online.".into())
+    }
+
+    /// "Add friend" on the profile of someone in one of your groups (no friend code needed).
+    pub fn add_friend_id(self: &Arc<Self>, id: &str) -> Result<String, String> {
+        let peer = parse_id(id)?;
+        let p = peer.to_string();
+        if p == self.me_s {
+            return Err("That's you.".into());
+        }
+        match self.contact_status(&p).as_deref() {
+            Some("friend") => return Err("You are already friends.".into()),
+            Some("outgoing") => return Ok("You already asked. They see it as soon as they are online.".into()),
+            Some("incoming") => {
+                self.friend_action(&p, "accept")?;
+                return Ok("You are now friends.".into());
+            }
+            _ => {}
+        }
+        if !self.shares_group(&p) {
+            return Err("You can add someone from their profile when you are in a group together. Otherwise ask for their friend code.".into());
+        }
+        let name = self.member_name(&p).unwrap_or_else(|| "Pending…".into());
+        self.set_contact(&p, &name, "outgoing");
+        self.mirror(&self.me_s.clone(), &p, &Req::FriendRequest { name: name.clone(), key: None });
+        self.deliver(&p, &Req::FriendRequest { name: self.my_name(), key: None });
+        Ok(format!("Friend request sent to {name}. They can accept it in UaN."))
     }
 
     pub fn friend_action(self: &Arc<Self>, peer: &str, action: &str) -> Result<(), String> {
